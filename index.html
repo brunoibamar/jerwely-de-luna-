@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jewerly De Luna - Punto de Venta</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div id="login-screen" class="login-screen">
+        <div class="login-card">
+            <img src="assets/logo.png" alt="Jewerly De Luna" class="login-logo">
+            <h1 class="login-title">Jewerly De Luna</h1>
+
+            <div class="login-tabs">
+                <button type="button" class="login-tab-btn active" data-login-type="admin">Administrador</button>
+                <button type="button" class="login-tab-btn" data-login-type="guest">Invitado</button>
+            </div>
+
+            <form id="admin-login-form" class="login-form" data-login-form="admin">
+                <div class="input-group">
+                    <input type="text" name="username" placeholder=" " autocomplete="off" required>
+                    <label>Usuario</label>
+                </div>
+                <div class="input-group">
+                    <input type="password" name="password" placeholder=" " autocomplete="off" required>
+                    <label>Contraseña</label>
+                </div>
+                <button type="submit" class="btn btn-primary login-btn">Ingresar</button>
+                <button type="button" id="forgot-password-btn" class="btn btn-link">¿Olvidó su contraseña?</button>
+                <div id="login-error" class="login-error"></div>
+            </form>
+
+            <form id="guest-login-form" class="login-form hidden" data-login-form="guest">
+                <div class="input-group">
+                    <input type="password" name="guest-key" inputmode="numeric" placeholder=" " autocomplete="off">
+                    <label>Clave de Cajero (opcional)</label>
+                </div>
+                <button type="submit" class="btn btn-primary login-btn">Ingresar con Clave</button>
+                <button type="button" id="guest-direct-btn" class="btn btn-outline login-btn">Ingresar como Invitado</button>
+                <div id="guest-login-error" class="login-error"></div>
+            </form>
+        </div>
+
+        <div id="recovery-modal" class="modal-overlay hidden">
+            <div class="modal">
+                <h3 class="modal-title">Recuperación de Contraseña</h3>
+                <form id="recovery-form" class="recovery-form">
+                    <div class="input-group">
+                        <input type="email" name="email" placeholder=" " required>
+                        <label>Correo Electrónico</label>
+                    </div>
+                    <div class="recovery-question hidden">
+                        <div class="input-group">
+                            <input type="text" name="security-answer" placeholder=" " required>
+                            <label id="security-question-label">Pregunta de Seguridad</label>
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn btn-outline" id="cancel-recovery">Cancelar</button>
+                        <button type="submit" class="btn btn-primary" id="submit-recovery">Enviar</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Apertura de Caja -->
+    <div id="cash-open-overlay" class="modal-overlay hidden">
+        <div class="modal cash-modal">
+            <h3 class="modal-title">Apertura de Caja</h3>
+            <div class="cash-open-body">
+                <p class="cash-open-message">
+                    <span id="cash-open-user">Bienvenido, </span>
+                    Ingresa el monto inicial en caja para comenzar tu turno.
+                </p>
+                <div class="input-group">
+                    <input type="number" id="initial-amount" step="0.01" min="0" placeholder=" " required>
+                    <label for="initial-amount">Monto Inicial ($)</label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="cancel-cash-open" class="btn btn-outline">Cancelar</button>
+                    <button type="button" id="confirm-cash-open" class="btn btn-primary">Ingresar</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Confirmación de Cierre -->
+    <div id="cash-close-confirmation" class="modal-overlay hidden">
+        <div class="modal confirmation-modal">
+            <h3 class="modal-title">¿Estás seguro?</h3>
+            <p class="confirmation-message">
+                ¿Estás seguro de que deseas cerrar la caja del día?
+            </p>
+            <div class="modal-actions">
+                <button type="button" id="cancel-close-cash" class="btn btn-outline">Cancelar</button>
+                <button type="button" id="confirm-close-cash" class="btn btn-primary">Cerrar Caja</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Resumen de Cierre de Caja -->
+    <div id="cash-summary-overlay" class="modal-overlay hidden">
+        <div class="modal summary-modal">
+            <h3 class="modal-title">Resumen de Cierre de Caja</h3>
+            <div class="summary-content">
+                <div class="summary-grid" id="cash-summary-content">
+                </div>
+            </div>
+            <div class="summary-actions admin-only">
+                <button type="button" id="send-email-btn" class="btn btn-outline">Enviar al Correo</button>
+                <button type="button" id="download-local-btn" class="btn btn-outline">Guardar Copia Local</button>
+            </div>
+            <div class="summary-footer">
+                <div class="auto-save-notice">
+                    <span class="auto-save-icon">✓</span>
+                    Copia guardada automáticamente en historial local
+                </div>
+                <button type="button" id="close-summary-btn" class="btn btn-primary">Continuar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vista: Suscripción Vencida / Sistema Bloqueado -->
+    <div id="license-overlay" class="license-overlay hidden">
+        <div class="license-card">
+            <img src="assets/logo.png" alt="Jewerly De Luna" class="license-logo">
+            <h1 class="license-title">Suscripción Vencida</h1>
+            <p class="license-message" id="license-message">
+                Tu licencia de Jewerly De Luna ha expirado.
+                Ingresa tu Token de Reactivación mensual para continuar trabajando.
+            </p>
+
+            <div id="tamper-warning" class="tamper-warning hidden">
+                <p class="tamper-text">
+                    ⚠️ Se detectó alteración de reloj.
+                    El sistema está bloqueado por seguridad.
+                </p>
+            </div>
+
+            <form id="token-form" class="token-form">
+                <div class="input-group">
+                    <input type="text" id="reactivation-token" placeholder=" " required>
+                    <label for="reactivation-token">Token de Reactivación</label>
+                </div>
+                <button type="submit" class="btn btn-primary license-btn">Activar Licencia</button>
+                <div id="token-error" class="login-error"></div>
+                <div id="token-success" class="success-message"></div>
+            </form>
+
+            <div class="license-actions">
+                <button id="export-backup-btn" class="btn btn-outline">Exportar Respaldo Local (JSON)</button>
+                <button id="import-backup-btn" class="btn btn-outline">Importar Respalado</button>
+                <input type="file" id="import-file" accept=".json" style="display: none;">
+            </div>
+
+            <div class="license-footer">
+                <p class="license-help">
+                    Necesitas el token para este mes.
+                    Contacta a Jewerly De Luna Soporte.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <div id="pos-app" class="pos-app hidden">
+        <header class="pos-header">
+            <div class="header-left">
+                <button id="menu-toggle" class="btn btn-icon menu-btn">
+                    <span class="hamburger"></span>
+                </button>
+                <h1 class="pos-title">Jewerly De Luna</h1>
+                <span class="user-badge" id="current-user">Cajero: <span id="user-name"></span></span>
+            </div>
+            <div class="header-right">
+                <button id="cash-drawer-btn" class="btn btn-outline">Corte de Caja</button>
+                <button id="backup-btn" class="btn btn-outline admin-only">Respaldo</button>
+                <button id="returns-btn" class="btn btn-outline guest-allowed">Devoluciones</button>
+                <button id="expenses-btn" class="btn btn-outline guest-allowed">Gastos</button>
+                <button id="logout-btn" class="btn btn-outline">Salir</button>
+            </div>
+        </header>
+
+        <div class="pos-main">
+            <aside id="sidebar" class="sidebar">
+                <nav class="nav-menu">
+                    <a href="#" class="nav-item active" data-section="sales"> Ventas</a>
+                    <a href="#" class="nav-item admin-only" data-section="inventory">Inventario</a>
+                    <a href="#" class="nav-item admin-only" data-section="reports">Reportes</a>
+                    <a href="#" class="nav-item admin-only" data-section="settings">Configuración</a>
+                </nav>
+            </aside>
+
+            <main class="pos-content">
+                <section id="sales-section" class="section active">
+                    <div class="sales-toolbar">
+                        <div class="search-bar">
+                            <input type="text" id="barcode-input" placeholder="Escanea o busca producto..." class="search-input">
+                            <input type="text" id="product-search" placeholder="Buscar por descripción..." class="search-input">
+                        </div>
+                        <div class="toolbar-actions">
+                            <button id="add-product-btn" class="btn btn-outline">Agregar</button>
+                            <!-- Botones de pausa y recuperación de ventas -->
+                            <button id="pause-sale-btn" class="btn btn-outline guest-allowed">Pausar Venta</button>
+                            <button id="held-sales-btn" class="btn btn-outline guest-allowed">Ventas en Espera ( <span id="held-count">0</span> )</button>
+                            <button id="clear-cart-btn" class="btn btn-outline">Limpiar</button>
+                            <button id="checkout-btn" class="btn btn-primary">Finalizar Venta</button>
+                        </div>
+                    </div>
+
+                    <div class="sales-table-container">
+                        <table class="sales-table">
+                            <thead>
+                                <tr>
+                                    <th>Código de Barras</th>
+                                    <th>Descripción del Producto</th>
+                                    <th>Precio Venta</th>
+                                    <th>Cant.</th>
+                                    <th>Importe</th>
+                                    <th>Existencia</th>
+                                    <th>Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sales-table-body">
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="sales-footer">
+                        <div class="totals">
+                            <div class="total-row">
+                                <span class="total-label">Subtotal:</span>
+                                <span class="total-value" id="subtotal-amount">$0.00</span>
+                            </div>
+                            <div class="total-row">
+                                <span class="total-label">IVA (16%):</span>
+                                <span class="total-value" id="tax-amount">$0.00</span>
+                            </div>
+                            <div class="total-row total-grand">
+                                <span class="total-label">Total:</span>
+                                <span class="total-value" id="total-amount">$0.00</span>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- Modal: Ventas en Espera -->
+                <div id="held-sales-overlay" class="modal-overlay hidden">
+                    <div class="modal" style="max-width: 640px;">
+                        <h3 class="modal-title">Ventas en Espera</h3>
+                        <div class="held-sales-list" id="held-sales-list">
+                            <!-- Ventas pausadas renderizadas por app.renderHeldSales() -->
+                        </div>
+                        <div class="modal-actions">
+                            <button type="button" id="close-held-sales-btn" class="btn btn-outline">Cerrar</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal: Procesamiento de Pago -->
+                <div id="payment-modal-overlay" class="payment-overlay hidden">
+                    <div class="payment-modal payment-modal-wide">
+                        <div class="payment-modal-header">
+                            <h3 class="payment-title">Seleccionar Método de Pago</h3>
+                            <div class="payment-total-bar">
+                                <span>Total a Pagar:</span>
+                                <span id="payment-total" class="payment-total-display">$0.00</span>
+                            </div>
+                        </div>
+
+                        <!-- Selector de método de pago -->
+                        <div class="payment-method-selector">
+                            <button class="payment-method-btn active" data-method="cash">
+                                <span class="method-icon">💵</span> Efectivo
+                            </button>
+                            <button class="payment-method-btn" data-method="card">
+                                <span class="method-icon">💳</span> Tarjeta
+                            </button>
+                            <button class="payment-method-btn" data-method="mixed">
+                                <span class="method-icon">🔄</span> Pago Mixto
+                            </button>
+                        </div>
+
+                        <!-- Sección: Efectivo + Calculadora de cambio -->
+                        <div class="payment-section cash-calculator-section hidden" id="cash-calculator-section">
+                            <div class="calculator-display">
+                                <div class="calc-row">
+                                    <span>Recibido:</span>
+                                    <span id="received-amount-display" class="calc-value received">$0.00</span>
+                                </div>
+                                <div class="calc-row">
+                                    <span>Cambio:</span>
+                                    <span id="change-amount-display" class="calc-value change">$0.00</span>
+                                </div>
+                            </div>
+
+                            <!-- Botones de denominaciones (MXN) -->
+                            <div class="denomination-grid" id="denomination-grid">
+                                <!-- Botones generados dinámicamente por app.bindPaymentEvents -->
+                            </div>
+
+                            <div class="calculator-actions">
+                                <button class="btn btn-outline" id="clear-received-btn">Limpiar</button>
+                                <button class="btn btn-primary" id="confirm-cash-btn" disabled>Confirmar Pago en Efectivo</button>
+                            </div>
+                        </div>
+
+                        <!-- Sección: Pago Mixto -->
+                        <div class="payment-section mixed-payment-section hidden" id="mixed-payment-section">
+                            <div class="input-group">
+                                <input type="number" id="mixed-cash-input" step="0.01" min="0" placeholder=" ">
+                                <label for="mixed-cash-input">Monto en Efectivo ($)</label>
+                            </div>
+                            <div class="input-group">
+                                <input type="number" id="mixed-card-input" step="0.01" min="0" placeholder=" ">
+                                <label for="mixed-card-input">Monto en Tarjeta ($)</label>
+                            </div>
+                            <div class="payment-total-bar">
+                                <span>Total Ingresado:</span>
+                                <span id="mixed-total-display" class="payment-total-display">$0.00</span>
+                            </div>
+                            <div class="calculator-actions">
+                                <button class="btn btn-primary" id="confirm-mixed-btn" disabled>Confirmar Pago Mixto</button>
+                            </div>
+                        </div>
+
+                        <!-- Sección: Tarjeta (confirmación simple) -->
+                        <div class="payment-section card-payment-section hidden" id="card-payment-section">
+                            <div class="payment-info">
+                                <p>¿Confirmar pago con tarjeta por <strong id="card-total-display">$0.00</strong>?</p>
+                                <p class="payment-hint">Asegúrate de que la tarjeta se haya cargado correctamente.</p>
+                            </div>
+                            <div class="calculator-actions">
+                                <button class="btn btn-primary" id="confirm-card-btn">Confirmar Pago con Tarjeta</button>
+                            </div>
+                        </div>
+
+                        <div class="payment-actions">
+                            <button class="btn btn-outline" id="cancel-payment-btn">Cancelar</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal: Pausar Venta -->
+                <div id="pause-sale-overlay" class="modal-overlay hidden">
+                    <div class="modal" style="max-width: 420px;">
+                        <h3 class="modal-title">Pausar Venta</h3>
+                        <p class="confirmation-message">
+                            ¿Deseas pausar la venta actual y atender a otro cliente?
+                        </p>
+                        <div class="input-group">
+                            <input type="text" id="pause-note-input" placeholder=" " autocomplete="off">
+                            <label for="pause-note-input">Nota (opcional)</label>
+                        </div>
+                        <div class="modal-actions">
+                            <button type="button" id="cancel-pause-btn" class="btn btn-outline">Cancelar</button>
+                            <button type="button" id="confirm-pause-btn" class="btn btn-primary">Pausar Venta</button>
+                        </div>
+                    </div>
+                </div>
+
+                <section id="inventory-section" class="section">
+                    <div class="inventory-toolbar">
+                        <input type="text" id="inventory-search" placeholder="Buscar en inventario..." class="search-input">
+                        <button id="add-inventory-btn" class="btn btn-primary admin-only">Nuevo Producto</button>
+                    </div>
+                    <div class="inventory-grid" id="inventory-grid">
+                    </div>
+                </section>
+
+                <section id="reports-section" class="section">
+                    <h2 class="section-title">Reportes</h2>
+                    <div class="reports-container">
+                        <div class="report-card">
+                            <h3>Ventas del Día</h3>
+                            <p class="report-value" id="daily-sales">$0.00</p>
+                        </div>
+                        <div class="report-card">
+                            <h3>Transacciones</h3>
+                            <p class="report-value" id="daily-transactions">0</p>
+                        </div>
+                        <div class="report-card admin-only">
+                            <h3>Ganancia Neta</h3>
+                            <p class="report-value" id="daily-profit">$0.00</p>
+                        </div>
+                        <div class="report-card admin-only">
+                            <h3>Margen Promedio</h3>
+                            <p class="report-value" id="avg-margin">0%</p>
+                        </div>
+                    </div>
+                    <div class="admin-only" id="advanced-reports" style="margin-top: 24px;">
+                        <h3 class="section-title">Reportes Avanzados</h3>
+                        <div class="reports-container">
+                            <div class="report-card">
+                                <h3>Ventas por Categoría</h3>
+                                <p class="report-value" id="category-sales">$0.00</p>
+                            </div>
+                            <div class="report-card">
+                                <h3>Productos Más Vendidos</h3>
+                                <p class="report-value" id="top-product">N/A</p>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="settings-section" class="section">
+                    <h2 class="section-title">Configuración</h2>
+                    <div class="settings-form">
+                        <div class="input-group">
+                            <input type="text" id="tax-rate-input" placeholder=" " value="16">
+                            <label for="tax-rate-input">Tasa de IVA (%)</label>
+                        </div>
+                        <div class="form-divider">
+                            <h3 class="form-divider-title">Correo para Reportes</h3>
+                        </div>
+                        <div class="input-group">
+                            <input type="email" id="admin-email-input" placeholder=" " required>
+                            <label for="admin-email-input">Correo del Administrador</label>
+                        </div>
+                        <div class="form-divider">
+                            <h3 class="form-divider-title">Credenciales de Acceso</h3>
+                        </div>
+
+                        <div class="creds-display">
+                            <div class="cred-row">
+                                <span class="cred-label">Usuario Admin:</span>
+                                <span class="cred-value" id="display-admin-user">admin</span>
+                            </div>
+                            <div class="cred-row">
+                                <span class="cred-label">Clave de Cajero:</span>
+                                <span class="cred-value" id="display-guest-key">1234</span>
+                            </div>
+                        </div>
+
+                        <div class="form-divider">
+                            <h3 class="form-divider-title">Cambiar Contraseña de Administrador</h3>
+                        </div>
+                        <div class="input-group">
+                            <input type="password" id="admin-current-pass" placeholder=" " required>
+                            <label for="admin-current-pass">Contraseña Actual</label>
+                        </div>
+                        <div class="input-group">
+                            <input type="password" id="admin-new-pass" placeholder=" " required>
+                            <label for="admin-new-pass">Nueva Contraseña</label>
+                        </div>
+                        <div class="input-group">
+                            <input type="password" id="admin-confirm-pass" placeholder=" " required>
+                            <label for="admin-confirm-pass">Confirmar Contraseña</label>
+                        </div>
+                        <button id="change-admin-pass-btn" class="btn btn-outline">Cambiar Contraseña Admin</button>
+
+                        <div class="form-divider">
+                            <h3 class="form-divider-title">Cambiar Clave de Cajero</h3>
+                        </div>
+                        <div class="input-group">
+                            <input type="password" id="guest-current-key" placeholder=" " required>
+                            <label for="guest-current-key">Clave Actual</label>
+                        </div>
+                        <div class="input-group">
+                            <input type="password" id="guest-new-key" placeholder=" " required>
+                            <label for="guest-new-key">Nueva Clave</label>
+                        </div>
+                        <div class="input-group">
+                            <input type="password" id="guest-confirm-key" placeholder=" " required>
+                            <label for="guest-confirm-key">Confirmar Clave</label>
+                        </div>
+                        <button id="change-guest-key-btn" class="btn btn-outline">Cambiar Clave de Cajero</button>
+
+                        <!-- Módulo de Ajuste de Precios por Volumen (Solo Admin) -->
+                        <div class="form-divider admin-only">
+                            <h3 class="form-divider-title">Precios por Volumen (Mayoreo)</h3>
+                        </div>
+                        <div id="volume-pricing-manager" class="admin-only">
+                            <p class="volume-help-text">
+                                Define los rangos de cantidad y precios unitarios para el
+                                <strong>Precio Mayoreo</strong>. Se aplica automáticamente al
+                                agregar piezas del mismo producto.
+                            </p>
+                            <!-- Rangos de volumen renderizados dinámicamente -->
+                            <div class="volume-tiers" id="volume-tiers">
+                                <!-- Tier inputs generados por app.renderVolumePricingTiers() -->
+                            </div>
+                            <div class="volume-pricing-actions">
+                                <button id="add-tier-btn" class="btn btn-outline">Agregar Rango</button>
+                                <button id="save-volume-pricing-btn" class="btn btn-outline">Guardar Precios de Volumen</button>
+                                <button id="reset-volume-pricing-btn" class="btn btn-outline">Restablecer por Defecto</button>
+                            </div>
+                        </div>
+
+                        <div id="settings-error" class="login-error"></div>
+                        <div id="settings-success" class="success-message"></div>
+
+                        <button id="save-settings-btn" class="btn btn-primary">Guardar Configuración General</button>
+                    </div>
+                </section>
+            </main>
+        </div>
+    </div>
+
+    <script src="js/auth.js"></script>
+    <!-- Módulo POS: VolumePricing, HeldSales, BarcodeScanner, PaymentProcessor -->
+    <script src="js/pos.js"></script>
+    <script src="js/cart.js"></script>
+    <script src="js/checkout.js"></script>
+    <script src="js/inventory.js"></script>
+    <script src="js/cut.js"></script>
+    <script src="js/print.js"></script>
+    <script src="js/backup.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

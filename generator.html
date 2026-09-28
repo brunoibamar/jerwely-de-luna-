@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generador de Tokens - Jewerly De Luna</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <style>
+        body {
+            background: linear-gradient(135deg, #0a0a12 0%, #0d0d15 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            padding: 20px;
+        }
+        .generator-container {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-lg);
+            padding: 40px;
+            width: 100%;
+            max-width: 480px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+        }
+        .generator-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        .generator-header h1 {
+            font-size: 22px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--gold) 0%, var(--gold-light) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+        .generator-header p {
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+        .form-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .form-row .input-group {
+            flex: 1;
+            margin-bottom: 0;
+        }
+        .form-row .input-group input {
+            text-align: center;
+            font-size: 16px;
+        }
+        .token-output {
+            background: var(--bg-input);
+            border: 1.5px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            text-align: center;
+            margin: 20px 0;
+            word-break: break-all;
+            font-family: 'Courier New', monospace;
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--gold);
+            letter-spacing: 2px;
+            min-height: 56px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+        }
+        .token-output:focus {
+            outline: none;
+            border-color: var(--gold);
+            box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.2);
+        }
+        .token-actions {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+        }
+        .token-actions .btn {
+            flex: 1;
+        }
+        .copy-notice {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 12px;
+            margin-top: 12px;
+        }
+        .warning-box {
+            background: rgba(231, 76, 61, 0.1);
+            border: 1px solid rgba(231, 76, 61, 0.3);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            margin-top: 24px;
+            text-align: center;
+        }
+        .warning-box p {
+            color: var(--danger);
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="generator-container">
+        <div class="generator-header">
+            <h1>Jewerly De Luna - Generador de Tokens</h1>
+            <p>Clave Maestra: JewerlySecret2026</p>
+        </div>
+
+        <form id="generator-form">
+            <div class="form-row">
+                <div class="input-group">
+                    <input type="number" id="token-month" min="1" max="12" placeholder=" " required>
+                    <label for="token-month">Mes</label>
+                </div>
+                <div class="input-group">
+                    <input type="number" id="token-year" min="2024" max="2099" placeholder=" " required>
+                    <label for="token-year">Año</label>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary" style="width: 100%;">Generar Token</button>
+
+            <div class="token-output" id="token-output" readonly tabindex="0">
+                Ingresa mes y año para generar el token
+            </div>
+
+            <div class="token-actions">
+                <button type="button" id="copy-token-btn" class="btn btn-outline">Copiar Token</button>
+                <button type="button" id="current-month-btn" class="btn btn-outline">Mes Actual</button>
+            </div>
+
+            <p class="copy-notice" id="copy-notice"></p>
+        </form>
+
+        <div class="warning-box">
+            <p>
+                ⚠️ Este generador debe usarse únicamente para
+                reactivar licencias de Jewerly De Luna.
+            </p>
+        </div>
+    </div>
+
+    <script>
+        const MASTER_KEY = 'JewerlySecret2026';
+
+        function generateToken(month, year) {
+            const data = MASTER_KEY + '|' + month.toString().padStart(2, '0') + '|' + year;
+            let hash1 = 0;
+            let hash2 = 0;
+            for (let i = 0; i < data.length; i++) {
+                const char = data.charCodeAt(i);
+                hash1 = Math.imul(hash1 ^ char, 2654435761);
+                hash2 = Math.imul(hash2 ^ (char << 5), 31517171);
+            }
+            const h1 = (hash1 >>> 0).toString(36).padStart(6, '0');
+            const h2 = (hash2 >>> 0).toString(36).padStart(6, '0');
+            return (h1 + h2).toUpperCase().substring(0, 12);
+        }
+
+        document.getElementById('generator-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const month = parseInt(document.getElementById('token-month').value);
+            const year = parseInt(document.getElementById('token-year').value);
+
+            if (!month || !year || month < 1 || month > 12) {
+                return;
+            }
+
+            const token = generateToken(month, year);
+            document.getElementById('token-output').textContent = token;
+            document.getElementById('token-output').style.borderColor = 'var(--gold)';
+        });
+
+        document.getElementById('current-month-btn').addEventListener('click', function() {
+            const now = new Date();
+            document.getElementById('token-month').value = now.getMonth() + 1;
+            document.getElementById('token-year').value = now.getFullYear();
+        });
+
+        document.getElementById('copy-token-btn').addEventListener('click', function() {
+            const tokenEl = document.getElementById('token-output');
+            const token = tokenEl.textContent;
+            if (token && token !== 'Ingresa mes y año para generar el token') {
+                navigator.clipboard.writeText(token).then(function() {
+                    document.getElementById('copy-notice').textContent = 'Token copiado al portapapeles';
+                    setTimeout(function() {
+                        document.getElementById('copy-notice').textContent = '';
+                    }, 2000);
+                });
+            }
+        });
+
+        document.getElementById('current-month-btn').click();
+        document.getElementById('generator-form').dispatchEvent(new Event('submit'));
+    </script>
+</body>
+</html>
