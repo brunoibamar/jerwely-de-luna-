@@ -7,7 +7,6 @@
 class Cart {
     constructor() {
         this.items = [];
-        this.taxRate = 0.16;
     }
 
     // Agregar un producto al carrito.
@@ -79,13 +78,10 @@ class Cart {
     }
 
     updateTotals() {
-        const subtotal = this.items.reduce((sum, item) => sum + item.amount, 0);
-        const tax = subtotal * this.taxRate;
-        const total = subtotal + tax;
+        const subtotal = this.getSubtotal();
 
         this.updateDOM('subtotal-amount', `$${subtotal.toFixed(2)}`);
-        this.updateDOM('tax-amount', `$${tax.toFixed(2)}`);
-        this.updateDOM('total-amount', `$${total.toFixed(2)}`);
+        this.updateDOM('total-amount', `$${subtotal.toFixed(2)}`);
     }
 
     updateDOM(id, textContent) {
@@ -144,22 +140,15 @@ class Cart {
     getCartData() {
         return {
             items: this.items.map(item => ({ ...item })),
-            taxRate: this.taxRate,
             timestamp: new Date().toISOString()
         };
     }
 
-    // Restaurar el carrito desde datos guardados
     restoreFromData(data) {
         this.items = data.items.map(item => ({ ...item }));
-        if (data.taxRate !== undefined) {
-            this.taxRate = data.taxRate;
-        }
         this.render();
         this.updateTotals();
     }
-
-    // --- Métodos de consulta ---
 
     getItems() {
         return [...this.items];
@@ -169,12 +158,8 @@ class Cart {
         return this.items.reduce((sum, item) => sum + item.amount, 0);
     }
 
-    getTax() {
-        return this.getSubtotal() * this.taxRate;
-    }
-
     getTotal() {
-        return this.getSubtotal() + this.getTax();
+        return this.getSubtotal();
     }
 
     getItemCount() {
@@ -183,10 +168,5 @@ class Cart {
 
     isEmpty() {
         return this.items.length === 0;
-    }
-
-    setTaxRate(rate) {
-        this.taxRate = rate / 100;
-        this.updateTotals();
     }
 }

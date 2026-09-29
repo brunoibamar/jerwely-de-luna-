@@ -6,8 +6,45 @@
     <title>Jewerly De Luna - Punto de Venta</title>
     <link rel="stylesheet" href="css/styles.css">
 </head>
-<body>
-    <div id="login-screen" class="login-screen">
+    <body>
+    <div id="toast-container" class="toast-container"></div>
+
+    <!-- Selector de Negocio / Cliente -->
+    <div id="business-screen" class="login-screen">
+        <div class="login-card">
+            <img src="assets/logo.png" alt="Jewerly De Luna" class="login-logo">
+            <h1 class="login-title">Seleccionar Negocio</h1>
+            <p class="cash-open-message" style="margin-bottom: 24px;">
+                Elige el negocio para acceder o crea uno nuevo.
+                Cada negocio tiene datos completamente aislados.
+            </p>
+
+            <div id="business-list" class="business-list">
+                <!-- Negocios disponibles renderizados dinámicamente -->
+            </div>
+
+            <button type="button" id="create-business-btn" class="btn btn-outline login-btn">Crear Nuevo Negocio</button>
+
+            <div id="business-error" class="login-error"></div>
+        </div>
+
+        <!-- Modal: Crear Nuevo Negocio -->
+        <div id="create-business-modal" class="modal-overlay hidden">
+            <div class="modal">
+                <h3 class="modal-title">Crear Nuevo Negocio</h3>
+                <div class="input-group">
+                    <input type="text" id="new-business-name" placeholder=" " autocomplete="off" required>
+                    <label for="new-business-name">Nombre del Negocio</label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" id="cancel-create-business" class="btn btn-outline">Cancelar</button>
+                    <button type="button" id="confirm-create-business" class="btn btn-primary">Crear</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="login-screen" class="login-screen hidden">
         <div class="login-card">
             <img src="assets/logo.png" alt="Jewerly De Luna" class="login-logo">
             <h1 class="login-title">Jewerly De Luna</h1>
@@ -91,7 +128,7 @@
         <div class="modal confirmation-modal">
             <h3 class="modal-title">¿Estás seguro?</h3>
             <p class="confirmation-message">
-                ¿Estás seguro de que deseas cerrar la caja del día?
+                ¿Estás seguro de que deseas cerrar la sesión de caja?
             </p>
             <div class="modal-actions">
                 <button type="button" id="cancel-close-cash" class="btn btn-outline">Cancelar</button>
@@ -108,9 +145,10 @@
                 <div class="summary-grid" id="cash-summary-content">
                 </div>
             </div>
-            <div class="summary-actions admin-only">
-                <button type="button" id="send-email-btn" class="btn btn-outline">Enviar al Correo</button>
-                <button type="button" id="download-local-btn" class="btn btn-outline">Guardar Copia Local</button>
+<div class="summary-actions">
+                <button type="button" id="print-cut-btn" class="btn btn-outline">Imprimir Cierre de Caja</button>
+                <button type="button" id="send-email-btn" class="btn btn-outline">Enviar Registro al Correo</button>
+                <button type="button" id="download-local-btn" class="btn btn-outline">Guardar Localmente</button>
             </div>
             <div class="summary-footer">
                 <div class="auto-save-notice">
@@ -172,12 +210,14 @@
                 </button>
                 <h1 class="pos-title">Jewerly De Luna</h1>
                 <span class="user-badge" id="current-user">Cajero: <span id="user-name"></span></span>
+                <button id="switch-business-btn" class="btn btn-outline btn-sm admin-only">Cambiar Negocio</button>
             </div>
             <div class="header-right">
-                <button id="cash-drawer-btn" class="btn btn-outline">Corte de Caja</button>
+                <button id="cash-drawer-btn" class="btn btn-outline admin-only">Corte de Caja</button>
+                <button id="cash-close-btn" class="btn btn-outline guest-only">Cierre de Caja</button>
                 <button id="backup-btn" class="btn btn-outline admin-only">Respaldo</button>
-                <button id="returns-btn" class="btn btn-outline guest-allowed">Devoluciones</button>
-                <button id="expenses-btn" class="btn btn-outline guest-allowed">Gastos</button>
+                <button id="returns-btn" class="btn btn-outline admin-only">Devoluciones</button>
+                <button id="expenses-btn" class="btn btn-outline admin-only">Gastos</button>
                 <button id="logout-btn" class="btn btn-outline">Salir</button>
             </div>
         </header>
@@ -202,8 +242,8 @@
                         <div class="toolbar-actions">
                             <button id="add-product-btn" class="btn btn-outline">Agregar</button>
                             <!-- Botones de pausa y recuperación de ventas -->
-                            <button id="pause-sale-btn" class="btn btn-outline guest-allowed">Pausar Venta</button>
-                            <button id="held-sales-btn" class="btn btn-outline guest-allowed">Ventas en Espera ( <span id="held-count">0</span> )</button>
+                            <button id="pause-sale-btn" class="btn btn-outline">Pausar Venta</button>
+                            <button id="held-sales-btn" class="btn btn-outline">Ventas en Espera ( <span id="held-count">0</span> )</button>
                             <button id="clear-cart-btn" class="btn btn-outline">Limpiar</button>
                             <button id="checkout-btn" class="btn btn-primary">Finalizar Venta</button>
                         </div>
@@ -228,20 +268,16 @@
                     </div>
 
                     <div class="sales-footer">
-                        <div class="totals">
-                            <div class="total-row">
-                                <span class="total-label">Subtotal:</span>
-                                <span class="total-value" id="subtotal-amount">$0.00</span>
-                            </div>
-                            <div class="total-row">
-                                <span class="total-label">IVA (16%):</span>
-                                <span class="total-value" id="tax-amount">$0.00</span>
-                            </div>
-                            <div class="total-row total-grand">
-                                <span class="total-label">Total:</span>
-                                <span class="total-value" id="total-amount">$0.00</span>
-                            </div>
+                    <div class="totals">
+                        <div class="total-row">
+                            <span class="total-label">Subtotal:</span>
+                            <span class="total-value" id="subtotal-amount">$0.00</span>
                         </div>
+                        <div class="total-row total-grand">
+                            <span class="total-label">Total:</span>
+                            <span class="total-value" id="total-amount">$0.00</span>
+                        </div>
+                    </div>
                     </div>
                 </section>
 
@@ -306,17 +342,30 @@
                             </div>
                         </div>
 
-                        <!-- Sección: Pago Mixto -->
-                        <div class="payment-section mixed-payment-section hidden" id="mixed-payment-section">
-                            <div class="input-group">
-                                <input type="number" id="mixed-cash-input" step="0.01" min="0" placeholder=" ">
-                                <label for="mixed-cash-input">Monto en Efectivo ($)</label>
-                            </div>
-                            <div class="input-group">
-                                <input type="number" id="mixed-card-input" step="0.01" min="0" placeholder=" ">
-                                <label for="mixed-card-input">Monto en Tarjeta ($)</label>
-                            </div>
-                            <div class="payment-total-bar">
+                         <!-- Sección: Pago Mixto -->
+                         <div class="payment-section mixed-payment-section hidden" id="mixed-payment-section">
+                             <div class="input-group">
+                                 <input type="number" id="mixed-cash-input" step="0.01" min="0" placeholder=" ">
+                                 <label for="mixed-cash-input">Monto en Efectivo ($)</label>
+                             </div>
+                             <div class="input-group">
+                                 <input type="number" id="mixed-card-input" step="0.01" min="0" placeholder=" ">
+                                 <label for="mixed-card-input">Monto en Tarjeta ($)</label>
+                             </div>
+
+                             <!-- Botones de denominaciones rápidas (MXN) -->
+                             <div class="mixed-denominations">
+                                 <div class="denomination-label">Billetes</div>
+                                 <div class="denomination-grid mixed-denomination-grid" id="mixed-denom-bills">
+                                     <!-- Botones generados dinámicamente por app.bindPaymentEvents -->
+                                 </div>
+                                 <div class="denomination-label">Monedas</div>
+                                 <div class="denomination-grid mixed-denomination-grid" id="mixed-denom-coins">
+                                     <!-- Botones generados dinámicamente por app.bindPaymentEvents -->
+                                 </div>
+                             </div>
+
+                             <div class="payment-total-bar">
                                 <span>Total Ingresado:</span>
                                 <span id="mixed-total-display" class="payment-total-display">$0.00</span>
                             </div>
@@ -371,12 +420,31 @@
 
                 <section id="reports-section" class="section">
                     <h2 class="section-title">Reportes</h2>
-                    <div class="reports-container">
-                        <div class="report-card">
+
+                    <!-- Reportes por Día -->
+                    <div class="day-report-module" id="day-report-module">
+                        <div class="day-report-toolbar">
+                            <div class="day-report-date-picker">
+                                <label for="report-date-select">Fecha:</label>
+                                <input type="date" id="report-date-select">
+                                <button id="report-today-btn" class="btn btn-outline btn-sm">Hoy</button>
+                            </div>
+                            <div class="day-report-actions admin-only">
+                                <button id="print-daily-report-btn" class="btn btn-outline btn-sm">Imprimir Consolidado</button>
+                                <button id="export-daily-report-btn" class="btn btn-outline btn-sm">Exportar Consolidado</button>
+                            </div>
+                        </div>
+
+                        <div class="daily-consolidated-container" id="daily-consolidated-container">
+                        </div>
+                    </div>
+
+                    <div class="reports-container" style="margin-top: 24px;">
+                        <div class="report-card admin-only">
                             <h3>Ventas del Día</h3>
                             <p class="report-value" id="daily-sales">$0.00</p>
                         </div>
-                        <div class="report-card">
+                        <div class="report-card admin-only">
                             <h3>Transacciones</h3>
                             <p class="report-value" id="daily-transactions">0</p>
                         </div>
@@ -387,6 +455,12 @@
                         <div class="report-card admin-only">
                             <h3>Margen Promedio</h3>
                             <p class="report-value" id="avg-margin">0%</p>
+                        </div>
+                    </div>
+                    <div class="admin-only" style="margin-top: 24px;">
+                        <h3 class="section-title">Gráfica de Ventas Diarias</h3>
+                        <div class="chart-container">
+                            <canvas id="daily-sales-chart" width="600" height="300"></canvas>
                         </div>
                     </div>
                     <div class="admin-only" id="advanced-reports" style="margin-top: 24px;">
@@ -401,26 +475,133 @@
                                 <p class="report-value" id="top-product">N/A</p>
                             </div>
                         </div>
+                        <div style="margin-top: 24px;">
+                            <h3 class="section-title">Gráfica Mensual de Ventas</h3>
+                            <div class="chart-container">
+                                <canvas id="monthly-sales-chart" width="600" height="300"></canvas>
+                            </div>
+                        </div>
                     </div>
                 </section>
 
-                <section id="settings-section" class="section">
-                    <h2 class="section-title">Configuración</h2>
-                    <div class="settings-form">
-                        <div class="input-group">
-                            <input type="text" id="tax-rate-input" placeholder=" " value="16">
-                            <label for="tax-rate-input">Tasa de IVA (%)</label>
-                        </div>
-                        <div class="form-divider">
-                            <h3 class="form-divider-title">Correo para Reportes</h3>
-                        </div>
-                        <div class="input-group">
-                            <input type="email" id="admin-email-input" placeholder=" " required>
-                            <label for="admin-email-input">Correo del Administrador</label>
-                        </div>
-                        <div class="form-divider">
-                            <h3 class="form-divider-title">Credenciales de Acceso</h3>
-                        </div>
+            <section id="settings-section" class="section">
+                <h2 class="section-title">Configuración</h2>
+                <div class="settings-form">
+                    <div class="form-divider">
+                        <h3 class="form-divider-title">Información de la Tienda</h3>
+                    </div>
+                    <div class="input-group">
+                        <input type="text" id="store-name-input" placeholder=" " required>
+                        <label for="store-name-input">Nombre de la Tienda</label>
+                    </div>
+                    <div class="input-group">
+                        <input type="text" id="store-address-input" placeholder=" ">
+                        <label for="store-address-input">Dirección</label>
+                    </div>
+                     <div class="input-group">
+                         <input type="text" id="store-phone-input" placeholder=" ">
+                         <label for="store-phone-input">Teléfono</label>
+                     </div>
+                     <div class="input-group">
+                         <input type="text" id="store-rfc-input" placeholder=" ">
+                         <label for="store-rfc-input">RFC / Identificación</label>
+                     </div>
+
+                     <div class="form-divider">
+                         <h3 class="form-divider-title">Logotipo del Ticket</h3>
+                     </div>
+                     <div class="logo-upload-section">
+                         <div class="logo-preview-container" id="logo-preview-container">
+                             <img id="logo-preview" class="logo-preview" src="" alt="Logotipo" style="display: none;">
+                             <div id="logo-placeholder" class="logo-placeholder">
+                                 <span class="logo-placeholder-text">Sin logotipo</span>
+                             </div>
+                         </div>
+                         <div class="logo-upload-controls">
+                             <input type="file" id="store-logo-input" accept="image/*" style="display: none;">
+                             <button type="button" id="logo-upload-btn" class="btn btn-outline btn-sm">Seleccionar Imagen</button>
+                             <button type="button" id="logo-remove-btn" class="btn btn-outline btn-sm">Eliminar Logotipo</button>
+                         </div>
+                         <p class="logo-help-text">Formatos soportados: PNG, JPG, GIF (máx. 500 KB)</p>
+                     </div>
+
+                     <div class="form-divider">
+                         <h3 class="form-divider-title">Plantilla de Ticket</h3>
+                     </div>
+                     <div class="input-group">
+                         <input type="text" id="receipt-header-input" placeholder=" ">
+                         <label for="receipt-header-input">Encabezado del Ticket</label>
+                     </div>
+                     <div class="input-group">
+                         <input type="text" id="receipt-footer-input" placeholder=" ">
+                         <label for="receipt-footer-input">Mensaje de Agradecimiento (Pie de Ticket)</label>
+                     </div>
+
+                     <div class="form-divider">
+                         <h3 class="form-divider-title">Campos Opcionales del Ticket</h3>
+                     </div>
+                     <div class="checkbox-group">
+                         <input type="checkbox" id="receipt-show-cashier" placeholder=" ">
+                         <label for="receipt-show-cashier">Mostrar nombre del cajero</label>
+                     </div>
+                     <div class="checkbox-group">
+                         <input type="checkbox" id="receipt-show-date">
+                         <label for="receipt-show-date">Mostrar fecha y hora</label>
+                     </div>
+                     <div class="checkbox-group">
+                         <input type="checkbox" id="receipt-show-payment-method">
+                         <label for="receipt-show-payment-method">Mostrar método de pago</label>
+                     </div>
+                     <div class="checkbox-group">
+                         <input type="checkbox" id="receipt-show-payment-details">
+                         <label for="receipt-show-payment-details">Mostrar detalles de pago (recibido y cambio)</label>
+                     </div>
+                     <div class="input-group">
+                         <input type="number" id="low-stock-input" min="1" placeholder=" ">
+                         <label for="low-stock-input">Umbral de Stock Bajo</label>
+                     </div>
+
+                    <div class="form-divider">
+                        <h3 class="form-divider-title">Correo para Reportes</h3>
+                    </div>
+                     <div class="input-group">
+                         <input type="email" id="admin-email-input" placeholder=" ">
+                         <label for="admin-email-input">Correo del Administrador</label>
+                     </div>
+
+                     <div class="form-divider">
+                         <h3 class="form-divider-title">Configuración de EmailJS (Respaldo por Correo)</h3>
+                     </div>
+                      <p class="volume-help-text-small" style="margin-bottom: 16px;">
+                          Configura EmailJS para enviar reportes de corte de caja y cierre de día
+                          directamente al correo del administrador como respaldo inalterable.
+                          El envío se realiza mediante una API en segundo plano (EmailJS) sin abrir pestañas
+                          nuevas ni enlaces mailto:. Si no está configurado, el reporte se guarda localmente
+                          para envío manual explícito.
+                      </p>
+                     <div class="input-group">
+                         <input type="text" id="emailjs-public-key" placeholder=" " autocomplete="off">
+                         <label for="emailjs-public-key">Public Key de EmailJS</label>
+                     </div>
+                     <div class="input-group">
+                         <input type="text" id="emailjs-service-id" placeholder=" " autocomplete="off">
+                         <label for="emailjs-service-id">Service ID de EmailJS</label>
+                     </div>
+                     <div class="input-group">
+                         <input type="text" id="emailjs-template-id" placeholder=" " autocomplete="off">
+                         <label for="emailjs-template-id">Template ID de EmailJS</label>
+                     </div>
+                     <div class="checkbox-group">
+                         <input type="checkbox" id="emailjs-auto-send" style="margin-right: 8px;">
+                         <label for="emailjs-auto-send" style="position: static; transform: none; background: none; padding: 0; display: inline;">
+                             Enviar reporte automáticamente al cerrar caja y al cierre de día
+                         </label>
+                     </div>
+                     <button type="button" id="test-email-btn" class="btn btn-outline btn-sm">Probar Envío de Correo</button>
+
+                     <div class="form-divider">
+                        <h3 class="form-divider-title">Credenciales de Acceso</h3>
+                    </div>
 
                         <div class="creds-display">
                             <div class="cred-row">
@@ -498,6 +679,10 @@
         </div>
     </div>
 
+    <!-- EmailJS SDK para envío directo de correos -->
+    <script type="text/javascript" src="https://cdn.emailjs.com/dist/email.min.js"></script>
+    <!-- Aislamiento de datos por negocio (debe cargar primero) -->
+    <script src="js/business.js"></script>
     <script src="js/auth.js"></script>
     <!-- Módulo POS: VolumePricing, HeldSales, BarcodeScanner, PaymentProcessor -->
     <script src="js/pos.js"></script>
@@ -505,6 +690,7 @@
     <script src="js/checkout.js"></script>
     <script src="js/inventory.js"></script>
     <script src="js/cut.js"></script>
+    <script src="js/reports.js"></script>
     <script src="js/print.js"></script>
     <script src="js/backup.js"></script>
     <script src="js/app.js"></script>

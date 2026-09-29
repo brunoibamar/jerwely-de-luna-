@@ -23,10 +23,12 @@ class Auth {
     //  Las credenciales modificadas se guardan en localStorage
     //  y persisten al refrescar la página.
     // ============================================================
-    static storageKeys = {
-        adminPassword: 'pos_admin_password',
-        guestKey: 'pos_guest_key'
-    };
+    static get storageKeys() {
+        return {
+            adminPassword: Business.key('pos_admin_password'),
+            guestKey: Business.key('pos_guest_key')
+        };
+    }
 
     // ============================================================
     //  USUARIO ADMINISTRADOR COMPLETO (con datos de recuperación)
@@ -43,8 +45,10 @@ class Auth {
 
     static currentUser = null;
 
-    static drawerStorageKey = 'pos_drawer_initial';
-    static adminEmailKey = 'pos_admin_email';
+    static get drawerStorageKey() { return Business.key('pos_drawer_initial'); }
+    static get adminEmailKey() { return Business.key('pos_admin_email'); }
+    static get current_userKey() { return Business.key('pos_current_user'); }
+    static get adminUsernameKey() { return Business.key('pos_admin_username'); }
 
     // --- Getters dinámicos que leen de localStorage ---
     static getAdminPassword() {
@@ -56,7 +60,7 @@ class Auth {
     }
 
     static getAdminUsername() {
-        const stored = localStorage.getItem('pos_admin_username');
+        const stored = localStorage.getItem(this.adminUsernameKey);
         return stored || this.defaultAdminUsername;
     }
 
@@ -84,7 +88,7 @@ class Auth {
     }
 
     static init() {
-        const stored = localStorage.getItem('pos_current_user');
+        const stored = localStorage.getItem(this.current_userKey);
         if (stored) {
             this.currentUser = JSON.parse(stored);
             return true;
@@ -106,7 +110,7 @@ class Auth {
                 email: this.adminProfile.email,
                 securityQuestion: this.adminProfile.securityQuestion
             };
-            localStorage.setItem('pos_current_user', JSON.stringify(this.currentUser));
+            localStorage.setItem(this.current_userKey, JSON.stringify(this.currentUser));
             return { success: true, user: this.currentUser };
         }
         return { success: false, error: 'Credenciales incorrectas' };
@@ -122,7 +126,7 @@ class Auth {
             email: null,
             securityQuestion: null
         };
-        localStorage.setItem('pos_current_user', JSON.stringify(this.currentUser));
+        localStorage.setItem(this.current_userKey, JSON.stringify(this.currentUser));
         return { success: true, user: this.currentUser };
     }
 
@@ -202,7 +206,7 @@ class Auth {
                 email: user.email,
                 securityQuestion: user.securityQuestion
             };
-            localStorage.setItem('pos_current_user', JSON.stringify(this.currentUser));
+            localStorage.setItem(this.current_userKey, JSON.stringify(this.currentUser));
             return { success: true, user: this.currentUser };
         }
         return { success: false, error: 'Respuesta incorrecta' };
@@ -210,7 +214,7 @@ class Auth {
 
     static logout() {
         this.currentUser = null;
-        localStorage.removeItem('pos_current_user');
+        localStorage.removeItem(this.current_userKey);
     }
 
     static getCurrentUser() {
@@ -245,6 +249,22 @@ class Auth {
         return this.isAdmin();
     }
 
+    static canViewReportCharts() {
+        return this.isAdmin();
+    }
+
+    static canManageShift() {
+        return this.isAdmin();
+    }
+
+    static canAccessCashDrawer() {
+        return this.isAdmin();
+    }
+
+    static canPrintReports() {
+        return this.isAdmin();
+    }
+
     static canViewCosts() {
         return this.isAdmin();
     }
@@ -262,15 +282,15 @@ class Auth {
     }
 
     static canPerformReturns() {
-        return true;
+        return this.isAdmin();
     }
 
     static canRegisterExpenses() {
-        return true;
+        return this.isAdmin();
     }
 
     static canCancelTickets() {
-        return true;
+        return this.isAdmin();
     }
 
     static canPerformSales() {
@@ -287,11 +307,13 @@ class License {
     // MODIFICAR AQUÍ PARA CAMBIAR LA CLAVE MAESTRA
     static MASTER_KEY = 'JewerlySecret2026';
 
-    static storageKeys = {
-        expiration: 'pos_license_expiration',
-        lastUsage: 'pos_last_usage',
-        tampered: 'pos_clock_tampered'
-    };
+    static get storageKeys() {
+        return {
+            expiration: Business.key('pos_license_expiration'),
+            lastUsage: Business.key('pos_last_usage'),
+            tampered: Business.key('pos_clock_tampered')
+        };
+    }
 
     // --- Generación de tokens (usa la clave maestra + mes/año) ---
     static generateToken(month, year) {
@@ -423,7 +445,8 @@ class License {
     static exportBackup() {
         const backup = {
             timestamp: new Date().toISOString(),
-            store: 'Jewerly De Luna',
+            store: Business.getStoreName(),
+            businessId: Business.getCurrentBusinessId(),
             license: {
                 expiration: localStorage.getItem(this.storageKeys.expiration),
                 lastUsage: localStorage.getItem(this.storageKeys.lastUsage),
@@ -432,13 +455,19 @@ class License {
             auth: {
                 adminPassword: localStorage.getItem(Auth.storageKeys.adminPassword),
                 guestKey: localStorage.getItem(Auth.storageKeys.guestKey),
-                adminUsername: localStorage.getItem('pos_admin_username')
+                adminUsername: localStorage.getItem(Auth.adminUsernameKey)
             },
-            inventory: localStorage.getItem('pos_inventory'),
-            sales: localStorage.getItem('pos_sales'),
-            settings: localStorage.getItem('pos_settings'),
-            shift: localStorage.getItem('pos_shift_opened'),
-            backup: localStorage.getItem('pos_backup')
+            inventory: localStorage.getItem(Inventory.storageKey),
+            sales: localStorage.getItem(SaleService.storageKey),
+            settings: localStorage.getItem(Settings.storageKey),
+            shift: localStorage.getItem(Business.key('pos_shift_opened')),
+            shiftSession: localStorage.getItem(Cut.storageKey),
+            shiftHistory: localStorage.getItem(Cut.shiftHistoryKey),
+            heldSales: localStorage.getItem(HeldSales.storageKey),
+            reportHistory: localStorage.getItem(Backup.reportHistoryKey),
+            backup: localStorage.getItem(Backup.backupKey),
+            emailConfig: localStorage.getItem(Backup.emailConfigKey),
+            dayChangeKey: localStorage.getItem(ReportService.dayChangeKey)
         };
 
         const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });

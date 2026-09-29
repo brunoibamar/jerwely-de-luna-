@@ -13,7 +13,7 @@
 // ============================================================
 
 class VolumePricing {
-    static storageKey = 'pos_volume_pricing';
+    static get storageKey() { return Business.key('pos_volume_pricing'); }
 
     // --- Rangos de volumen por defecto (precios mayoreo) ---
     static defaultTiers = [
@@ -94,7 +94,7 @@ class VolumePricing {
 // ============================================================
 
 class HeldSales {
-    static storageKey = 'pos_held_sales';
+    static get storageKey() { return Business.key('pos_held_sales'); }
 
     static getAll() {
         const stored = localStorage.getItem(this.storageKey);
@@ -263,11 +263,15 @@ class BarcodeScanner {
 
 class PaymentProcessor {
     // Denominaciones de billetes y monedas mexicanas (mayor a menor)
-    static denominations = [1000, 500, 200, 100, 50, 20];
+    static denominations = [1000, 500, 200, 100, 50, 20, 10, 5, 2, 1];
 
     // Calcular el cambio y su desglose óptimo
+    // Fórmula: Cambio = Monto Recibido - Total Venta
     static calculateChange(amountReceived, totalDue) {
-        if (amountReceived < totalDue) {
+        const roundedReceived = Math.round(amountReceived * 100) / 100;
+        const roundedDue = Math.round(totalDue * 100) / 100;
+
+        if (roundedReceived < roundedDue) {
             return {
                 change: 0,
                 breakdown: {},
@@ -276,7 +280,7 @@ class PaymentProcessor {
             };
         }
 
-        const change = Math.round((amountReceived - totalDue) * 100) / 100;
+        const change = Math.round((roundedReceived - roundedDue) * 100) / 100;
         const breakdown = {};
         let remaining = change;
 
@@ -304,6 +308,6 @@ class PaymentProcessor {
 
     // Formatear denominación como etiqueta de botón
     static formatDenomination(denom) {
-        return denom >= 100 ? `$${denom}` : `$${denom}`;
+        return `$${denom}`;
     }
 }

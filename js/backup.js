@@ -1,18 +1,24 @@
 class Backup {
-    static backupKey = 'pos_backup';
-    static pendingReportsKey = 'pos_pending_reports';
-    static emailConfigKey = 'pos_email_config';
-    static reportHistoryKey = 'pos_report_history';
+    static get backupKey() { return Business.key('pos_backup'); }
+    static get pendingReportsKey() { return Business.key('pos_pending_reports'); }
+    static get emailConfigKey() { return Business.key('pos_email_config'); }
+    static get reportHistoryKey() { return Business.key('pos_report_history'); }
 
     static createBackup() {
         const data = {
-            version: '1.0',
+            version: '1.1',
             timestamp: new Date().toISOString(),
-            store: 'Jewerly De Luna',
+            store: Business.getStoreName(),
+            businessId: Business.getCurrentBusinessId(),
             inventory: Inventory.getAll(),
             sales: SaleService.getAll(),
-            users: Auth.adminUsers,
-            settings: Settings.getSettings()
+            users: Auth.adminProfile,
+            settings: Settings.getSettings(),
+            shiftSession: localStorage.getItem(Cut.storageKey),
+            shiftHistory: localStorage.getItem(Cut.shiftHistoryKey),
+            heldSales: HeldSales.getAll(),
+            reportHistory: localStorage.getItem(this.reportHistoryKey),
+            dayChangeKey: localStorage.getItem(ReportService.dayChangeKey)
         };
 
         const backupStr = JSON.stringify(data, null, 2);
@@ -35,7 +41,8 @@ class Backup {
             timestamp: new Date().toISOString(),
             inventory: Inventory.getAll(),
             sales: SaleService.getAll(),
-            settings: Settings.getSettings()
+            settings: Settings.getSettings(),
+            heldSales: HeldSales.getAll()
         };
         localStorage.setItem(this.backupKey, JSON.stringify(data));
         return { success: true, message: 'Respaldo guardado en localStorage' };
@@ -49,6 +56,7 @@ class Backup {
         Inventory.saveProducts(data.inventory || Inventory.defaultProducts);
         SaleService.save(data.sales || []);
         Settings.saveSettings(data.settings || {});
+        if (data.heldSales) localStorage.setItem(HeldSales.storageKey, JSON.stringify(data.heldSales));
 
         return { success: true, message: 'Datos restaurados correctamente' };
     }
@@ -66,6 +74,11 @@ class Backup {
                     if (data.inventory) Inventory.saveProducts(data.inventory);
                     if (data.sales) SaleService.save(data.sales);
                     if (data.settings) Settings.saveSettings(data.settings);
+                    if (data.shiftSession) localStorage.setItem(Cut.storageKey, data.shiftSession);
+                    if (data.shiftHistory) localStorage.setItem(Cut.shiftHistoryKey, data.shiftHistory);
+                    if (data.heldSales) localStorage.setItem(HeldSales.storageKey, JSON.stringify(data.heldSales));
+                    if (data.reportHistory) localStorage.setItem(this.reportHistoryKey, JSON.stringify(data.reportHistory));
+                    if (data.dayChangeKey) localStorage.setItem(ReportService.dayChangeKey, data.dayChangeKey);
                     resolve({ success: true, message: 'Datos importados correctamente' });
                 } catch (err) {
                     reject({ success: false, error: 'Error al leer el archivo: ' + err.message });
@@ -96,14 +109,29 @@ class Backup {
     }
 
     static generateDailyReport() {
-        const sales = SaleService.getDailySales();
-        const summary = Cut.getSummaryByRole();
-        const initialAmount = Auth.getDrawerInitial();
+        const session = Cut.getActiveSession();
+        let sales;
+        let initialAmount;
+        let reportType = 'daily';
+        let reportDate = new Date().toISOString().split('T')[0];
+
+        if (session) {
+            reportType = 'session';
+            sales = Cut.getSessionSales(session.openedAt, new Date().toISOString());
+            initialAmount = session.initialAmount;
+            reportDate = session.openedAt.split('T')[0];
+        } else {
+            sales = SaleService.getDailySales();
+            initialAmount = Auth.getDrawerInitial();
+        }
+
+        const summary = Cut.getSummaryByRole(null, session || null);
+        const now = new Date();
 
         const report = {
-            type: 'daily',
-            date: new Date().toISOString().split('T')[0],
-            store: 'Jewerly De Luna',
+            type: reportType,
+            date: reportDate,
+            store: Business.getStoreName(),
             cashier: Auth.getCurrentUser()?.name || 'Desconocido',
             role: Auth.getRole(),
             initialAmount: summary.isFull ? initialAmount : 0,
@@ -121,6 +149,16 @@ class Backup {
                 time: new Date(s.date).toLocaleTimeString('es-MX')
             })) : []
         };
+
+        if (session) {
+            report.sessionId = session.id;
+            report.cashier = session.openedBy;
+            report.sessionStartTime = session.openedAt;
+            report.sessionEndTime = now.toISOString();
+            report.formattedOpenTime = new Date(session.openedAt).toLocaleString('es-MX');
+            report.formattedCloseTime = now.toLocaleString('es-MX');
+            report.salesInSession = sales.length;
+        }
 
         if (Auth.isAdmin()) {
             let totalCost = 0;
@@ -173,7 +211,7 @@ class Backup {
             month: m,
             year: y,
             period: `${y}-${m.toString().padStart(2, '0')}`,
-            store: 'Jewerly De Luna',
+            store: Business.getStoreName(),
             totalRevenue,
             totalCost,
             profit,
@@ -223,7 +261,7 @@ class Backup {
         return {
             type: 'annual',
             year: year,
-            store: 'Jewerly De Luna',
+            store: Business.getStoreName(),
             totalRevenue,
             totalCost,
             profit,
@@ -234,10 +272,111 @@ class Backup {
         };
     }
 
+    // ============================================================
+    //  EMAILJS - CONFIGURACIÓN Y ENVÍO DIRECTO DE CORREOS
+    //  Los reportes de corte de caja y cierre de día se envían
+    //  mediante el servicio de envío directo de EmailJS API
+    //  (segundo plano), SIN abrir pestañas nuevas ni enlaces mailto:.
+    // ============================================================
+
+    static getEmailConfig() {
+        const stored = localStorage.getItem(this.emailConfigKey);
+        if (!stored) return null;
+        try {
+            return JSON.parse(stored);
+        } catch {
+            return null;
+        }
+    }
+
+    static saveEmailConfig(config) {
+        localStorage.setItem(this.emailConfigKey, JSON.stringify(config));
+    }
+
+    static isEmailJSSet() {
+        const config = this.getEmailConfig();
+        return !!(config && config.publicKey && config.serviceId && config.templateId);
+    }
+
+    // Inicializar el SDK de EmailJS con la public key configurada
+    static initEmailJS() {
+        const config = this.getEmailConfig();
+        if (config && config.publicKey && typeof emailjs !== 'undefined') {
+            try {
+                emailjs.init(config.publicKey);
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    // Envío directo vía EmailJS REST API (sin abrir cliente de correo)
+    static async sendViaEmailJS(report, recipient, customSubject, customBody) {
+        const config = this.getEmailConfig();
+        if (!config || !config.publicKey || !config.serviceId || !config.templateId) {
+            return { success: false, message: 'EmailJS no configurado' };
+        }
+
+        const reportTypeLabel = report.type === 'daily' ? 'Diario'
+            : report.type === 'monthly' ? 'Mensual'
+            : report.type === 'annual' ? 'Anual'
+            : 'Cierre de Caja por Sesión';
+
+        const subject = customSubject || `[${Business.getStoreName()}] Reporte ${reportTypeLabel} - ${new Date().toLocaleDateString('es-MX')}`;
+        const body = customBody || this.formatReportForEmail(report);
+        const email = recipient || Auth.getAdminEmail();
+
+        if (!email) {
+            return { success: false, message: 'No se ha configurado el correo del administrador' };
+        }
+
+        try {
+            const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'origin': 'localhost'
+                },
+                body: JSON.stringify({
+                    publicKey: config.publicKey,
+                    serviceId: config.serviceId,
+                    templateId: config.templateId,
+                    templateParams: {
+                        to_email: email,
+                        subject: subject,
+                        message: body,
+                        report_data: JSON.stringify(report, null, 2),
+                        report_type: reportTypeLabel,
+                        report_date: new Date().toISOString()
+                    }
+                })
+            });
+
+            if (response.ok) {
+                const result = await response.text();
+                return { success: true, message: `Reporte enviado a ${email} via EmailJS` };
+            } else {
+                const errorText = await response.text();
+                let errorMessage = 'Error al enviar el correo';
+                try {
+                    const errorJson = JSON.parse(errorText);
+                    errorMessage = errorJson.message || errorJson.error || errorMessage;
+                } catch {
+                    errorMessage = errorText || errorMessage;
+                }
+                return { success: false, message: `Error EmailJS: ${errorMessage}` };
+            }
+        } catch (err) {
+            return { success: false, message: `Error de conexión EmailJS: ${err.message}` };
+        }
+    }
+
     // --- Envío de reporte por email al administrador ---
-    // Usa mailto: para abrir el cliente de correo predeterminado con
-    // la información estructurada del corte. Si EmailJS estuviera configurado,
-    // se podría usar su API en su lugar.
+    // Utiliza el envío directo vía EmailJS API (segundo plano, sin abrir pestañas).
+    // Si EmailJS no está configurado o falla el envío, guarda localmente para
+    // reintentar después. NO utiliza mailto: ni window.open.
     static async sendReportEmail(report, recipient) {
         const email = recipient || Auth.getAdminEmail();
 
@@ -245,34 +384,170 @@ class Backup {
             return { success: false, message: 'No se ha configurado el correo del administrador' };
         }
 
-        const subject = `[Jewerly De Luna] Reporte ${report.type === 'daily' ? 'Diario' :
-            report.type === 'monthly' ? 'Mensual' : 'Anual'} - ${new Date().toLocaleDateString('es-MX')}`;
-
-        const body = this.formatReportForEmail(report);
-
-        if (this.isOnline()) {
-            // Abrir cliente de correo predeterminado con la información estructurada
-            const mailtoLink = `mailto:${encodeURIComponent(email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-            const newWin = window.open(mailtoLink, '_blank', 'noopener,noreferrer');
-
-            if (!newWin) {
-                // Popup bloqueado: guardar localmente y notificar
-                this.savePendingReport(report, email);
-                return { success: true, message: 'No se pudo abrir el cliente de correo. Reporte guardado localmente y se enviará cuando esté disponible.' };
+        // Si EmailJS está configurado, enviar directamente vía API
+        if (this.isEmailJSSet()) {
+            const result = await this.sendViaEmailJS(report, email);
+            if (result.success) {
+                // Registrar envío exitoso en el historial
+                this.saveEmailSendLog(report, email, 'emailjs', result.message);
+                return result;
             }
-
-            return { success: true, message: `Reporte enviado a ${email}` };
-        } else {
+            // Si falla el envío directo, guardar localmente para reintentar después
             this.savePendingReport(report, email);
-            return { success: true, message: 'Sin conexión. Reporte guardado localmente y se enviará cuando haya red.' };
+            return { success: true, message: `Envío directo falló (${result.message}). Reporte guardado localmente y se intentará enviar cuando esté disponible.` };
         }
+
+        // EmailJS no configurado: guardar localmente para envío manual explícito
+        this.savePendingReport(report, email);
+        return { success: true, message: 'EmailJS no configurado. Reporte guardado localmente para envío manual.' };
+    }
+
+    // --- Reporte simplificado para el perfil Invitado ---
+    // Construye un reporte que contiene ÚNICAMENTE la información de la
+    // sesión (sin montos, ganancias ni desgloses financieros sensibles).
+    static buildGuestSessionReport(report) {
+        const piecesSold = report.piecesSold !== undefined
+            ? report.piecesSold
+            : (report.salesInSession || report.transactionCount || 0);
+
+        return {
+            type: 'guest-session',
+            date: report.date,
+            store: report.store,
+            cashier: report.cashier || report.closedBy || 'Desconocido',
+            role: report.role || 'guest',
+            sessionId: report.sessionId,
+            sessionStartTime: report.sessionStartTime,
+            sessionEndTime: report.sessionEndTime,
+            formattedOpenTime: report.formattedOpenTime,
+            formattedCloseTime: report.formattedCloseTime,
+            transactionCount: report.transactionCount,
+            salesInSession: report.salesInSession !== undefined
+                ? report.salesInSession
+                : report.transactionCount,
+            piecesSold: piecesSold
+        };
+    }
+
+    // Texto plano con la información de la sesión para invitado (sin datos financieros)
+    static formatGuestSessionForEmail(report) {
+        const guestReport = this.buildGuestSessionReport(report);
+        let text = `CIERRE DE CAJA - Sesión de Invitado\n`;
+        text += `========================================\n\n`;
+        text += `Sesión: ${guestReport.sessionId || 'N/A'}\n`;
+        text += `Fecha: ${guestReport.date}\n`;
+        text += `Cajero: ${guestReport.cashier}\n\n`;
+        text += `--- Horario de Sesión ---\n`;
+        text += `Apertura: ${guestReport.formattedOpenTime || guestReport.sessionStartTime || 'N/A'}\n`;
+        text += `Cierre: ${guestReport.formattedCloseTime || guestReport.sessionEndTime || 'N/A'}\n\n`;
+        text += `--- Resumen de la Sesión ---\n`;
+        text += `Transacciones: ${guestReport.transactionCount}\n`;
+        text += `Ventas en Sesión: ${guestReport.salesInSession}\n`;
+        text += `Piezas Vendidas: ${guestReport.piecesSold}\n`;
+        text += `\n========================================\n`;
+        text += `Registro generado por ${Business.getStoreName()} POS\n`;
+        return text;
+    }
+
+    // Envío por email de SOLO la información de la sesión del invitado
+    // Utiliza EmailJS API en segundo plano (sin abrir pestañas ni mailto:).
+    static async sendGuestSessionEmail(report, recipient) {
+        const email = recipient || Auth.getAdminEmail();
+
+        if (!email) {
+            return { success: false, message: 'No se ha configurado el correo del administrador' };
+        }
+
+        const guestReport = this.buildGuestSessionReport(report);
+        const subject = `[${Business.getStoreName()}] Cierre de Caja - Invitado - ${new Date().toLocaleDateString('es-MX')}`;
+        const body = this.formatGuestSessionForEmail(guestReport);
+
+        if (this.isEmailJSSet()) {
+            const result = await this.sendViaEmailJS(guestReport, email, subject, body);
+            if (result.success) {
+                this.saveEmailSendLog(guestReport, email, 'emailjs', result.message);
+                return result;
+            }
+            this.savePendingReport(guestReport, email);
+            return { success: true, message: `Envío directo falló (${result.message}). Registro guardado localmente.` };
+        }
+
+        // EmailJS no configurado: guardar localmente para envío manual explícito
+        this.savePendingReport(guestReport, email);
+        return { success: true, message: 'EmailJS no configurado. Registro guardado localmente para envío manual.' };
+    }
+
+    static get emailSendLogKey() { return Business.key('pos_email_send_log'); }
+
+    static saveEmailSendLog(report, email, method, message) {
+        const log = this.getEmailSendLog();
+        log.push({
+            timestamp: new Date().toISOString(),
+            reportType: report.type,
+            reportDate: report.date || null,
+            recipient: email,
+            method: method,
+            result: message,
+            reportHash: this.hashReport(report)
+        });
+        localStorage.setItem(this.emailSendLogKey, JSON.stringify(log));
+    }
+
+    static getEmailSendLog() {
+        const stored = localStorage.getItem(this.emailSendLogKey);
+        return stored ? JSON.parse(stored) : [];
+    }
+
+    static hashReport(report) {
+        const str = JSON.stringify(report);
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const char = str.charCodeAt(i);
+            hash = Math.imul(hash ^ char, 2654435761);
+        }
+        return (hash >>> 0).toString(36).padStart(8, '0');
     }
 
     static formatReportForEmail(report) {
         const fmt = (v) => (typeof v === 'number' ? v.toFixed(2) : '0.00');
 
+        if (report.type === 'session') {
+            let text = `CIERRE DE CAJA POR SESIÓN - ${Business.getStoreName()}\n`;
+            text += `========================================\n\n`;
+            text += `Sesión: ${report.sessionId || 'N/A'}\n`;
+            text += `Fecha: ${report.date}\n`;
+            text += `Cajero: ${report.cashier}\n`;
+            text += `Rol: ${report.role}\n`;
+            text += `\n--- Horario de Sesión ---\n`;
+            text += `Apertura: ${report.formattedOpenTime || report.sessionStartTime || 'N/A'}\n`;
+            text += `Cierre: ${report.formattedCloseTime || report.sessionEndTime || 'N/A'}\n`;
+            text += `\n--- Resumen Financiero ---\n`;
+            text += `Monto Inicial: $${fmt(report.initialAmount)}\n`;
+            text += `Total Ventas: $${fmt(report.totalSales)}\n`;
+            text += `Efectivo: $${fmt(report.cashSales)}\n`;
+            text += `Tarjeta: $${fmt(report.cardSales)}\n`;
+            text += `Transacciones: ${report.transactionCount}\n`;
+            text += `Ventas en Sesión: ${report.salesInSession}\n`;
+            text += `Caja Final: $${fmt(report.closingAmount)}\n`;
+            text += `Efectivo en Caja: $${fmt(report.cashInDrawer)}\n`;
+            if (report.profit !== undefined) {
+                text += `\n--- Utilidades (Solo Admin) ---\n`;
+                text += `Ganancia Neta: $${fmt(report.profit)}\n`;
+                text += `Margen: ${report.margin}%\n`;
+            }
+            if (report.items && report.items.length > 0) {
+                text += `\n--- Detalle de Transacciones ---\n`;
+                report.items.forEach(item => {
+                    text += `${item.id} | ${item.time} | $${fmt(item.total)} | ${item.paymentMethod}\n`;
+                });
+            }
+            text += `\n========================================\n`;
+            text += `Reporte generado automáticamente por ${Business.getStoreName()} POS\n`;
+            return text;
+        }
+
         if (report.type === 'daily') {
-            let text = `REPORTE DE CIERRE DE CAJA - Jewerly De Luna\n`;
+            let text = `REPORTE DE CIERRE DE CAJA - ${Business.getStoreName()}\n`;
             text += `========================================\n\n`;
             text += `Fecha: ${report.date}\n`;
             text += `Cajero: ${report.cashier}\n`;
@@ -296,7 +571,7 @@ class Backup {
                 });
             }
             text += `\n========================================\n`;
-            text += `Reporte generado automáticamente por Jewerly De Luna POS\n`;
+            text += `Reporte generado automáticamente por ${Business.getStoreName()} POS\n`;
             return text;
         }
         return JSON.stringify(report, null, 2);
@@ -346,36 +621,38 @@ class Backup {
 
     // --- Reportes recurrentes ---
 
-    static monthlyReportKey = 'pos_last_monthly_report';
-    static annualReportKey = 'pos_last_annual_report';
+    static get monthlyReportKey() { return Business.key('pos_last_monthly_report'); }
+    static get annualReportKey() { return Business.key('pos_last_annual_report'); }
 
-    static checkMonthlyReport() {
+    static async checkMonthlyReport() {
         const now = new Date();
         const currentKey = `${now.getFullYear()}-${(now.getMonth() + 1)}`;
         const lastSent = localStorage.getItem(this.monthlyReportKey);
 
         if (lastSent !== currentKey && Auth.isAdmin()) {
             const report = this.generateMonthlyReport();
-            const result = this.sendReportEmail(report);
+            const result = await this.sendReportEmail(report);
             if (result.success) {
                 localStorage.setItem(this.monthlyReportKey, currentKey);
             }
+            this.saveReportToHistory(report);
             return result;
         }
         return { success: false, message: 'Ya se envió el reporte mensual' };
     }
 
-    static checkAnnualReport() {
+    static async checkAnnualReport() {
         const now = new Date();
         const currentYear = now.getFullYear().toString();
         const lastSent = localStorage.getItem(this.annualReportKey);
 
         if (lastSent !== currentYear && Auth.isAdmin()) {
             const report = this.generateAnnualReport(now.getFullYear());
-            const result = this.sendReportEmail(report);
+            const result = await this.sendReportEmail(report);
             if (result.success) {
                 localStorage.setItem(this.annualReportKey, currentYear);
             }
+            this.saveReportToHistory(report);
             return result;
         }
         return { success: false, message: 'Ya se envió el reporte anual' };
@@ -401,11 +678,15 @@ class Backup {
         if (format === 'csv') {
             const csvLines = [
                 'Concepto,Valor',
+                `Tipo, ${report.type || 'daily'}`,
+                ...(report.formattedOpenTime ? [`Apertura, ${report.formattedOpenTime}`] : []),
+                ...(report.formattedCloseTime ? [`Cierre, ${report.formattedCloseTime}`] : []),
                 `Monto Inicial, $${report.initialAmount.toFixed(2)}`,
                 `Total Ventas, $${report.totalSales.toFixed(2)}`,
                 `Efectivo, $${report.cashSales.toFixed(2)}`,
                 `Tarjeta, $${report.cardSales.toFixed(2)}`,
                 `Transacciones, ${report.transactionCount}`,
+                ...(report.salesInSession !== undefined ? [`Ventas en Sesión, ${report.salesInSession}`] : []),
                 `Caja Final, $${report.closingAmount.toFixed(2)}`,
                 ...(report.profit !== undefined ? [
                     `Ganancia Neta, $${report.profit.toFixed(2)}`,
@@ -436,5 +717,22 @@ class Backup {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         return { success: true, message: 'Reporte JSON descargado' };
+    }
+
+    // --- Guardado local simplificado para el perfil Invitado ---
+    // Descarga/guarda ÚNICAMENTE el registro de la sesión actual,
+    // sin desgloses financieros sensibles (solo piezas vendidas).
+    static exportGuestSession(report) {
+        const guestReport = this.buildGuestSessionReport(report);
+        const blob = new Blob([JSON.stringify(guestReport, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `cierre-invitado-${new Date().toISOString().split('T')[0]}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        return { success: true, message: 'Registro del turno guardado localmente' };
     }
 }

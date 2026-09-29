@@ -1,5 +1,5 @@
 class SaleService {
-    static storageKey = 'pos_sales';
+    static get storageKey() { return Business.key('pos_sales'); }
 
     static getAll() {
         const stored = localStorage.getItem(this.storageKey);
@@ -41,13 +41,102 @@ class SaleService {
     }
 }
 
+class Toast {
+    static containerId = 'toast-container';
+    static activeToasts = [];
+
+    static getContainer() {
+        let container = document.getElementById(this.containerId);
+        if (!container) {
+            container = document.createElement('div');
+            container.id = this.containerId;
+            container.className = 'toast-container';
+            document.body.appendChild(container);
+        }
+        return container;
+    }
+
+    static show(message, type = 'info', duration = 3500) {
+        const container = this.getContainer();
+
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+
+        const iconMap = {
+            success: '✓',
+            error: '✕',
+            warning: '⚠',
+            info: 'ℹ'
+        };
+
+        toast.innerHTML = `
+            <span class="toast-icon">${iconMap[type] || iconMap.info}</span>
+            <span class="toast-message">${message}</span>
+            <button type="button" class="toast-close" aria-label="Cerrar">×</button>
+        `;
+
+        toast.querySelector('.toast-close').addEventListener('click', () => {
+            this.hide(toast);
+        });
+
+        container.appendChild(toast);
+        this.activeToasts.push(toast);
+
+        setTimeout(() => {
+            toast.classList.add('show');
+        }, 10);
+
+        if (duration > 0) {
+            setTimeout(() => {
+                this.hide(toast);
+            }, duration);
+        }
+
+        return toast;
+    }
+
+    static hide(toast) {
+        toast.classList.remove('show');
+        setTimeout(() => {
+            if (toast.parentNode) {
+                toast.parentNode.removeChild(toast);
+            }
+            this.activeToasts = this.activeToasts.filter(t => t !== toast);
+        }, 300);
+    }
+
+    static success(message, duration = 3500) {
+        return this.show(message, 'success', duration);
+    }
+
+    static error(message, duration = 4000) {
+        return this.show(message, 'error', duration);
+    }
+
+    static warning(message, duration = 4000) {
+        return this.show(message, 'warning', duration);
+    }
+
+    static info(message, duration = 3500) {
+        return this.show(message, 'info', duration);
+    }
+}
+
 class Settings {
-    static storageKey = 'pos_settings';
+    static get storageKey() { return Business.key('pos_settings'); }
 
     static defaultSettings = {
-        taxRate: 16,
         storeName: 'Jewerly De Luna',
+        storeAddress: 'Av. Reforma 123, CDMX',
+        storePhone: '(55) 1234-5678',
+        storeRfc: '',
+        storeLogo: '',
         receiptHeader: 'Gracias por su compra',
+        receiptFooter: '¡Gracias por su compra!',
+        receiptShowCashier: true,
+        receiptShowDate: true,
+        receiptShowPaymentMethod: true,
+        receiptShowPaymentDetails: true,
         lowStockThreshold: 5
     };
 
@@ -79,20 +168,24 @@ class App {
         this.cart = new Cart();
         this.activeSection = 'sales';
         this.isInitialized = false;
-        this.receivedAmount = 0;       // Monto recibido en la calculadora de cambio
-        this.paymentEventsBound = false; // Flag para evitar listeners duplicados en el modal de pago
+        this.receivedAmount = 0;
+        this.paymentEventsBound = false;
     }
 
     init() {
         if (this.isInitialized) return;
 
+        Business.migrateExistingData();
+
         Inventory.init();
         Auth.init();
 
+        this.bindBusinessEvents();
         this.bindLoginEvents();
         this.bindNavigationEvents();
         this.bindSalesEvents();
         this.bindInventoryEvents();
+        this.bindReportsEvents();
         this.bindSettingsEvents();
         this.bindRecoveryEvents();
         this.bindLicenseEvents();
@@ -121,11 +214,25 @@ class App {
 
         this.hideLicenseOverlay();
 
-        Auth.logout();
-        this.showLogin();
+        // --- Selección de negocio ---
+        // Si no hay un negocio activo, mostrar la pantalla de selección
+        const wasFirstRun = !Business.hasCurrentBusiness();
+        if (wasFirstRun) {
+            Business.setCurrentBusinessId('default');
+            Business.migrateExistingData();
+            this.renderBusinessList();
+            this.showBusinessSelection();
+        }
 
+        // Inicializar procesos en segundo plano
         this.updateDailyReport();
         this.updateRoleVisibility();
+        ReportService.startDayChangeWatcher();
+
+        // Inicializar EmailJS (solo inicializa el SDK; no envía nada automáticamente)
+        if (Backup.isEmailJSSet()) {
+            Backup.initEmailJS();
+        }
     }
 
     showLicenseOverlay(type = 'expired') {
@@ -215,32 +322,135 @@ class App {
         reader.onload = (e) => {
             try {
                 const data = JSON.parse(e.target.result);
-                if (data.inventory) localStorage.setItem('pos_inventory', data.inventory);
-                if (data.sales) localStorage.setItem('pos_sales', data.sales);
-                if (data.settings) localStorage.setItem('pos_settings', data.settings);
+                if (data.inventory) localStorage.setItem(Inventory.storageKey, data.inventory);
+                if (data.sales) localStorage.setItem(SaleService.storageKey, data.sales);
+                if (data.settings) localStorage.setItem(Settings.storageKey, data.settings);
                 if (data.auth) {
-                    if (data.auth.adminPassword) localStorage.setItem('pos_admin_password', data.auth.adminPassword);
-                    if (data.auth.guestKey) localStorage.setItem('pos_guest_key', data.auth.guestKey);
-                    if (data.auth.adminUsername) localStorage.setItem('pos_admin_username', data.auth.adminUsername);
+                    if (data.auth.adminPassword) localStorage.setItem(Auth.storageKeys.adminPassword, data.auth.adminPassword);
+                    if (data.auth.guestKey) localStorage.setItem(Auth.storageKeys.guestKey, data.auth.guestKey);
+                    if (data.auth.adminUsername) localStorage.setItem(Auth.adminUsernameKey, data.auth.adminUsername);
                 }
                 if (data.license) {
-                    if (data.license.expiration) localStorage.setItem('pos_license_expiration', data.license.expiration);
-                    if (data.license.lastUsage) localStorage.setItem('pos_last_usage', data.license.lastUsage);
-                    if (data.license.tampered) localStorage.setItem('pos_clock_tampered', data.license.tampered);
+                    if (data.license.expiration) localStorage.setItem(License.storageKeys.expiration, data.license.expiration);
+                    if (data.license.lastUsage) localStorage.setItem(License.storageKeys.lastUsage, data.license.lastUsage);
+                    if (data.license.tampered) localStorage.setItem(License.storageKeys.tampered, data.license.tampered);
                 }
-                if (data.shift) localStorage.setItem('pos_shift_opened', data.shift);
+                if (data.shift) localStorage.setItem(Business.key('pos_shift_opened'), data.shift);
+                if (data.shiftSession) localStorage.setItem(Cut.storageKey, data.shiftSession);
+                if (data.shiftHistory) localStorage.setItem(Cut.shiftHistoryKey, data.shiftHistory);
+                if (data.reportHistory) localStorage.setItem(Backup.reportHistoryKey, data.reportHistory);
+                if (data.dayChangeKey) localStorage.setItem(ReportService.dayChangeKey, data.dayChangeKey);
+                if (data.emailConfig) localStorage.setItem(Backup.emailConfigKey, data.emailConfig);
 
-                alert('Respalado importado correctamente. Recargue la página para aplicar los cambios.');
+                Toast.success('Respalado importado correctamente. Recargue la página para aplicar los cambios.');
             } catch (err) {
-                alert('Error al leer el archivo: ' + err.message);
+                Toast.error('Error al leer el archivo: ' + err.message);
             }
         };
         reader.readAsText(file);
     }
 
     showLogin() {
+        document.getElementById('business-screen')?.classList.add('hidden');
         document.getElementById('login-screen')?.classList.remove('hidden');
         document.getElementById('pos-app')?.classList.add('hidden');
+    }
+
+    showBusinessSelection() {
+        const currentBiz = Business.getCurrentBusinessId();
+        const businesses = Business.getBusinesses();
+
+        if (businesses.length === 1) {
+            Auth.logout();
+            this.showLogin();
+            return;
+        }
+
+        document.getElementById('login-screen')?.classList.add('hidden');
+        document.getElementById('pos-app')?.classList.add('hidden');
+        document.getElementById('business-screen')?.classList.remove('hidden');
+        this.renderBusinessList();
+    }
+
+    renderBusinessList() {
+        const list = document.getElementById('business-list');
+        if (!list) return;
+
+        const businesses = Business.getBusinesses();
+        const currentId = Business.getCurrentBusinessId();
+
+        list.innerHTML = '';
+        businesses.forEach(biz => {
+            const isSelected = biz.id === currentId;
+            const btn = document.createElement('button');
+            btn.className = `business-option ${isSelected ? 'selected' : ''}`;
+            btn.innerHTML = `
+                <span class="business-name">${biz.name}</span>
+                ${biz.isDefault ? '<span class="business-badge">Predeterminado</span>' : ''}
+                <span class="business-id">ID: ${biz.id}</span>
+            `;
+            btn.addEventListener('click', () => {
+                Business.selectBusiness(biz.id);
+                this.renderBusinessList();
+                this.showLogin();
+                Auth.logout();
+                this.updateRoleVisibility();
+                if (biz.id !== currentId) {
+                    Toast.info(`Cambiado al negocio: ${biz.name}`, 2000);
+                }
+            });
+            list.appendChild(btn);
+        });
+    }
+
+    bindBusinessEvents() {
+        const createBtn = document.getElementById('create-business-btn');
+        if (createBtn) {
+            createBtn.addEventListener('click', () => {
+                const modal = document.getElementById('create-business-modal');
+                const nameInput = document.getElementById('new-business-name');
+                if (modal && nameInput) {
+                    nameInput.value = '';
+                    modal.classList.remove('hidden');
+                    setTimeout(() => nameInput.focus(), 100);
+                }
+            });
+        }
+
+        const cancelBtn = document.getElementById('cancel-create-business');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                document.getElementById('create-business-modal')?.classList.add('hidden');
+            });
+        }
+
+        const confirmBtn = document.getElementById('confirm-create-business');
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', () => {
+                const nameInput = document.getElementById('new-business-name');
+                const name = nameInput?.value.trim();
+                if (!name) {
+                    Toast.error('Ingresa un nombre para el negocio');
+                    return;
+                }
+                const result = Business.createBusiness(name);
+                if (result.success) {
+                    document.getElementById('create-business-modal')?.classList.add('hidden');
+                    this.renderBusinessList();
+                    this.showLogin();
+                    Auth.logout();
+                    this.updateRoleVisibility();
+                    this.updateHeldSalesButton();
+                    this.bindVolumePricingEvents();
+                    this.renderStoreSettings();
+                    this.updateLowStockIndicator();
+                    this.renderDailyConsolidated();
+                    Toast.success(`Negocio "${result.business.name}" creado`);
+                } else {
+                    Toast.error(result.error || 'Error al crear el negocio');
+                }
+            });
+        }
     }
 
     showApp() {
@@ -264,21 +474,30 @@ class App {
         this.cart.updateTotals();
         this.updateHeldSalesButton();
         this.bindVolumePricingEvents();
+        this.renderStoreSettings();
+        this.updateLowStockIndicator();
+        this.renderDailyConsolidated();
+        this.updateRoleVisibility();
     }
 
-    updateRoleVisibility() {
+     updateRoleVisibility() {
         const isAdmin = Auth.isAdmin();
-        const guestAllowedEls = document.querySelectorAll('.guest-allowed');
+        const isGuest = Auth.isGuest();
         const adminOnlyEls = document.querySelectorAll('.admin-only');
+        const guestOnlyEls = document.querySelectorAll('.guest-only');
 
-        guestAllowedEls.forEach(el => {
-            if (!isAdmin) el.classList.remove('hidden');
-            else el.classList.add('hidden');
-        });
-
+        // admin-only: visibles solo para administradores
         adminOnlyEls.forEach(el => {
             el.classList.toggle('hidden', !isAdmin);
         });
+
+        // guest-only: visibles solo para el perfil Invitado
+        guestOnlyEls.forEach(el => {
+            el.classList.toggle('hidden', !isGuest);
+        });
+
+        // guest-allowed: visibles para todos (admin y cajero)
+        // No se ocultan del administrador; cualquier usuario puede usarlos
     }
 
     bindLoginEvents() {
@@ -372,6 +591,19 @@ class App {
         const cashDrawerBtn = document.getElementById('cash-drawer-btn');
         if (cashDrawerBtn) {
             cashDrawerBtn.addEventListener('click', () => {
+                if (!Auth.canAccessCashDrawer()) {
+                    Toast.warning('Permiso denegado: El cierre de caja requiere privilegios de administrador');
+                    return;
+                }
+                this.showCloseConfirmation();
+            });
+        }
+
+        // Cierre de Caja simplificado para el perfil Invitado.
+        // Muestra solo el total de piezas vendidas (sin totales monetarios ni ganancias).
+        const cashCloseBtn = document.getElementById('cash-close-btn');
+        if (cashCloseBtn) {
+            cashCloseBtn.addEventListener('click', () => {
                 this.showCloseConfirmation();
             });
         }
@@ -395,10 +627,14 @@ class App {
         // Ocultar el login screen (ya se autenticó el usuario)
         document.getElementById('login-screen')?.classList.add('hidden');
 
-        // NO mostrar el POS app aún - se muestra después de la apertura de caja
-
-        if (!Cut.isShiftOpen()) {
-            Cut.openShift();
+        // Si ya hay una sesión abierta, saltar directamente al POS
+        if (Cut.isShiftOpen()) {
+            this.showApp();
+            this.cart.render();
+            this.cart.updateTotals();
+            this.updateRoleVisibility();
+            this.renderStoreSettings();
+            return;
         }
 
         const userLabel = document.getElementById('cash-open-user');
@@ -423,11 +659,13 @@ class App {
         const amount = parseFloat(amountInput?.value);
 
         if (isNaN(amount) || amount < 0) {
-            alert('Ingresa un monto inicial válido');
+            Toast.error('Ingresa un monto inicial válido');
             return;
         }
 
         Auth.setDrawerInitial(amount);
+        Cut.openSession(amount, Auth.getCurrentUser());
+
         const overlay = document.getElementById('cash-open-overlay');
         if (overlay) {
             overlay.classList.add('hidden');
@@ -435,10 +673,10 @@ class App {
 
         // Ahora sí mostrar el POS app
         this.showApp();
-        this.updateTaxRate();
         this.cart.render();
         this.cart.updateTotals();
         this.updateRoleVisibility();
+        this.renderStoreSettings();
     }
 
     hideCloseConfirmation() {
@@ -458,12 +696,12 @@ class App {
     async closeCashDrawer() {
         this.hideCloseConfirmation();
 
-        Cut.closeShift();
-
-        const report = Backup.generateDailyReport();
+        // Cerrar la sesión de caja y generar reporte de corte por turno
+        const session = Cut.closeSession();
+        const report = (session && session.report) ? session.report : Backup.generateDailyReport();
         this.currentReport = report;
 
-        // Guardar copia automática en localStorage (historial interno)
+        // Guardar copia en localStorage (historial interno)
         Backup.saveReportToHistory(report);
 
         // Mostrar el resumen en pantalla
@@ -471,6 +709,10 @@ class App {
 
         // Limpiar el fondo inicial
         Auth.clearDrawerInitial();
+
+        // NOTA: El envío de reporte por correo NO es automático.
+        // Solo se activa al hacer clic en "Enviar Registro al Correo"
+        // dentro del modal de Cierre de Caja (bindSummaryEvents).
     }
 
     showCashSummary(report) {
@@ -494,7 +736,20 @@ class App {
                     `;
                 }
 
+                const openTime = report.formattedOpenTime || '';
+                const closeTime = report.formattedCloseTime || '';
+
                 summaryEl.innerHTML = `
+                    <div class="session-timestamps">
+                        <div class="session-time-row">
+                            <span class="summary-label">Apertura:</span>
+                            <span class="summary-value">${openTime}</span>
+                        </div>
+                        <div class="session-time-row">
+                            <span class="summary-label">Cierre:</span>
+                            <span class="summary-value">${closeTime}</span>
+                        </div>
+                    </div>
                     <div class="summary-row">
                         <span class="summary-label">Monto Inicial</span>
                         <span class="summary-value">$${report.initialAmount.toFixed(2)}</span>
@@ -515,6 +770,10 @@ class App {
                         <span class="summary-label">Transacciones</span>
                         <span class="summary-value">${report.transactionCount}</span>
                     </div>
+                    <div class="summary-row">
+                        <span class="summary-label">Ventas en Sesión</span>
+                        <span class="summary-value">${report.salesInSession !== undefined ? report.salesInSession : report.transactionCount}</span>
+                    </div>
                     <div class="summary-row total">
                         <span class="summary-label">Caja Final</span>
                         <span class="summary-value gold">$${report.closingAmount.toFixed(2)}</span>
@@ -522,35 +781,26 @@ class App {
                     ${profitRows}
                 `;
             } else {
-                // --- Invitado / Cajero: solo confirmación simple + efectivo contado ---
-                // No se muestra el desglose de ventas, utilidades ni detalles financieros
+                // --- Invitado / Cajero: vista restringida ---
+                // No se muestra dinero, ganancias ni montos totales.
+                // Únicamente el total de piezas vendidas en el turno/sesión.
+                const piecesSold = report.piecesSold !== undefined
+                    ? report.piecesSold
+                    : (report.salesInSession || report.transactionCount || 0);
+
                 summaryEl.innerHTML = `
-                    <div class="summary-row">
-                        <span class="summary-label">Cajero</span>
-                        <span class="summary-value">${report.cashier}</span>
-                    </div>
-                    <div class="summary-row">
-                        <span class="summary-label">Transacciones</span>
-                        <span class="summary-value">${report.transactionCount}</span>
-                    </div>
-                    <div class="summary-row total">
-                        <span class="summary-label">Corte Completado</span>
-                        <span class="summary-value gold">✓</span>
-                    </div>
-                    <div class="guest-cash-count">
-                        <div class="input-group">
-                            <input type="number" id="guest-cash-count" step="0.01" min="0" placeholder=" ">
-                            <label for="guest-cash-count">Efectivo Contado en Caja ($)</label>
-                        </div>
+                    <div class="summary-row guest-pieces-sold">
+                        <span class="summary-label">Piezas Vendidas</span>
+                        <span class="summary-value gold">${piecesSold}</span>
                     </div>
                 `;
             }
         }
 
-        // Mostrar/ocultar botones de acción según rol
+        // Mostrar botones de acción (visibles para todos; el comportamiento es role-aware)
         const summaryActions = document.querySelector('.summary-actions');
         if (summaryActions) {
-            summaryActions.classList.toggle('hidden', !isAdmin);
+            summaryActions.classList.remove('hidden');
         }
 
         const summaryOverlay = document.getElementById('cash-summary-overlay');
@@ -562,29 +812,49 @@ class App {
     }
 
     bindSummaryEvents() {
+        const printCutBtn = document.getElementById('print-cut-btn');
+        if (printCutBtn) {
+            printCutBtn.addEventListener('click', () => {
+                // Usar el reporte de la sesión/turno recién cerrado
+                const report = this.currentReport || Cut.generateCutReport();
+                if (Auth.isGuest()) {
+                    // Invitado: ticket simplificado (solo piezas vendidas)
+                    Print.printGuestClosure(report);
+                } else {
+                    // Administrador: corte financiero completo
+                    Print.printCutReport(report);
+                }
+            });
+        }
+
         const sendEmailBtn = document.getElementById('send-email-btn');
         if (sendEmailBtn) {
             sendEmailBtn.addEventListener('click', async () => {
-                if (!Auth.isAdmin()) {
-                    alert('Permiso denegado: esta acción requiere privilegios de administrador');
-                    return;
-                }
                 if (!this.currentReport) return;
 
-                const result = await Backup.sendReportEmail(this.currentReport);
-                alert(result.message || 'Reporte enviado al correo del administrador.');
+                let result;
+                if (Auth.isGuest()) {
+                    // Invitado: solo información de la sesión, sin montos sensibles
+                    result = await Backup.sendGuestSessionEmail(this.currentReport);
+                } else {
+                    // Administrador: reporte financiero completo
+                    result = await Backup.sendReportEmail(this.currentReport);
+                }
+                Toast.info(result.message || 'Reporte enviado al correo del administrador.');
             });
         }
 
         const downloadBtn = document.getElementById('download-local-btn');
         if (downloadBtn) {
             downloadBtn.addEventListener('click', () => {
-                if (!Auth.isAdmin()) {
-                    alert('Permiso denegado: esta acción requiere privilegios de administrador');
-                    return;
-                }
                 if (this.currentReport) {
-                    Backup.exportReportFile(this.currentReport);
+                    if (Auth.isGuest()) {
+                        // Invitado: registro de sesión simplificado (solo piezas vendidas)
+                        Backup.exportGuestSession(this.currentReport);
+                    } else {
+                        // Administrador: reporte completo
+                        Backup.exportReportFile(this.currentReport);
+                    }
                 }
             });
         }
@@ -614,7 +884,7 @@ class App {
             <html>
             <head>
                 <meta charset="UTF-8">
-                <title>Cierre de Caja - Jewerly De Luna</title>
+                <title>Cierre de Caja - ${report.store || Business.getStoreName()}</title>
                 <style>
                     body { font-family: sans-serif; padding: 20px; color: #000; }
                     h1 { color: #d4af37; }
@@ -625,9 +895,11 @@ class App {
                 </style>
             </head>
             <body>
-                <h1>Cierre de Caja - Jewerly De Luna</h1>
+                <h1>Cierre de Caja - ${report.store || Business.getStoreName()}</h1>
                 <p><strong>Fecha:</strong> ${report.date}</p>
-                <p><strong>Cajero:</strong> ${report.cashier}</p>
+                <p><strong>Cajero:</strong> ${report.cashier || report.closedBy || 'Desconocido'}</p>
+                ${report.formattedOpenTime ? `<p><strong>Hora de Apertura:</strong> ${report.formattedOpenTime}</p>` : ''}
+                ${report.formattedCloseTime ? `<p><strong>Hora de Cierre:</strong> ${report.formattedCloseTime}</p>` : ''}
                 <h3>Resumen</h3>
                 <table>
                     <tr><th>Concepto</th><th>Valor</th></tr>
@@ -636,6 +908,7 @@ class App {
                     <tr><td>Efectivo</td><td>$${report.cashSales.toFixed(2)}</td></tr>
                     <tr><td>Tarjeta</td><td>$${report.cardSales.toFixed(2)}</td></tr>
                     <tr><td>Transacciones</td><td>${report.transactionCount}</td></tr>
+                    ${report.salesInSession !== undefined ? `<tr><td>Ventas en Sesión</td><td>${report.salesInSession}</td></tr>` : ''}
                     <tr class="total-row"><td>Caja Final</td><td>$${report.closingAmount.toFixed(2)}</td></tr>
                     ${report.profit !== undefined ? `<tr class="total-row"><td>Ganancia Neta</td><td>$${report.profit.toFixed(2)}</td></tr>` : ''}
                     ${report.margin !== undefined ? `<tr class="total-row"><td>Margen</td><td>${report.margin}%</td></tr>` : ''}
@@ -695,7 +968,7 @@ class App {
         if (backupBtn) {
             backupBtn.addEventListener('click', () => {
                 if (!Auth.canAccessConfig()) {
-                    alert('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
                     return;
                 }
                 Backup.createBackup();
@@ -715,6 +988,11 @@ class App {
 
         if (sectionId === 'inventory') {
             Inventory.renderCatalog();
+        }
+        if (sectionId === 'reports') {
+            this.updateDailyReport();
+            this.renderDailyConsolidated();
+            this.updateRoleVisibility();
         }
         if (sectionId === 'sales') {
             BarcodeScanner.focusInput();
@@ -797,7 +1075,7 @@ class App {
             if (this.cart.canAddItem(product.barcode)) {
                 this.cart.addItem(product);
             } else {
-                alert('No hay suficiente stock disponible');
+                Toast.warning('No hay suficiente stock disponible');
             }
         } else {
             // Si no se encuentra por barcode, buscar por descripción
@@ -806,9 +1084,9 @@ class App {
                 this.cart.addItem(found[0]);
             } else if (found.length > 1) {
                 // Múltiples resultados: sugerir usar el código de barras exacto
-                alert(`Se encontraron ${found.length} productos. Usa el código de barras para seleccionar.`);
+                Toast.warning(`Se encontraron ${found.length} productos. Usa el código de barras para seleccionar.`);
             } else {
-                alert('Producto no encontrado');
+                Toast.warning('Producto no encontrado');
             }
         }
 
@@ -822,7 +1100,7 @@ class App {
     processCheckout() {
         // Validar que el carrito no esté vacío antes de mostrar el pago
         if (this.cart.isEmpty()) {
-            alert('No hay productos en la venta');
+            Toast.warning('No hay productos en la venta');
             return;
         }
         this.showPaymentModal();
@@ -833,9 +1111,10 @@ class App {
     // El modal está definido en el HTML (id="payment-modal-overlay") y se muestra
     // dinámicamente para evitar crear múltiples overlays en el DOM.
     showPaymentModal() {
+        // Actualizar monto total a pagar (neto, sin IVA)
         const total = this.cart.getTotal();
+        this.currentPaymentTotal = total;
 
-        // Actualizar monto total a pagar
         const totalEl = document.getElementById('payment-total');
         const cardTotalEl = document.getElementById('card-total-display');
         if (totalEl) totalEl.textContent = `$${total.toFixed(2)}`;
@@ -843,24 +1122,14 @@ class App {
 
         // Reiniciar estado del calculator de cambio
         this.receivedAmount = 0;
-        const receivedEl = document.getElementById('received-amount-display');
-        const changeEl = document.getElementById('change-amount-display');
-        if (receivedEl) receivedEl.textContent = '$0.00';
-        if (changeEl) changeEl.textContent = '$0.00';
+        this.updateCashDisplay(total);
 
-        // Reiniciar botón de confirmación de efectivo
-        const confirmCashBtn = document.getElementById('confirm-cash-btn');
-        if (confirmCashBtn) confirmCashBtn.disabled = true;
-
-        // Reiniciar inputs de pago mixto
+        // Reiniciar inputs de pago mixto y validar
         const mixedCashInput = document.getElementById('mixed-cash-input');
         const mixedCardInput = document.getElementById('mixed-card-input');
-        const mixedTotalEl = document.getElementById('mixed-total-display');
-        const confirmMixedBtn = document.getElementById('confirm-mixed-btn');
         if (mixedCashInput) mixedCashInput.value = '';
         if (mixedCardInput) mixedCardInput.value = '';
-        if (mixedTotalEl) mixedTotalEl.textContent = '$0.00';
-        if (confirmMixedBtn) confirmMixedBtn.disabled = true;
+        this.validateMixedPayment();
 
         // Mostrar sección de efectivo por defecto
         this.showPaymentSection('cash');
@@ -870,6 +1139,25 @@ class App {
         if (overlay) overlay.classList.remove('hidden');
 
         this.bindPaymentEvents();
+    }
+
+    // Validar pago mixto en tiempo real
+    // Habilita la confirmación solo si la suma de efectivo + tarjeta >= total a pagar
+    validateMixedPayment() {
+        const total = this.currentPaymentTotal || this.cart.getTotal();
+        const mixedCashInput = document.getElementById('mixed-cash-input');
+        const mixedCardInput = document.getElementById('mixed-card-input');
+        const mixedTotalEl = document.getElementById('mixed-total-display');
+        const confirmMixedBtn = document.getElementById('confirm-mixed-btn');
+
+        const cashAmount = parseFloat(mixedCashInput?.value) || 0;
+        const cardAmount = parseFloat(mixedCardInput?.value) || 0;
+        const sum = Math.round((cashAmount + cardAmount) * 100) / 100;
+
+        if (mixedTotalEl) mixedTotalEl.textContent = `$${sum.toFixed(2)}`;
+
+        const valid = sum >= total && cashAmount >= 0 && cardAmount >= 0 && sum > 0;
+        if (confirmMixedBtn) confirmMixedBtn.disabled = !valid;
     }
 
     // Mostrar la sección de pago correspondiente al método seleccionado
@@ -898,7 +1186,6 @@ class App {
         // Evitar duplicar listeners si el modal ya fue inicializado
         if (this.paymentEventsBound) return;
         this.paymentEventsBound = true;
-        const total = this.cart.getTotal();
 
         // Botones de selección de método de pago
         document.querySelectorAll('.payment-method-btn').forEach(btn => {
@@ -906,10 +1193,9 @@ class App {
                 const method = btn.dataset.method;
                 this.showPaymentSection(method);
                 this.receivedAmount = 0;
-                const receivedEl = document.getElementById('received-amount-display');
-                const changeEl = document.getElementById('change-amount-display');
-                if (receivedEl) receivedEl.textContent = '$0.00';
-                if (changeEl) changeEl.textContent = '$0.00';
+                this.updateCashDisplay(this.cart.getTotal());
+                // Al cambiar método, también validar pago mixto por si se vuelve atrás
+                if (method === 'mixed') this.validateMixedPayment();
             });
         });
 
@@ -920,32 +1206,61 @@ class App {
             PaymentProcessor.denominations.forEach(denom => {
                 const btn = document.createElement('button');
                 btn.className = 'denomination-btn';
-                btn.textContent = `$${denom}`;
+                btn.textContent = PaymentProcessor.formatDenomination(denom);
                 btn.dataset.denomination = denom;
                 btn.addEventListener('click', () => {
                     this.receivedAmount += parseInt(denom);
-                    this.updateCashDisplay(total);
+                    this.updateCashDisplay(this.cart.getTotal());
                 });
                 denomGrid.appendChild(btn);
-            });
+             });
         }
+
+        // Generar botones de denominaciones rápidas para Pago Mixto (MXN)
+        // Billetes y monedas suman al campo de "Monto en Efectivo ($)".
+        const mixedBillDenoms = [1000, 500, 200, 100, 50, 20];
+        const mixedCoinDenoms = [20, 10, 5, 2, 1];
+
+        const renderMixedDenoms = (grid, denoms) => {
+            if (!grid) return;
+            grid.innerHTML = '';
+            denoms.forEach(denom => {
+                const btn = document.createElement('button');
+                btn.className = 'denomination-btn';
+                btn.textContent = PaymentProcessor.formatDenomination(denom);
+                btn.dataset.denomination = denom;
+                btn.addEventListener('click', () => {
+                    const input = document.getElementById('mixed-cash-input');
+                    if (!input) return;
+                    const current = parseFloat(input.value) || 0;
+                    input.value = (Math.round((current + denom) * 100) / 100).toFixed(2);
+                    this.validateMixedPayment();
+                });
+                grid.appendChild(btn);
+            });
+        };
+
+        renderMixedDenoms(document.getElementById('mixed-denom-bills'), mixedBillDenoms);
+        renderMixedDenoms(document.getElementById('mixed-denom-coins'), mixedCoinDenoms);
 
         // Botón Limpiar (reiniciar monto recibido)
         const clearBtn = document.getElementById('clear-received-btn');
         if (clearBtn) {
             clearBtn.addEventListener('click', () => {
                 this.receivedAmount = 0;
-                this.updateCashDisplay(total);
+                this.updateCashDisplay(this.cart.getTotal());
             });
         }
 
         // Confirmar pago en efectivo
+        // Cambio = Monto Recibido - Total Venta
         const confirmCashBtn = document.getElementById('confirm-cash-btn');
         if (confirmCashBtn) {
             confirmCashBtn.addEventListener('click', () => {
+                const total = this.cart.getTotal();
                 const pd = PaymentProcessor.calculateChange(this.receivedAmount, total);
                 if (pd.error) {
-                    alert(pd.error);
+                    Toast.error(pd.error);
                     return;
                 }
                 this.completeCheckout({
@@ -967,36 +1282,33 @@ class App {
             });
         }
 
-        // Validar pago mixto en tiempo real
+        // Inputs de pago mixto: captura de texto/números habilitada
+        // Validar dinámicamente que la suma >= total antes de permitir confirmación
         const mixedCashInput = document.getElementById('mixed-cash-input');
         const mixedCardInput = document.getElementById('mixed-card-input');
-        const mixedTotalEl = document.getElementById('mixed-total-display');
-        const confirmMixedBtn = document.getElementById('confirm-mixed-btn');
 
-        const validateMixed = () => {
-            const cashAmount = parseFloat(mixedCashInput?.value) || 0;
-            const cardAmount = parseFloat(mixedCardInput?.value) || 0;
-            const sum = Math.round((cashAmount + cardAmount) * 100) / 100;
-            if (mixedTotalEl) mixedTotalEl.textContent = `$${sum.toFixed(2)}`;
-            const valid = sum >= total && cashAmount >= 0 && cardAmount >= 0 && sum > 0;
-            if (confirmMixedBtn) confirmMixedBtn.disabled = !valid;
-        };
-
-        mixedCashInput?.addEventListener('input', validateMixed);
-        mixedCardInput?.addEventListener('input', validateMixed);
+        mixedCashInput?.addEventListener('input', () => this.validateMixedPayment());
+        mixedCardInput?.addEventListener('input', () => this.validateMixedPayment());
 
         // Confirmar pago mixto
+        const confirmMixedBtn = document.getElementById('confirm-mixed-btn');
         if (confirmMixedBtn) {
             confirmMixedBtn.addEventListener('click', () => {
+                const total = this.cart.getTotal();
                 const cashAmount = parseFloat(mixedCashInput?.value) || 0;
                 const cardAmount = parseFloat(mixedCardInput?.value) || 0;
-                const pd = PaymentProcessor.calculateChange(cashAmount, total);
+                // Cambio = (Efectivo + Tarjeta) - Total Venta (solo sobre el efectivo recibido)
+                const receivedTotal = Math.round((cashAmount + cardAmount) * 100) / 100;
+                if (receivedTotal < total) {
+                    Toast.error('El monto ingresado es insuficiente');
+                    return;
+                }
                 this.completeCheckout({
                     method: 'mixed',
                     cashAmount: cashAmount,
                     cardAmount: cardAmount,
-                    amountReceived: Math.round((cashAmount + cardAmount) * 100) / 100,
-                    change: pd.change > 0 ? pd.change : 0
+                    amountReceived: receivedTotal,
+                    change: Math.max(0, Math.round((receivedTotal - total) * 100) / 100)
                 });
                 this.hidePaymentModal();
             });
@@ -1022,6 +1334,7 @@ class App {
     }
 
     // Actualizar la pantalla de la calculadora de cambio
+    // Cambio = Monto Recibido - Total Venta (en tiempo real)
     updateCashDisplay(total) {
         const receivedEl = document.getElementById('received-amount-display');
         const changeEl = document.getElementById('change-amount-display');
@@ -1062,15 +1375,10 @@ class App {
             this.updateHeldSalesButton();
             BarcodeScanner.focusInput();
 
-            alert(`Venta completada - Folio: ${result.sale.id}`);
+            Toast.success(`Venta completada - Folio: ${result.sale.id}`);
         } else {
-            alert(result.error || 'Error al procesar la venta');
+            Toast.error(result.error || 'Error al procesar la venta');
         }
-    }
-
-    updateTaxRate() {
-        const settings = Settings.getSettings();
-        this.cart.setTaxRate(settings.taxRate);
     }
 
     updateDailyReport() {
@@ -1086,7 +1394,6 @@ class App {
         if (Auth.isAdmin()) {
             let totalCost = 0;
             let totalRevenue = 0;
-            let itemCount = 0;
 
             SaleService.getDailySales().forEach(sale => {
                 sale.items.forEach(item => {
@@ -1095,7 +1402,6 @@ class App {
                         totalCost += product.cost * item.quantity;
                     }
                     totalRevenue += item.amount;
-                    itemCount++;
                 });
             });
 
@@ -1105,28 +1411,152 @@ class App {
             if (profitEl) profitEl.textContent = `$${profit.toFixed(2)}`;
             if (marginEl) marginEl.textContent = `${margin}%`;
         }
+
+        if (Auth.isAdmin()) {
+            this.renderDailySalesChart();
+            this.renderMonthlySalesChart();
+        }
+    }
+
+    // --- Gráfica de ventas diarias (por hora) ---
+    renderDailySalesChart() {
+        const canvas = document.getElementById('daily-sales-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const sales = SaleService.getDailySales();
+
+        const hourlyData = {};
+        for (let h = 0; h < 24; h++) hourlyData[h] = 0;
+        sales.forEach(s => {
+            const hour = new Date(s.date).getHours();
+            hourlyData[hour] += s.total;
+        });
+
+        const labels = Object.keys(hourlyData).map(h => `${h}:00`);
+        const data = Object.values(hourlyData);
+
+        this.drawBarChart(ctx, canvas, labels, data, '#d4af37', 'Ventas por Hora');
+    }
+
+    // --- Gráfica mensual de ventas (últimos 12 meses) ---
+    renderMonthlySalesChart() {
+        const canvas = document.getElementById('monthly-sales-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const allSales = SaleService.getAll();
+        const monthlyData = {};
+
+        const now = new Date();
+        for (let i = 11; i >= 0; i--) {
+            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+            const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+            monthlyData[key] = 0;
+        }
+
+        allSales.forEach(s => {
+            const d = new Date(s.date);
+            const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+            if (monthlyData.hasOwnProperty(key)) {
+                monthlyData[key] += s.total;
+            }
+        });
+
+        const labels = Object.keys(monthlyData);
+        const data = Object.values(monthlyData);
+
+        this.drawBarChart(ctx, canvas, labels, data, '#e6c14a', 'Ventas Mensuales (últimos 12 meses)');
+    }
+
+    // Dibujar una gráfica de barras simple con Canvas API
+    drawBarChart(ctx, canvas, labels, data, color, title) {
+        const w = canvas.width;
+        const h = canvas.height;
+        const padding = { top: 40, right: 16, bottom: 50, left: 50 };
+        const chartW = w - padding.left - padding.right;
+        const chartH = h - padding.top - padding.bottom;
+        const max = Math.max(...data, 1);
+
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = '#0a0a12';
+        ctx.fillRect(0, 0, w, h);
+
+        ctx.fillStyle = '#d4af37';
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(title, w / 2, 24);
+
+        ctx.strokeStyle = '#2a2a3a';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(padding.left, padding.top);
+        ctx.lineTo(padding.left, padding.top + chartH);
+        ctx.lineTo(padding.left + chartW, padding.top + chartH);
+        ctx.stroke();
+
+        const barW = chartW / data.length * 0.7;
+        const gap = chartW / data.length;
+
+        data.forEach((val, i) => {
+            const barH = (val / max) * chartH;
+            ctx.fillStyle = val > 0 ? color : '#2a2a3a';
+            ctx.fillRect(padding.left + i * gap + (gap - barW) / 2, padding.top + chartH - barH, barW, barH);
+
+            ctx.fillStyle = '#a0a0b0';
+            ctx.font = '10px monospace';
+            ctx.textAlign = 'center';
+            if (val > 0) {
+                ctx.fillText(`$${val.toFixed(0)}`, padding.left + i * gap + gap / 2, padding.top + chartH - barH - 4);
+            }
+        });
+
+        ctx.fillStyle = '#a0a0b0';
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'center';
+
+        for (let i = 0; i < labels.length; i += Math.ceil(labels.length / 6)) {
+            ctx.fillText(labels[i], padding.left + i * gap + gap / 2, padding.top + chartH + 16);
+        }
+
+        ctx.fillStyle = '#d4af37';
+        ctx.font = 'bold 12px monospace';
+        ctx.fillText(`$${max.toFixed(2)}`, padding.left - 8, padding.top - 8);
     }
 
     viewCashReport() {
-        const report = Cut.generateCutReport();
-        const summary = Cut.getCashDrawerSummary();
-        alert(
-            `Corte de Caja\n\n` +
-            `Ventas del día: $${summary.grandTotal.toFixed(2)}\n` +
-            `Transacciones: ${summary.totalSales}\n` +
-            `Efectivo: $${summary.cashTotal.toFixed(2)}\n` +
-            `Tarjeta: $${summary.cardTotal.toFixed(2)}\n\n` +
-            `¿Desea imprimir el corte?`
-        );
+        const session = Cut.getActiveSession();
+        if (session) {
+            const summary = Cut.getSessionSummary(session);
+            const openTime = new Date(session.openedAt).toLocaleString('es-MX');
+            Toast.info(
+                `Corte de Caja (Sesión)\n\n` +
+                `Apertura: ${openTime}\n` +
+                `Ventas en sesión: $${summary.grandTotal.toFixed(2)}\n` +
+                `Transacciones: ${summary.transactionCount}\n` +
+                `Efectivo: $${summary.cashTotal.toFixed(2)}\n` +
+                `Tarjeta: $${summary.cardTotal.toFixed(2)}`,
+                0
+            );
+        } else {
+            const summary = Cut.getCashDrawerSummary();
+            Toast.info(
+                `Corte de Caja\n\n` +
+                `Ventas del día: $${summary.grandTotal.toFixed(2)}\n` +
+                `Transacciones: ${summary.totalSales}\n` +
+                `Efectivo: $${summary.cashTotal.toFixed(2)}\n` +
+                `Tarjeta: $${summary.cardTotal.toFixed(2)}`,
+                0
+            );
+        }
     }
 
     bindInventoryEvents() {
         const inventorySearch = document.getElementById('inventory-search');
         if (inventorySearch) {
-            inventorySearch.addEventListener('input', (e) => {
+             inventorySearch.addEventListener('input', (e) => {
                 const query = e.target.value.trim();
                 const results = Inventory.search(query);
                 this.renderInventoryResults(results);
+                this.updateLowStockIndicator();
             });
         }
 
@@ -1134,7 +1564,7 @@ class App {
         if (addInventoryBtn) {
             addInventoryBtn.addEventListener('click', () => {
                 if (!Auth.canModifyInventory()) {
-                    alert('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
                     return;
                 }
                 this.showAddProductModal();
@@ -1142,11 +1572,238 @@ class App {
         }
     }
 
+    // ============================================================
+    //  EVENTOS DEL MÓDULO DE REPORTES POR DÍA
+    //  Incluye: selector de fecha, consolidado diario,
+    //  detalle de cortes/sesiones, y exportación.
+    // ============================================================
+
+    bindReportsEvents() {
+        const dateSelect = document.getElementById('report-date-select');
+        if (dateSelect) {
+            dateSelect.addEventListener('change', (e) => {
+                const selectedDate = e.target.value;
+                if (selectedDate) {
+                    this.renderDailyConsolidated(selectedDate);
+                }
+            });
+        }
+
+        const todayBtn = document.getElementById('report-today-btn');
+        if (todayBtn) {
+            todayBtn.addEventListener('click', () => {
+                const today = new Date().toISOString().split('T')[0];
+                if (dateSelect) dateSelect.value = today;
+                this.renderDailyConsolidated(today);
+            });
+        }
+
+        const exportBtn = document.getElementById('export-daily-report-btn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', () => {
+                if (!Auth.isAdmin()) {
+                    Toast.warning('Permiso denegado: esta acción requiere privilegios de administrador');
+                    return;
+                }
+                this.exportDailyReport();
+            });
+        }
+
+        const printBtn = document.getElementById('print-daily-report-btn');
+        if (printBtn) {
+            printBtn.addEventListener('click', () => {
+                if (!Auth.isAdmin()) {
+                    Toast.warning('Permiso denegado: esta acción requiere privilegios de administrador');
+                    return;
+                }
+                const dateSelect = document.getElementById('report-date-select');
+                const date = dateSelect ? dateSelect.value : null;
+                const report = ReportService.getConsolidatedDaily(date);
+                Print.printDailyReport(report);
+            });
+        }
+
+        const today = new Date().toISOString().split('T')[0];
+        if (dateSelect) dateSelect.value = today;
+    }
+
+    // Renderizar el consolidado diario para la fecha indicada
+    renderDailyConsolidated(date = null) {
+        const container = document.getElementById('daily-consolidated-container');
+        if (!container) return;
+
+        ReportService.setLastKnownDate(ReportService.getDailyDate(date));
+        const report = ReportService.getConsolidatedDaily(date);
+        container.innerHTML = ReportService.formatConsolidatedHTML(report);
+
+        if (Auth.isAdmin()) {
+            report.sessions.forEach(s => {
+                this.loadSessionDetail(s.sessionId, s);
+            });
+        }
+    }
+
+    // Alternar visibilidad del detalle individual de una sesión/corte
+    toggleSessionDetail(sessionId) {
+        const detail = document.getElementById(`detail-${sessionId}`);
+        if (detail) {
+            detail.classList.toggle('hidden');
+        }
+    }
+
+    // Cargar el detalle individual de una sesión en el contenedor
+    loadSessionDetail(sessionId, sessionReport) {
+        const detailEl = document.getElementById(`detail-${sessionId}`);
+        if (!detailEl) return;
+
+        const session = ReportService.getDailySessions().find(
+            s => s.id === sessionId || s.sessionId === sessionId
+        ) || Cut.getSessionHistory().find(s => s.id === sessionId);
+
+        if (!session) return;
+
+        const sales = ReportService.getSessionSalesDetail(session);
+
+        let salesHtml = '';
+        if (sales.length === 0) {
+            salesHtml = '<p class="empty-text">No hay ventas en esta sesión</p>';
+        } else {
+            salesHtml = `
+                <table class="session-detail-table">
+                    <thead>
+                        <tr>
+                            <th>Folio</th>
+                            <th>Hora</th>
+                            <th>Producto(s)</th>
+                            <th>Cant.</th>
+                            <th>Total</th>
+                            <th>Pago</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${sales.map(s => `
+                            <tr>
+                                <td class="barcode-cell">${s.id}</td>
+                                <td>${s.time}</td>
+                                <td>
+                                    ${s.items.map(i => `${i.description} (${i.quantity}x)`).join('<br>')}
+                                </td>
+                                <td class="qty-cell">${s.itemCount}</td>
+                                <td class="amount-cell">$${s.total.toFixed(2)}</td>
+                                <td>${s.paymentMethod}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+
+        detailEl.innerHTML = `
+            <div class="session-detail-content">
+                <div class="session-detail-summary">
+                    <div class="detail-row">
+                        <span class="detail-label">Monto Inicial</span>
+                        <span class="detail-value">$${sessionReport.initialAmount.toFixed(2)}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Ventas en Sesión</span>
+                        <span class="detail-value">${sessionReport.salesInSession}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Total Ventas</span>
+                        <span class="detail-value">$${sessionReport.totalSales.toFixed(2)}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Efectivo</span>
+                        <span class="detail-value">$${sessionReport.cashSales.toFixed(2)}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Tarjeta</span>
+                        <span class="detail-value">$${sessionReport.cardSales.toFixed(2)}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Caja Final</span>
+                        <span class="detail-value gold">$${sessionReport.closingAmount.toFixed(2)}</span>
+                    </div>
+                </div>
+                <div class="session-detail-sales">
+                    <h5>Transacciones (${sales.length})</h5>
+                    ${salesHtml}
+                </div>
+            </div>
+        `;
+    }
+
+    // Exportar el consolidado diario como archivo
+    exportDailyReport() {
+        const dateSelect = document.getElementById('report-date-select');
+        const date = dateSelect ? dateSelect.value : null;
+        const report = ReportService.getConsolidatedDaily(date);
+
+        const reportWithDetails = {
+            ...report,
+            sessions: report.sessions.map(s => ({
+                sessionId: s.sessionId,
+                cashier: s.cashier,
+                date: s.date,
+                initialAmount: s.initialAmount,
+                totalSales: s.totalSales,
+                cashSales: s.cashSales,
+                cardSales: s.cardSales,
+                closingAmount: s.closingAmount,
+                transactionCount: s.transactionCount,
+                salesInSession: s.salesInSession,
+                profit: s.profit,
+                margin: s.margin,
+                isOpen: s.isOpen,
+                formattedOpenTime: s.formattedOpenTime,
+                formattedCloseTime: s.formattedCloseTime
+            }))
+        };
+
+        Backup.exportReportFile(reportWithDetails, 'json');
+    }
+
+        // Handler del evento de cambio de día automático
+    async onDayChange(fromDate, toDate) {
+        this.updateDailyReport();
+        this.renderDailyConsolidated(toDate);
+        this.updateRoleVisibility();
+
+        // NOTA: El envío de reporte por correo NO es automático.
+        // Solo se activa al hacer clic en "Enviar Registro al Correo"
+        // dentro del modal de Cierre de Caja (bindSummaryEvents).
+
+        if (typeof alert !== 'undefined' && toDate > fromDate) {
+            alert(`Cambio de día: ${fromDate} → ${toDate}\nLos cortes y ventas del día previo se han consolidado.`);
+        }
+    }
+
+    // Indicador de stock bajo: muestra notificación en el buscador de inventario
+    updateLowStockIndicator() {
+        const lowStock = Inventory.getLowStockProducts();
+        if (lowStock.length === 0) return;
+
+        const lowStockText = lowStock.map(p => `${p.description} (${p.stock})`).join(', ');
+        const inventorySection = document.getElementById('inventory-section');
+        if (!inventorySection || !inventorySection.classList.contains('active')) return;
+
+        let notice = document.getElementById('low-stock-notice');
+        if (!notice) {
+            notice = document.createElement('div');
+            notice.id = 'low-stock-notice';
+            notice.className = 'low-stock-notice';
+            inventorySection.insertBefore(notice, inventorySection.firstChild);
+        }
+        notice.innerHTML = `⚠️ Productos con stock bajo: ${lowStockText}`;
+    }
+
     renderInventoryResults(products) {
         const grid = document.getElementById('inventory-grid');
         if (!grid) return;
 
         const canViewCosts = Auth.canViewCosts();
+        const lowStockThreshold = Settings.getSettings().lowStockThreshold || 5;
         grid.innerHTML = '';
 
         if (products.length === 0) {
@@ -1157,6 +1814,9 @@ class App {
         products.forEach(product => {
             const card = document.createElement('div');
             card.className = 'inventory-card';
+            const isLowStock = product.stock <= lowStockThreshold;
+            if (isLowStock) card.classList.add('low-stock');
+
             let costHtml = '';
             if (canViewCosts && product.cost) {
                 const profit = Inventory.getProfit(product);
@@ -1166,15 +1826,43 @@ class App {
                     <div class="product-profit">Ganancia: $${profit.toFixed(2)} (${margin.toFixed(1)}%)</div>
                 `;
             }
+
+            const stockClass = isLowStock ? 'stock-low' : '';
+            const canDelete = canViewCosts;
+            const deleteBtn = canDelete
+                ? `<button class="btn btn-icon btn-sm delete-product-btn admin-only" data-barcode="${product.barcode}" title="Borrar producto">×</button>`
+                : '';
             card.innerHTML = `
                 <div class="product-name">${product.description}</div>
                 <div class="product-sku">Código: ${product.barcode}</div>
                 <div class="product-price">$${product.price.toFixed(2)}</div>
-                <div class="product-stock">Existencia: ${product.stock} unidades</div>
+                <div class="product-stock ${stockClass}">Existencia: ${product.stock} unidades${isLowStock ? ' ⚠ Bajo' : ''}</div>
                 ${costHtml}
+                ${deleteBtn}
             `;
             grid.appendChild(card);
+
+            if (canDelete && card.querySelector('.delete-product-btn')) {
+                card.querySelector('.delete-product-btn').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this.deleteProduct(product.barcode, product.description);
+                });
+            }
         });
+    }
+
+    deleteProduct(barcode, description) {
+        if (!Auth.canModifyInventory()) {
+            Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+            return;
+        }
+        if (confirm(`¿Estás seguro de borrar "${description}" del inventario? No se podrá recuperar.`)) {
+            const result = Inventory.remove(barcode);
+            if (result.success) {
+                this.renderInventoryResults(Inventory.search(''));
+                this.updateLowStockIndicator();
+            }
+        }
     }
 
     showAddProductModal() {
@@ -1199,6 +1887,10 @@ class App {
                     <div class="input-group">
                         <input type="number" name="stock" min="0" placeholder=" " required>
                         <label>Existencia Inicial</label>
+                    </div>
+                    <div class="input-group">
+                        <input type="text" name="category" placeholder=" ">
+                        <label>Categoría</label>
                     </div>
                     <div class="input-group admin-only-field">
                         <input type="number" name="cost" step="0.01" min="0" placeholder=" ">
@@ -1246,16 +1938,17 @@ class App {
                 price: parseFloat(formData.get('price')),
                 stock: parseInt(formData.get('stock')),
                 cost: formData.get('cost') ? parseFloat(formData.get('cost')) : 0,
+                category: formData.get('category') ? formData.get('category').trim() : 'General',
                 volumePricing: e.target.volumePricing.checked
             };
 
             const result = Inventory.add(product);
             if (result.success) {
-                alert('Producto agregado correctamente');
+                Toast.success('Producto agregado correctamente');
                 Inventory.renderCatalog();
                 document.body.removeChild(overlay);
             } else {
-                alert(result.error || 'Error al agregar el producto');
+                Toast.error(result.error || 'Error al agregar el producto');
             }
         });
     }
@@ -1265,49 +1958,258 @@ class App {
         if (saveSettingsBtn) {
             saveSettingsBtn.addEventListener('click', () => {
                 if (!Auth.canAccessConfig()) {
-                    alert('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
                     return;
                 }
-                const taxInput = document.getElementById('tax-rate-input');
                 const emailInput = document.getElementById('admin-email-input');
 
                 let saved = false;
-                if (taxInput) {
-                    const rate = parseFloat(taxInput.value) || 16;
-                    Settings.update('taxRate', rate);
-                    saved = true;
-                }
                 if (emailInput && emailInput.value) {
                     Auth.setAdminEmail(emailInput.value.trim());
                     saved = true;
                 }
 
-                this.updateTaxRate();
-                this.updateCredentialsDisplay();
-                if (saved) alert('Configuración guardada correctamente');
+                // Guardar configuración de la tienda
+                const nameEl = document.getElementById('store-name-input');
+                const addressEl = document.getElementById('store-address-input');
+                const phoneEl = document.getElementById('store-phone-input');
+                const headerEl = document.getElementById('receipt-header-input');
+                const footerEl = document.getElementById('receipt-footer-input');
+
+                 const settings = Settings.getSettings();
+                 if (nameEl) { settings.storeName = nameEl.value.trim() || settings.storeName; saved = true; }
+                 if (addressEl) { settings.storeAddress = addressEl.value.trim(); saved = true; }
+                 if (phoneEl) { settings.storePhone = phoneEl.value.trim(); saved = true; }
+
+                 const rfcEl = document.getElementById('store-rfc-input');
+                 if (rfcEl) { settings.storeRfc = rfcEl.value.trim(); saved = true; }
+
+                 if (headerEl) { settings.receiptHeader = headerEl.value.trim() || settings.receiptHeader; saved = true; }
+                 if (footerEl) { settings.receiptFooter = footerEl.value.trim() || settings.receiptFooter; saved = true; }
+
+                 const showCashierEl = document.getElementById('receipt-show-cashier');
+                 if (showCashierEl) { settings.receiptShowCashier = showCashierEl.checked; saved = true; }
+                 const showDateEl = document.getElementById('receipt-show-date');
+                 if (showDateEl) { settings.receiptShowDate = showDateEl.checked; saved = true; }
+                 const showPaymentMethodEl = document.getElementById('receipt-show-payment-method');
+                 if (showPaymentMethodEl) { settings.receiptShowPaymentMethod = showPaymentMethodEl.checked; saved = true; }
+                 const showPaymentDetailsEl = document.getElementById('receipt-show-payment-details');
+                 if (showPaymentDetailsEl) { settings.receiptShowPaymentDetails = showPaymentDetailsEl.checked; saved = true; }
+
+                 const stockEl = document.getElementById('low-stock-input');
+                 if (stockEl && stockEl.value) {
+                     settings.lowStockThreshold = parseInt(stockEl.value) || 5;
+                     saved = true;
+                 }
+
+                  Settings.saveSettings(settings);
+
+                  // Guardar configuración de EmailJS
+                  const emailJSCtrl = this.saveEmailJSConfig();
+                  if (emailJSCtrl) {
+                      saved = true;
+                  }
+
+                  this.updateCredentialsDisplay();
+                 this.updateRoleVisibility();
+                 if (saved) {
+                     Toast.success('Configuración guardada correctamente');
+                 }
+             });
+         }
+
+         const adminEmailInput = document.getElementById('admin-email-input');
+         if (adminEmailInput) {
+             adminEmailInput.value = Auth.getAdminEmail();
+         }
+
+         const changeAdminPassBtn = document.getElementById('change-admin-pass-btn');
+         if (changeAdminPassBtn) {
+             changeAdminPassBtn.addEventListener('click', () => {
+                 this.changeAdminPassword();
+             });
+         }
+
+         const changeGuestKeyBtn = document.getElementById('change-guest-key-btn');
+         if (changeGuestKeyBtn) {
+             changeGuestKeyBtn.addEventListener('click', () => {
+                 this.changeGuestKey();
+             });
+         }
+
+          this.renderStoreSettings();
+          this.bindLogoUpload();
+          this.updateCredentialsDisplay();
+
+          const testEmailBtn = document.getElementById('test-email-btn');
+          if (testEmailBtn) {
+              testEmailBtn.addEventListener('click', async () => {
+                  if (!Auth.isAdmin()) {
+                      Toast.warning('Permiso denegado: esta acción requiere privilegios de administrador');
+                      return;
+                  }
+                  const report = Backup.generateDailyReport();
+                  const config = Backup.getEmailConfig();
+                  const valid = config && config.publicKey && config.serviceId && config.templateId;
+                  if (valid) {
+                      const result = await Backup.sendReportEmail(report);
+                      Toast.info(result.message || 'Reporte de prueba procesado.');
+                  } else {
+                      const email = Auth.getAdminEmail();
+                      if (!email) {
+                          Toast.error('No se ha configurado el correo del administrador');
+                          return;
+                      }
+                      const result = await Backup.sendReportEmail(report);
+                      Toast.info(result.message || 'Reporte de prueba procesado.');
+                  }
+              });
+          }
+
+          const switchBizBtn = document.getElementById('switch-business-btn');
+          if (switchBizBtn) {
+              switchBizBtn.addEventListener('click', () => {
+                  this.showBusinessSelection();
+              });
+          }
+     }
+
+    // Renderizar campos de configuración de tienda
+    renderStoreSettings() {
+        const settings = Settings.getSettings();
+
+        const nameEl = document.getElementById('store-name-input');
+        if (nameEl) nameEl.value = settings.storeName || 'Jewerly De Luna';
+
+        const addressEl = document.getElementById('store-address-input');
+        if (addressEl) addressEl.value = settings.storeAddress || '';
+
+        const phoneEl = document.getElementById('store-phone-input');
+        if (phoneEl) phoneEl.value = settings.storePhone || '';
+
+        const rfcEl = document.getElementById('store-rfc-input');
+        if (rfcEl) rfcEl.value = settings.storeRfc || '';
+
+        const headerEl = document.getElementById('receipt-header-input');
+        if (headerEl) headerEl.value = settings.receiptHeader || 'Gracias por su compra';
+
+        const footerEl = document.getElementById('receipt-footer-input');
+        if (footerEl) footerEl.value = settings.receiptFooter || '¡Gracias por su compra!';
+
+        const stockEl = document.getElementById('low-stock-input');
+        if (stockEl) stockEl.value = settings.lowStockThreshold || 5;
+
+        const showCashierEl = document.getElementById('receipt-show-cashier');
+        if (showCashierEl) showCashierEl.checked = settings.receiptShowCashier !== false;
+
+        const showDateEl = document.getElementById('receipt-show-date');
+        if (showDateEl) showDateEl.checked = settings.receiptShowDate !== false;
+
+        const showPaymentMethodEl = document.getElementById('receipt-show-payment-method');
+        if (showPaymentMethodEl) showPaymentMethodEl.checked = settings.receiptShowPaymentMethod !== false;
+
+        const showPaymentDetailsEl = document.getElementById('receipt-show-payment-details');
+        if (showPaymentDetailsEl) showPaymentDetailsEl.checked = settings.receiptShowPaymentDetails !== false;
+
+        this.renderLogoPreview(settings.storeLogo);
+
+        // Renderizar configuración de EmailJS
+        const emailConfig = Backup.getEmailConfig();
+        const emailjsPubKey = document.getElementById('emailjs-public-key');
+        const emailjsServiceId = document.getElementById('emailjs-service-id');
+        const emailjsTemplateId = document.getElementById('emailjs-template-id');
+        const emailjsAutoSend = document.getElementById('emailjs-auto-send');
+        if (emailjsPubKey) emailjsPubKey.value = emailConfig?.publicKey || '';
+        if (emailjsServiceId) emailjsServiceId.value = emailConfig?.serviceId || '';
+        if (emailjsTemplateId) emailjsTemplateId.value = emailConfig?.templateId || '';
+        if (emailjsAutoSend) emailjsAutoSend.checked = emailConfig?.enabled !== false;
+    }
+
+    saveEmailJSConfig() {
+        const pubKey = document.getElementById('emailjs-public-key')?.value.trim() || '';
+        const serviceId = document.getElementById('emailjs-service-id')?.value.trim() || '';
+        const templateId = document.getElementById('emailjs-template-id')?.value.trim() || '';
+        const autoSend = document.getElementById('emailjs-auto-send')?.checked ?? true;
+
+        if (!pubKey && !serviceId && !templateId) {
+            return false;
+        }
+
+        const config = { publicKey: pubKey, serviceId, templateId, enabled: autoSend };
+        Backup.saveEmailConfig(config);
+        Backup.initEmailJS();
+        return true;
+    }
+
+    // Renderizar la vista previa del logotipo
+    renderLogoPreview(logoData) {
+        const preview = document.getElementById('logo-preview');
+        const placeholder = document.getElementById('logo-placeholder');
+        const container = document.getElementById('logo-preview-container');
+
+        if (preview && placeholder && container) {
+            if (logoData) {
+                preview.src = logoData;
+                preview.style.display = 'block';
+                placeholder.style.display = 'none';
+                container.classList.add('active');
+            } else {
+                preview.src = '';
+                preview.style.display = 'none';
+                placeholder.style.display = 'flex';
+                container.classList.remove('active');
+            }
+        }
+    }
+
+    // Vincular eventos de carga y eliminación de logotipo
+    bindLogoUpload() {
+        if (this.logoUploadBound) return;
+        this.logoUploadBound = true;
+
+        const uploadInput = document.getElementById('store-logo-input');
+        const uploadBtn = document.getElementById('logo-upload-btn');
+        const removeBtn = document.getElementById('logo-remove-btn');
+
+        if (uploadBtn && uploadInput) {
+            uploadBtn.addEventListener('click', () => {
+                uploadInput.click();
             });
         }
 
-        const adminEmailInput = document.getElementById('admin-email-input');
-        if (adminEmailInput) {
-            adminEmailInput.value = Auth.getAdminEmail();
-        }
+        if (uploadInput) {
+            uploadInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
 
-        const changeAdminPassBtn = document.getElementById('change-admin-pass-btn');
-        if (changeAdminPassBtn) {
-            changeAdminPassBtn.addEventListener('click', () => {
-                this.changeAdminPassword();
+                if (!file.type.startsWith('image/')) {
+                    Toast.error('El archivo seleccionado no es una imagen válida');
+                    return;
+                }
+
+                if (file.size > 500 * 1024) {
+                    Toast.error('El logotipo no debe superar los 500 KB');
+                    return;
+                }
+
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    const logoData = ev.target.result;
+                    Settings.update('storeLogo', logoData);
+                    this.renderLogoPreview(logoData);
+                    Toast.success('Logotipo actualizado correctamente');
+                };
+                reader.readAsDataURL(file);
             });
         }
 
-        const changeGuestKeyBtn = document.getElementById('change-guest-key-btn');
-        if (changeGuestKeyBtn) {
-            changeGuestKeyBtn.addEventListener('click', () => {
-                this.changeGuestKey();
+        if (removeBtn) {
+            removeBtn.addEventListener('click', () => {
+                Settings.update('storeLogo', '');
+                this.renderLogoPreview('');
+                Toast.success('Logotipo eliminado');
             });
         }
-
-        this.updateCredentialsDisplay();
     }
 
     updateCredentialsDisplay() {
@@ -1410,7 +2312,7 @@ class App {
     // Pausar la venta actual mostrando el modal de nota
     holdCurrentSale() {
         if (this.cart.isEmpty()) {
-            alert('No hay productos en la venta para pausar');
+            Toast.warning('No hay productos en la venta para pausar');
             return;
         }
 
@@ -1454,7 +2356,7 @@ class App {
                 this.updateHeldSalesButton();
                 BarcodeScanner.focusInput();
 
-                alert('Venta pausada correctamente. Puedes atender a otro cliente.');
+                Toast.info('Venta pausada correctamente. Puedes atender a otro cliente.');
             });
         }
 
@@ -1578,7 +2480,7 @@ class App {
             }
         }
 
-        this.cart.restoreFromData({ items: held.items, taxRate: this.cart.taxRate });
+        this.cart.restoreFromData({ items: held.items });
 
         // Cerrar panel y actualizar UI
         const overlay = document.getElementById('held-sales-overlay');
@@ -1586,7 +2488,7 @@ class App {
 
         this.updateHeldSalesButton();
         BarcodeScanner.focusInput();
-        alert('Venta recuperada correctamente');
+        Toast.success('Venta recuperada correctamente');
     }
 
     // --- Precios de volumen (configuración admin) ---
@@ -1639,7 +2541,7 @@ class App {
     removeVolumeTier(index) {
         const tiers = VolumePricing.getTiers();
         if (tiers.length <= 1) {
-            alert('Debe haber al menos un rango de precio');
+            Toast.warning('Debe haber al menos un rango de precio');
             return;
         }
         tiers.splice(index, 1);
@@ -1669,7 +2571,7 @@ class App {
             const price = parseFloat(row.querySelector('.tier-price').value);
 
             if (isNaN(min) || isNaN(price)) {
-                alert('Verifica que todos los campos estén completos y válidos');
+                Toast.error('Verifica que todos los campos estén completos y válidos');
                 return;
             }
 
@@ -1681,11 +2583,11 @@ class App {
 
         const result = VolumePricing.updateTiers(tiers);
         if (result.success) {
-            alert(result.message);
+            Toast.success(result.message);
             // Re-renderizar para reflejar el orden
             this.renderVolumePricingTiers();
         } else {
-            alert(result.error);
+            Toast.error(result.error);
         }
     }
 
@@ -1694,7 +2596,7 @@ class App {
         if (saveBtn) {
             saveBtn.addEventListener('click', () => {
                 if (!Auth.canAccessConfig()) {
-                    alert('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
                     return;
                 }
                 this.saveVolumePricing();
@@ -1707,7 +2609,7 @@ class App {
                 if (confirm('¿Restablecer precios de volumen por defecto?')) {
                     VolumePricing.resetToDefault();
                     this.renderVolumePricingTiers();
-                    alert('Precios de volumen restablecidos por defecto');
+                    Toast.info('Precios de volumen restablecidos por defecto');
                 }
             });
         }
@@ -1716,7 +2618,7 @@ class App {
         if (addBtn) {
             addBtn.addEventListener('click', () => {
                 if (!Auth.canAccessConfig()) {
-                    alert('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
                     return;
                 }
                 this.addVolumeTier();
