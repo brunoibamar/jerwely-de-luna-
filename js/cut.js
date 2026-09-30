@@ -42,6 +42,7 @@ class Cut {
     static calculateSummary(sales, initialAmount = 0) {
         let cashTotal = 0;
         let cardTotal = 0;
+        let piecesSold = 0;
 
         sales.forEach(s => {
             if (s.paymentMethod === 'cash') {
@@ -53,6 +54,7 @@ class Cut {
                 cashTotal += pd.cashAmount || 0;
                 cardTotal += pd.cardAmount || 0;
             }
+            piecesSold += s.items ? s.items.reduce((sum, item) => sum + (item.quantity || 0), 0) : 0;
         });
 
         const cashCount = sales.filter(s => s.paymentMethod === 'cash' || s.paymentMethod === 'mixed').length;
@@ -68,7 +70,8 @@ class Cut {
             grandTotal: sales.reduce((sum, s) => sum + s.total, 0),
             cashInDrawer: cashTotal,
             transactionCount: sales.length,
-            initialAmount
+            initialAmount,
+            piecesSold
         };
     }
 
@@ -105,6 +108,7 @@ class Cut {
             date: summary.date,
             totalSales: summary.totalSales,
             transactionCount: summary.transactionCount,
+            piecesSold: summary.piecesSold,
             isFull: false
         };
     }

@@ -6,9 +6,10 @@ class Backup {
 
     static createBackup() {
         const data = {
-            version: '1.1',
+            version: '1.2',
             timestamp: new Date().toISOString(),
             store: Business.getStoreName(),
+            businessName: Business.getBusinessName(),
             businessId: Business.getCurrentBusinessId(),
             inventory: Inventory.getAll(),
             sales: SaleService.getAll(),
@@ -74,6 +75,7 @@ class Backup {
                     if (data.inventory) Inventory.saveProducts(data.inventory);
                     if (data.sales) SaleService.save(data.sales);
                     if (data.settings) Settings.saveSettings(data.settings);
+                    if (data.store) Business.setBusinessName(data.store);
                     if (data.shiftSession) localStorage.setItem(Cut.storageKey, data.shiftSession);
                     if (data.shiftHistory) localStorage.setItem(Cut.shiftHistoryKey, data.shiftHistory);
                     if (data.heldSales) localStorage.setItem(HeldSales.storageKey, JSON.stringify(data.heldSales));
@@ -141,6 +143,7 @@ class Backup {
             transactionCount: summary.transactionCount,
             cashInDrawer: summary.isFull ? summary.cashTotal + initialAmount : 0,
             closingAmount: summary.isFull ? summary.cashTotal + initialAmount : 0,
+            piecesSold: summary.piecesSold || 0,
             items: summary.isFull ? sales.map(s => ({
                 id: s.id,
                 total: s.total,
@@ -303,7 +306,7 @@ class Backup {
         const config = this.getEmailConfig();
         if (config && config.publicKey && typeof emailjs !== 'undefined') {
             try {
-                emailjs.init(config.publicKey);
+                emailjs.init({ publicKey: config.publicKey });
                 return true;
             } catch (e) {
                 return false;
@@ -312,7 +315,7 @@ class Backup {
         return false;
     }
 
-    // Envío directo vía EmailJS REST API (sin abrir cliente de correo)
+    // Envío directo vía EmailJS SDK (sin abrir cliente de correo)
     static async sendViaEmailJS(report, recipient, customSubject, customBody) {
         const config = this.getEmailConfig();
         if (!config || !config.publicKey || !config.serviceId || !config.templateId) {
@@ -332,44 +335,41 @@ class Backup {
             return { success: false, message: 'No se ha configurado el correo del administrador' };
         }
 
-        try {
-            const response = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'origin': 'localhost'
-                },
-                body: JSON.stringify({
-                    publicKey: config.publicKey,
-                    serviceId: config.serviceId,
-                    templateId: config.templateId,
-                    templateParams: {
-                        to_email: email,
-                        subject: subject,
-                        message: body,
-                        report_data: JSON.stringify(report, null, 2),
-                        report_type: reportTypeLabel,
-                        report_date: new Date().toISOString()
-                    }
-                })
-            });
+        if (typeof emailjs === 'undefined') {
+            return { success: false, message: 'Error de conexión EmailJS: SDK no disponible' };
+        }
 
-            if (response.ok) {
-                const result = await response.text();
+        try {
+            // Inicialización explícita del SDK v4 con la Public Key leída de localStorage
+            emailjs.init({ publicKey: config.publicKey });
+
+            const templateParams = {
+                to_email: email,
+                subject: subject,
+                message: body,
+                report_data: JSON.stringify(report, null, 2),
+                report_type: reportTypeLabel,
+                report_date: new Date().toISOString()
+            };
+
+            // Envío mediante el SDK: Service ID, Template ID, template params, Public Key
+            const response = await emailjs.send(
+                config.serviceId,
+                config.templateId,
+                templateParams,
+                config.publicKey
+            );
+
+            const isOk = response && (response.status === 200 || response.status === 201 || response.text === 'OK');
+            if (isOk) {
                 return { success: true, message: `Reporte enviado a ${email} via EmailJS` };
             } else {
-                const errorText = await response.text();
-                let errorMessage = 'Error al enviar el correo';
-                try {
-                    const errorJson = JSON.parse(errorText);
-                    errorMessage = errorJson.message || errorJson.error || errorMessage;
-                } catch {
-                    errorMessage = errorText || errorMessage;
-                }
+                const errorMessage = (response && (response.text || response.message)) || 'Error al enviar el correo';
                 return { success: false, message: `Error EmailJS: ${errorMessage}` };
             }
         } catch (err) {
-            return { success: false, message: `Error de conexión EmailJS: ${err.message}` };
+            const errorMessage = (err && (err.text || err.message)) || String(err);
+            return { success: false, message: `Error de conexión EmailJS: ${errorMessage}` };
         }
     }
 
@@ -378,28 +378,37 @@ class Backup {
     // Si EmailJS no está configurado o falla el envío, guarda localmente para
     // reintentar después. NO utiliza mailto: ni window.open.
     static async sendReportEmail(report, recipient) {
-        const email = recipient || Auth.getAdminEmail();
+        try {
+            const email = recipient || Auth.getAdminEmail();
 
-        if (!email) {
-            return { success: false, message: 'No se ha configurado el correo del administrador' };
-        }
-
-        // Si EmailJS está configurado, enviar directamente vía API
-        if (this.isEmailJSSet()) {
-            const result = await this.sendViaEmailJS(report, email);
-            if (result.success) {
-                // Registrar envío exitoso en el historial
-                this.saveEmailSendLog(report, email, 'emailjs', result.message);
-                return result;
+            if (!email) {
+                return { success: false, message: 'No se ha configurado el correo del administrador' };
             }
-            // Si falla el envío directo, guardar localmente para reintentar después
-            this.savePendingReport(report, email);
-            return { success: true, message: `Envío directo falló (${result.message}). Reporte guardado localmente y se intentará enviar cuando esté disponible.` };
-        }
 
-        // EmailJS no configurado: guardar localmente para envío manual explícito
-        this.savePendingReport(report, email);
-        return { success: true, message: 'EmailJS no configurado. Reporte guardado localmente para envío manual.' };
+            // Si EmailJS está configurado, enviar directamente vía API
+            if (this.isEmailJSSet()) {
+                const result = await this.sendViaEmailJS(report, email);
+                if (result.success) {
+                    // Registrar envío exitoso en el historial
+                    this.saveEmailSendLog(report, email, 'emailjs', result.message);
+                    return result;
+                }
+                // Si falla el envío directo, guardar localmente para reintentar después
+                this.savePendingReport(report, email);
+                return { success: true, message: `Envío directo falló (${result.message}). Reporte guardado localmente y se intentará enviar cuando esté disponible.` };
+            }
+
+            // EmailJS no configurado: guardar localmente para envío manual explícito
+            this.savePendingReport(report, email);
+            return { success: true, message: 'EmailJS no configurado. Reporte guardado localmente para envío manual.' };
+        } catch (err) {
+            // Si falla el envío directo, guardar localmente para reintentar después
+            this.savePendingReport(report, recipient || Auth.getAdminEmail?.() || '');
+            return { success: false, message: 'Error inesperado al enviar el correo: ' + (err?.message || err) };
+        } finally {
+            // Siempre registrar el intento en el historial
+            this.saveReportToHistory(report);
+        }
     }
 
     // --- Reporte simplificado para el perfil Invitado ---
@@ -449,32 +458,40 @@ class Backup {
         return text;
     }
 
-    // Envío por email de SOLO la información de la sesión del invitado
-    // Utiliza EmailJS API en segundo plano (sin abrir pestañas ni mailto:).
+    // Envío por email de la información de cierre de caja.
+    // Para el rol Invitado/Cajero se envía el MISMO reporte financiero completo
+    // que para el administrador, calculando y adjuntando todos los valores
+    // monetarios, caja final y utilidades. La restricción visual (solo piezas
+    // vendidas) aplica exclusivamente a la pantalla del POS, no al correo.
     static async sendGuestSessionEmail(report, recipient) {
-        const email = recipient || Auth.getAdminEmail();
+        try {
+            const email = recipient || Auth.getAdminEmail();
 
-        if (!email) {
-            return { success: false, message: 'No se ha configurado el correo del administrador' };
-        }
-
-        const guestReport = this.buildGuestSessionReport(report);
-        const subject = `[${Business.getStoreName()}] Cierre de Caja - Invitado - ${new Date().toLocaleDateString('es-MX')}`;
-        const body = this.formatGuestSessionForEmail(guestReport);
-
-        if (this.isEmailJSSet()) {
-            const result = await this.sendViaEmailJS(guestReport, email, subject, body);
-            if (result.success) {
-                this.saveEmailSendLog(guestReport, email, 'emailjs', result.message);
-                return result;
+            if (!email) {
+                return { success: false, message: 'No se ha configurado el correo del administrador' };
             }
-            this.savePendingReport(guestReport, email);
-            return { success: true, message: `Envío directo falló (${result.message}). Registro guardado localmente.` };
-        }
 
-        // EmailJS no configurado: guardar localmente para envío manual explícito
-        this.savePendingReport(guestReport, email);
-        return { success: true, message: 'EmailJS no configurado. Registro guardado localmente para envío manual.' };
+            const subject = `[${Business.getStoreName()}] Cierre de Caja - ${report.cashier || 'Invitado'} - ${new Date().toLocaleDateString('es-MX')}`;
+            const body = this.formatReportForEmail(report);
+
+            if (this.isEmailJSSet()) {
+                const result = await this.sendViaEmailJS(report, email, subject, body);
+                if (result.success) {
+                    this.saveEmailSendLog(report, email, 'emailjs', result.message);
+                    return result;
+                }
+                this.savePendingReport(report, email);
+                return { success: true, message: `Envío directo falló (${result.message}). Registro guardado localmente.` };
+            }
+
+            this.savePendingReport(report, email);
+            return { success: true, message: 'EmailJS no configurado. Registro guardado localmente para envío manual.' };
+        } catch (err) {
+            this.savePendingReport(report, recipient || (Auth.getAdminEmail ? Auth.getAdminEmail() : ''));
+            return { success: false, message: 'Error inesperado al enviar el correo: ' + (err?.message || err) };
+        } finally {
+            this.saveReportToHistory(report);
+        }
     }
 
     static get emailSendLogKey() { return Business.key('pos_email_send_log'); }
@@ -530,6 +547,7 @@ class Backup {
             text += `Ventas en Sesión: ${report.salesInSession}\n`;
             text += `Caja Final: $${fmt(report.closingAmount)}\n`;
             text += `Efectivo en Caja: $${fmt(report.cashInDrawer)}\n`;
+            text += `Piezas Vendidas: ${report.piecesSold || 0}\n`;
             if (report.profit !== undefined) {
                 text += `\n--- Utilidades (Solo Admin) ---\n`;
                 text += `Ganancia Neta: $${fmt(report.profit)}\n`;
@@ -559,6 +577,7 @@ class Backup {
             text += `Tarjeta: $${fmt(report.cardSales)}\n`;
             text += `Transacciones: ${report.transactionCount}\n`;
             text += `Caja Final: $${fmt(report.closingAmount)}\n`;
+            text += `Piezas Vendidas: ${report.piecesSold || 0}\n`;
             if (report.profit !== undefined) {
                 text += `\n--- Utilidades (Solo Admin) ---\n`;
                 text += `Ganancia Neta: $${fmt(report.profit)}\n`;
@@ -601,22 +620,30 @@ class Backup {
 
     // --- Procesar reportes pendientes al iniciar (online) ---
     static async processPendingReports() {
-        if (!this.isOnline()) return { success: false, message: 'Sin conexión' };
-
-        const pending = this.getPendingReports();
-        if (pending.length === 0) return { success: true, message: 'No hay reportes pendientes' };
-
         let sent = 0;
-        for (const item of pending) {
-            const result = await this.sendReportEmail(item.report, item.email);
-            if (result.success) {
-                sent++;
-                const index = pending.indexOf(item);
-                this.clearPendingReport(index);
+        try {
+            if (!this.isOnline()) return { success: false, message: 'Sin conexión' };
+
+            const pending = this.getPendingReports();
+            if (pending.length === 0) return { success: true, message: 'No hay reportes pendientes' };
+
+            for (const item of pending) {
+                const result = await this.sendReportEmail(item.report, item.email);
+                if (result.success) {
+                    sent++;
+                    const index = pending.indexOf(item);
+                    this.clearPendingReport(index);
+                }
+            }
+
+            return { success: true, message: `${sent} reporte(s) enviado(s) correctamente` };
+        } catch (err) {
+            return { success: false, message: 'Error al procesar reportes pendientes: ' + (err?.message || err) };
+        } finally {
+            if (sent > 0) {
+                this.saveReportToHistory({ type: 'pending-batch', sent, date: new Date().toISOString() });
             }
         }
-
-        return { success: true, message: `${sent} reporte(s) enviado(s) correctamente` };
     }
 
     // --- Reportes recurrentes ---
@@ -625,37 +652,49 @@ class Backup {
     static get annualReportKey() { return Business.key('pos_last_annual_report'); }
 
     static async checkMonthlyReport() {
-        const now = new Date();
-        const currentKey = `${now.getFullYear()}-${(now.getMonth() + 1)}`;
-        const lastSent = localStorage.getItem(this.monthlyReportKey);
+        let report = null;
+        try {
+            const now = new Date();
+            const currentKey = `${now.getFullYear()}-${(now.getMonth() + 1)}`;
+            const lastSent = localStorage.getItem(this.monthlyReportKey);
 
-        if (lastSent !== currentKey && Auth.isAdmin()) {
-            const report = this.generateMonthlyReport();
-            const result = await this.sendReportEmail(report);
-            if (result.success) {
-                localStorage.setItem(this.monthlyReportKey, currentKey);
+            if (lastSent !== currentKey && Auth.isAdmin()) {
+                report = this.generateMonthlyReport();
+                const result = await this.sendReportEmail(report);
+                if (result.success) {
+                    localStorage.setItem(this.monthlyReportKey, currentKey);
+                }
+                this.saveReportToHistory(report);
+                return result;
             }
-            this.saveReportToHistory(report);
-            return result;
+            return { success: false, message: 'Ya se envió el reporte mensual' };
+        } catch (err) {
+            if (report) this.saveReportToHistory(report);
+            return { success: false, message: 'Error al enviar el reporte mensual: ' + (err?.message || err) };
         }
-        return { success: false, message: 'Ya se envió el reporte mensual' };
     }
 
     static async checkAnnualReport() {
-        const now = new Date();
-        const currentYear = now.getFullYear().toString();
-        const lastSent = localStorage.getItem(this.annualReportKey);
+        let report = null;
+        try {
+            const now = new Date();
+            const currentYear = now.getFullYear().toString();
+            const lastSent = localStorage.getItem(this.annualReportKey);
 
-        if (lastSent !== currentYear && Auth.isAdmin()) {
-            const report = this.generateAnnualReport(now.getFullYear());
-            const result = await this.sendReportEmail(report);
-            if (result.success) {
-                localStorage.setItem(this.annualReportKey, currentYear);
+            if (lastSent !== currentYear && Auth.isAdmin()) {
+                report = this.generateAnnualReport(now.getFullYear());
+                const result = await this.sendReportEmail(report);
+                if (result.success) {
+                    localStorage.setItem(this.annualReportKey, currentYear);
+                }
+                this.saveReportToHistory(report);
+                return result;
             }
-            this.saveReportToHistory(report);
-            return result;
+            return { success: false, message: 'Ya se envió el reporte anual' };
+        } catch (err) {
+            if (report) this.saveReportToHistory(report);
+            return { success: false, message: 'Error al enviar el reporte anual: ' + (err?.message || err) };
         }
-        return { success: false, message: 'Ya se envió el reporte anual' };
     }
 
     // --- Historial local de reportes ---
@@ -688,6 +727,7 @@ class Backup {
                 `Transacciones, ${report.transactionCount}`,
                 ...(report.salesInSession !== undefined ? [`Ventas en Sesión, ${report.salesInSession}`] : []),
                 `Caja Final, $${report.closingAmount.toFixed(2)}`,
+                `Piezas Vendidas, ${report.piecesSold || 0}`,
                 ...(report.profit !== undefined ? [
                     `Ganancia Neta, $${report.profit.toFixed(2)}`,
                     `Margen, ${report.margin}%`

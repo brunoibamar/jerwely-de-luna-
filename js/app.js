@@ -180,12 +180,12 @@ class App {
         Inventory.init();
         Auth.init();
 
-        this.bindBusinessEvents();
         this.bindLoginEvents();
         this.bindNavigationEvents();
         this.bindSalesEvents();
         this.bindInventoryEvents();
         this.bindReportsEvents();
+        this.bindReportsAccessModal();
         this.bindSettingsEvents();
         this.bindRecoveryEvents();
         this.bindLicenseEvents();
@@ -201,6 +201,41 @@ class App {
         this.isInitialized = true;
     }
 
+    // ============================================================
+    //  FUNCION DE CARGA AL INICIAR (onload / DOMContentLoaded)
+    //  Verifica si existen las claves de almacenamiento y, en caso
+    //  afirmativo, carga los datos existentes en la interfaz en lugar
+    //  de reiniciar las variables a valores vacíos.
+    //  Claves verificadas (mononegocio, namespace fijo __biz_default):
+    //    - jewelry_deluna_business_name (nombre del negocio)
+    //    - pos_inventory__biz_default   (inventario)
+    //    - pos_sales__biz_default       (ventas)
+    //    - pos_settings__biz_default    (configuración)
+    //    - pos_current_user__biz_default (usuario autenticado)
+    //    - pos_shift_session__biz_default (turno/cesa abierta)
+    // ============================================================
+    loadFromStorage() {
+        const storageStatus = {
+            businessName: Business.hasBusinessName(),
+            inventory: !!localStorage.getItem(Inventory.storageKey),
+            sales: !!localStorage.getItem(SaleService.storageKey),
+            settings: !!localStorage.getItem(Settings.storageKey),
+            currentUser: !!localStorage.getItem(Auth.current_userKey),
+            shiftOpen: Cut.isShiftOpen()
+        };
+
+        // Garantizar datos por defecto solo si faltan (guardado inmediato).
+        // Si los datos ya existen, se preservan sin modificar.
+        Business.initDefaults();
+        Inventory.init();
+        Settings.getSettings();
+
+        return storageStatus;
+    }
+
+    // ============================================================
+    //  INICIALIZACIÓN DE LA APLICACIÓN
+    // ============================================================
     async initApp() {
         License.setExpiration(new Date('2027-12-31T23:59:59'));
 
@@ -214,14 +249,19 @@ class App {
 
         this.hideLicenseOverlay();
 
-        // --- Selección de negocio ---
-        // Si no hay un negocio activo, mostrar la pantalla de selección
-        const wasFirstRun = !Business.hasCurrentBusiness();
-        if (wasFirstRun) {
-            Business.setCurrentBusinessId('default');
-            Business.migrateExistingData();
-            this.renderBusinessList();
-            this.showBusinessSelection();
+        // --- Cargar datos existentes desde localStorage (onload) ---
+        this.loadFromStorage();
+
+        // --- Mononegocio unificado: migrar datos legados ---
+        // El sistema opera con un único negocio fijo (Jewerly De Luna).
+        // Se migran datos antiguos a la estructura namespaced única.
+        Business.migrateExistingData();
+
+        // Mononegocio unificado: mostrar la pantalla apropiada según el estado de autenticación.
+        if (Auth.isAuthenticated() && Cut.isShiftOpen()) {
+            this.showApp();
+        } else {
+            this.showLogin();
         }
 
         // Inicializar procesos en segundo plano
@@ -259,12 +299,27 @@ class App {
     bindLicenseEvents() {
         const tokenForm = document.getElementById('token-form');
         if (tokenForm) {
-            tokenForm.addEventListener('submit', (e) => {
+            tokenForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const tokenInput = document.getElementById('reactivation-token');
                 const token = tokenInput?.value.trim();
                 if (!token) return;
-                this.validateReactivationToken(token);
+                const submitBtn = tokenForm.querySelector('button[type="submit"]');
+                if (submitBtn) {
+                    submitBtn.disabled = true;
+                    submitBtn.textContent = 'Validando...';
+                }
+                try {
+                    await this.validateReactivationToken(token);
+                } catch (err) {
+                    const errorEl = document.getElementById('token-error');
+                    if (errorEl) errorEl.textContent = 'Error inesperado: ' + (err?.message || err);
+                } finally {
+                    if (submitBtn) {
+                        submitBtn.disabled = false;
+                        submitBtn.textContent = 'Activar Licencia';
+                    }
+                }
             });
         }
 
@@ -291,27 +346,32 @@ class App {
         const errorEl = document.getElementById('token-error');
         const successEl = document.getElementById('token-success');
 
-        const result = License.reactivate(token);
+        try {
+            const result = License.reactivate(token);
 
-        if (result.success) {
-            if (successEl) successEl.textContent = result.message;
-            if (errorEl) errorEl.textContent = '';
-
-            setTimeout(() => {
-                this.hideLicenseOverlay();
-                const isAuthenticated = Auth.isAuthenticated();
-                if (isAuthenticated) {
-                    this.showCashOpening();
-                } else {
-                    this.showLogin();
-                }
-            }, 2000);
-        } else {
-            if (errorEl) errorEl.textContent = result.error;
-            if (successEl) successEl.textContent = '';
-            setTimeout(() => {
+            if (result.success) {
+                if (successEl) successEl.textContent = result.message;
                 if (errorEl) errorEl.textContent = '';
-            }, 4000);
+
+                setTimeout(() => {
+                    this.hideLicenseOverlay();
+                    const isAuthenticated = Auth.isAuthenticated();
+                    if (isAuthenticated) {
+                        this.showCashOpening();
+                    } else {
+                        this.showLogin();
+                    }
+                }, 2000);
+            } else {
+                if (errorEl) errorEl.textContent = result.error;
+                if (successEl) successEl.textContent = '';
+                setTimeout(() => {
+                    if (errorEl) errorEl.textContent = '';
+                }, 4000);
+            }
+        } catch (err) {
+            if (errorEl) errorEl.textContent = 'Error inesperado: ' + (err?.message || err);
+            if (successEl) successEl.textContent = '';
         }
     }
 
@@ -325,6 +385,7 @@ class App {
                 if (data.inventory) localStorage.setItem(Inventory.storageKey, data.inventory);
                 if (data.sales) localStorage.setItem(SaleService.storageKey, data.sales);
                 if (data.settings) localStorage.setItem(Settings.storageKey, data.settings);
+                if (data.store) Business.setBusinessName(data.store);
                 if (data.auth) {
                     if (data.auth.adminPassword) localStorage.setItem(Auth.storageKeys.adminPassword, data.auth.adminPassword);
                     if (data.auth.guestKey) localStorage.setItem(Auth.storageKeys.guestKey, data.auth.guestKey);
@@ -351,106 +412,8 @@ class App {
     }
 
     showLogin() {
-        document.getElementById('business-screen')?.classList.add('hidden');
         document.getElementById('login-screen')?.classList.remove('hidden');
         document.getElementById('pos-app')?.classList.add('hidden');
-    }
-
-    showBusinessSelection() {
-        const currentBiz = Business.getCurrentBusinessId();
-        const businesses = Business.getBusinesses();
-
-        if (businesses.length === 1) {
-            Auth.logout();
-            this.showLogin();
-            return;
-        }
-
-        document.getElementById('login-screen')?.classList.add('hidden');
-        document.getElementById('pos-app')?.classList.add('hidden');
-        document.getElementById('business-screen')?.classList.remove('hidden');
-        this.renderBusinessList();
-    }
-
-    renderBusinessList() {
-        const list = document.getElementById('business-list');
-        if (!list) return;
-
-        const businesses = Business.getBusinesses();
-        const currentId = Business.getCurrentBusinessId();
-
-        list.innerHTML = '';
-        businesses.forEach(biz => {
-            const isSelected = biz.id === currentId;
-            const btn = document.createElement('button');
-            btn.className = `business-option ${isSelected ? 'selected' : ''}`;
-            btn.innerHTML = `
-                <span class="business-name">${biz.name}</span>
-                ${biz.isDefault ? '<span class="business-badge">Predeterminado</span>' : ''}
-                <span class="business-id">ID: ${biz.id}</span>
-            `;
-            btn.addEventListener('click', () => {
-                Business.selectBusiness(biz.id);
-                this.renderBusinessList();
-                this.showLogin();
-                Auth.logout();
-                this.updateRoleVisibility();
-                if (biz.id !== currentId) {
-                    Toast.info(`Cambiado al negocio: ${biz.name}`, 2000);
-                }
-            });
-            list.appendChild(btn);
-        });
-    }
-
-    bindBusinessEvents() {
-        const createBtn = document.getElementById('create-business-btn');
-        if (createBtn) {
-            createBtn.addEventListener('click', () => {
-                const modal = document.getElementById('create-business-modal');
-                const nameInput = document.getElementById('new-business-name');
-                if (modal && nameInput) {
-                    nameInput.value = '';
-                    modal.classList.remove('hidden');
-                    setTimeout(() => nameInput.focus(), 100);
-                }
-            });
-        }
-
-        const cancelBtn = document.getElementById('cancel-create-business');
-        if (cancelBtn) {
-            cancelBtn.addEventListener('click', () => {
-                document.getElementById('create-business-modal')?.classList.add('hidden');
-            });
-        }
-
-        const confirmBtn = document.getElementById('confirm-create-business');
-        if (confirmBtn) {
-            confirmBtn.addEventListener('click', () => {
-                const nameInput = document.getElementById('new-business-name');
-                const name = nameInput?.value.trim();
-                if (!name) {
-                    Toast.error('Ingresa un nombre para el negocio');
-                    return;
-                }
-                const result = Business.createBusiness(name);
-                if (result.success) {
-                    document.getElementById('create-business-modal')?.classList.add('hidden');
-                    this.renderBusinessList();
-                    this.showLogin();
-                    Auth.logout();
-                    this.updateRoleVisibility();
-                    this.updateHeldSalesButton();
-                    this.bindVolumePricingEvents();
-                    this.renderStoreSettings();
-                    this.updateLowStockIndicator();
-                    this.renderDailyConsolidated();
-                    Toast.success(`Negocio "${result.business.name}" creado`);
-                } else {
-                    Toast.error(result.error || 'Error al crear el negocio');
-                }
-            });
-        }
     }
 
     showApp() {
@@ -497,7 +460,9 @@ class App {
         });
 
         // guest-allowed: visibles para todos (admin y cajero)
-        // No se ocultan del administrador; cualquier usuario puede usarlos
+        document.querySelectorAll('.guest-allowed').forEach(el => {
+            el.classList.remove('hidden');
+        });
     }
 
     bindLoginEvents() {
@@ -832,15 +797,24 @@ class App {
             sendEmailBtn.addEventListener('click', async () => {
                 if (!this.currentReport) return;
 
-                let result;
-                if (Auth.isGuest()) {
-                    // Invitado: solo información de la sesión, sin montos sensibles
-                    result = await Backup.sendGuestSessionEmail(this.currentReport);
-                } else {
-                    // Administrador: reporte financiero completo
-                    result = await Backup.sendReportEmail(this.currentReport);
+                const originalText = sendEmailBtn.textContent;
+                sendEmailBtn.disabled = true;
+                sendEmailBtn.textContent = 'Enviando...';
+
+                try {
+                    let result;
+                    if (Auth.isGuest()) {
+                        result = await Backup.sendGuestSessionEmail(this.currentReport);
+                    } else {
+                        result = await Backup.sendReportEmail(this.currentReport);
+                    }
+                    Toast.info(result.message || 'Reporte enviado al correo del administrador.');
+                } catch (err) {
+                    Toast.error('Error al enviar el correo: ' + (err?.message || err));
+                } finally {
+                    sendEmailBtn.disabled = false;
+                    sendEmailBtn.textContent = originalText;
                 }
-                Toast.info(result.message || 'Reporte enviado al correo del administrador.');
             });
         }
 
@@ -949,18 +923,27 @@ class App {
         navItems.forEach(item => {
             item.addEventListener('click', (e) => {
                 e.preventDefault();
+                const section = item.dataset.section;
+
+                // Guest accessing Reports: require admin password
+                if (section === 'reports' && Auth.isGuest()) {
+                    this.showReportsPasswordModal();
+                    return;
+                }
+
                 navItems.forEach(i => i.classList.remove('active'));
                 item.classList.add('active');
-                const section = item.dataset.section;
                 this.switchSection(section);
             });
         });
 
         const menuToggle = document.getElementById('menu-toggle');
         const sidebar = document.getElementById('sidebar');
+        const posApp = document.getElementById('pos-app');
         if (menuToggle && sidebar) {
             menuToggle.addEventListener('click', () => {
                 sidebar.classList.toggle('collapsed');
+                posApp.classList.toggle('sidebar-collapsed');
             });
         }
 
@@ -1189,7 +1172,8 @@ class App {
 
         // Botones de selección de método de pago
         document.querySelectorAll('.payment-method-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
                 const method = btn.dataset.method;
                 this.showPaymentSection(method);
                 this.receivedAmount = 0;
@@ -1252,7 +1236,7 @@ class App {
             });
         }
 
-        // Confirmar pago en efectivo
+    // Confirmar pago en efectivo
         // Cambio = Monto Recibido - Total Venta
         const confirmCashBtn = document.getElementById('confirm-cash-btn');
         if (confirmCashBtn) {
@@ -1269,7 +1253,6 @@ class App {
                     change: pd.change,
                     receivedBreakdown: pd.breakdown
                 });
-                this.hidePaymentModal();
             });
         }
 
@@ -1278,7 +1261,6 @@ class App {
         if (confirmCardBtn) {
             confirmCardBtn.addEventListener('click', () => {
                 this.completeCheckout({ method: 'card' });
-                this.hidePaymentModal();
             });
         }
 
@@ -1310,7 +1292,6 @@ class App {
                     amountReceived: receivedTotal,
                     change: Math.max(0, Math.round((receivedTotal - total) * 100) / 100)
                 });
-                this.hidePaymentModal();
             });
         }
 
@@ -1360,24 +1341,30 @@ class App {
 
     // Completar checkout con detalles de pago completos
     completeCheckout(paymentDetails = { method: 'cash' }) {
-        const result = Checkout.checkout(this.cart, paymentDetails);
+        try {
+            const result = Checkout.checkout(this.cart, paymentDetails);
 
-        if (result.success) {
-            Inventory.updateStock(
-                result.sale.items.map(i => ({ barcode: i.barcode, quantity: i.quantity }))
-            );
+            if (result.success) {
+                Inventory.updateStock(
+                    result.sale.items.map(i => ({ barcode: i.barcode, quantity: i.quantity }))
+                );
 
-            setTimeout(() => {
-                Print.printReceipt(result.sale);
-            }, 300);
+                setTimeout(() => {
+                    Print.printReceipt(result.sale);
+                }, 300);
 
-            this.updateDailyReport();
-            this.updateHeldSalesButton();
-            BarcodeScanner.focusInput();
+                this.updateDailyReport();
+                this.updateHeldSalesButton();
+                BarcodeScanner.focusInput();
 
-            Toast.success(`Venta completada - Folio: ${result.sale.id}`);
-        } else {
-            Toast.error(result.error || 'Error al procesar la venta');
+                Toast.success(`Venta completada - Folio: ${result.sale.id}`);
+            } else {
+                Toast.error(result.error || 'Error al procesar la venta');
+            }
+        } catch (err) {
+            Toast.error('Error al procesar el pago: ' + (err?.message || err));
+        } finally {
+            this.hidePaymentModal();
         }
     }
 
@@ -1625,6 +1612,93 @@ class App {
 
         const today = new Date().toISOString().split('T')[0];
         if (dateSelect) dateSelect.value = today;
+    }
+
+    // ============================================================
+    //  ACCESO PROTEGIDO A REPORTES PARA PERFIL INVITADO
+    //  El Invitado ve la pestaña de Reportes (clase guest-allowed),
+    //  pero al hacer clic debe introducir la contraseña del
+    //  Administrador. Si es correcta, accede a los reportes; si
+    //  no, permanece en el módulo de ventas.
+    // ============================================================
+
+    showReportsPasswordModal() {
+        const modal = document.getElementById('reports-password-modal');
+        if (!modal) return;
+        modal.classList.remove('hidden');
+        const input = document.getElementById('reports-admin-password');
+        const errorEl = document.getElementById('reports-password-error');
+        if (input) {
+            input.value = '';
+            input.disabled = false;
+            input.readOnly = false;
+        }
+        if (errorEl) errorEl.textContent = '';
+        setTimeout(() => {
+            if (input) {
+                input.focus();
+                input.select();
+            }
+        }, 50);
+    }
+
+    hideReportsPasswordModal() {
+        const modal = document.getElementById('reports-password-modal');
+        if (modal) modal.classList.add('hidden');
+    }
+
+    bindReportsAccessModal() {
+        const modal = document.getElementById('reports-password-modal');
+        const confirmBtn = document.getElementById('confirm-reports-access');
+        const cancelBtn = document.getElementById('cancel-reports-access');
+        const input = document.getElementById('reports-admin-password');
+        const errorEl = document.getElementById('reports-password-error');
+
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', () => {
+                const password = input?.value || '';
+                if (Auth.verifyAdminPassword(password)) {
+                    this.hideReportsPasswordModal();
+                    const navItems = document.querySelectorAll('.nav-item');
+                    const reportsItem = document.querySelector('.nav-item[data-section="reports"]');
+                    navItems.forEach(i => i.classList.remove('active'));
+                    if (reportsItem) reportsItem.classList.add('active');
+                    this.switchSection('reports');
+                    Toast.success('Acceso a reportes concedido');
+                } else {
+                    if (errorEl) {
+                        errorEl.textContent = 'Contraseña incorrecta. Acceso denegado.';
+                    }
+                    setTimeout(() => {
+                        if (errorEl) errorEl.textContent = '';
+                    }, 3000);
+                    this.hideReportsPasswordModal();
+                }
+            });
+        }
+
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                this.hideReportsPasswordModal();
+            });
+        }
+
+        if (modal) {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    this.hideReportsPasswordModal();
+                }
+            });
+        }
+
+        if (input) {
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    confirmBtn?.click();
+                }
+            });
+        }
     }
 
     // Renderizar el consolidado diario para la fecha indicada
@@ -2002,7 +2076,8 @@ class App {
                      saved = true;
                  }
 
-                  Settings.saveSettings(settings);
+                   Settings.saveSettings(settings);
+                   Business.setBusinessName(settings.storeName);
 
                   // Guardar configuración de EmailJS
                   const emailJSCtrl = this.saveEmailJSConfig();
@@ -2037,49 +2112,54 @@ class App {
              });
          }
 
-          this.renderStoreSettings();
-          this.bindLogoUpload();
-          this.updateCredentialsDisplay();
+         this.renderStoreSettings();
+         this.bindLogoUpload();
+         this.updateCredentialsDisplay();
 
-          const testEmailBtn = document.getElementById('test-email-btn');
-          if (testEmailBtn) {
-              testEmailBtn.addEventListener('click', async () => {
-                  if (!Auth.isAdmin()) {
-                      Toast.warning('Permiso denegado: esta acción requiere privilegios de administrador');
-                      return;
-                  }
-                  const report = Backup.generateDailyReport();
-                  const config = Backup.getEmailConfig();
-                  const valid = config && config.publicKey && config.serviceId && config.templateId;
-                  if (valid) {
-                      const result = await Backup.sendReportEmail(report);
-                      Toast.info(result.message || 'Reporte de prueba procesado.');
-                  } else {
-                      const email = Auth.getAdminEmail();
-                      if (!email) {
-                          Toast.error('No se ha configurado el correo del administrador');
-                          return;
-                      }
-                      const result = await Backup.sendReportEmail(report);
-                      Toast.info(result.message || 'Reporte de prueba procesado.');
-                  }
-              });
-          }
+           const testEmailBtn = document.getElementById('test-email-btn');
+           if (testEmailBtn) {
+               testEmailBtn.addEventListener('click', async () => {
+                   if (!Auth.isAdmin()) {
+                       Toast.warning('Permiso denegado: esta acción requiere privilegios de administrador');
+                       return;
+                   }
 
-          const switchBizBtn = document.getElementById('switch-business-btn');
-          if (switchBizBtn) {
-              switchBizBtn.addEventListener('click', () => {
-                  this.showBusinessSelection();
-              });
-          }
-     }
+                   const originalText = testEmailBtn.textContent;
+                   testEmailBtn.disabled = true;
+                   testEmailBtn.textContent = 'Enviando...';
+
+                   try {
+                       const report = Backup.generateDailyReport();
+                       const config = Backup.getEmailConfig();
+                       const valid = config && config.publicKey && config.serviceId && config.templateId;
+                       if (valid) {
+                           const result = await Backup.sendReportEmail(report);
+                           Toast.info(result.message || 'Reporte de prueba procesado.');
+                       } else {
+                           const email = Auth.getAdminEmail();
+                           if (!email) {
+                               Toast.error('No se ha configurado el correo del administrador');
+                               return;
+                           }
+                           const result = await Backup.sendReportEmail(report);
+                           Toast.info(result.message || 'Reporte de prueba procesado.');
+                       }
+                   } catch (err) {
+                       Toast.error('Error al enviar correo de prueba: ' + (err?.message || err));
+                   } finally {
+                       testEmailBtn.disabled = false;
+                       testEmailBtn.textContent = originalText;
+                   }
+               });
+           }
+    }
 
     // Renderizar campos de configuración de tienda
     renderStoreSettings() {
         const settings = Settings.getSettings();
 
-        const nameEl = document.getElementById('store-name-input');
-        if (nameEl) nameEl.value = settings.storeName || 'Jewerly De Luna';
+         const nameEl = document.getElementById('store-name-input');
+        if (nameEl) nameEl.value = Business.getStoreName();
 
         const addressEl = document.getElementById('store-address-input');
         if (addressEl) addressEl.value = settings.storeAddress || '';
@@ -2632,6 +2712,7 @@ class App {
 const app = new App();
 window.app = app;
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', ErrorBoundary.wrap('app-init', () => {
+    app.loadFromStorage();
     app.init();
-});
+}));

@@ -164,6 +164,7 @@ class ReportService {
 
         let totalCost = 0;
         let totalRevenue = 0;
+        let piecesSold = 0;
         allSales.forEach(sale => {
             sale.items.forEach(item => {
                 const product = Inventory.findByBarcode(item.barcode);
@@ -171,6 +172,7 @@ class ReportService {
                     totalCost += product.cost * item.quantity;
                 }
                 totalRevenue += item.amount;
+                piecesSold += item.quantity || 0;
             });
         });
 
@@ -201,6 +203,7 @@ class ReportService {
             date: target,
             totalSales: allSales.reduce((sum, s) => sum + s.total, 0),
             transactionCount: allSales.length,
+            piecesSold: piecesSold,
             cashTransactionCount: cashSales,
             cardTransactionCount: cardSales,
             mixedTransactionCount: mixedSales,
@@ -359,6 +362,18 @@ class ReportService {
                     <div class="consolidated-card">
                         <span class="consolidated-label">Transacciones</span>
                         <span class="consolidated-value">${report.transactionCount}</span>
+                    </div>
+                    <div class="consolidated-card">
+                        <span class="consolidated-label">Piezas Vendidas</span>
+                        <span class="consolidated-value">${report.piecesSold || 0}</span>
+                    </div>
+                    <div class="consolidated-card">
+                        <span class="consolidated-label">Meta del Día (100 Pzas)</span>
+                        ${(() => {
+                            const goal = 100;
+                            const pct = Math.round(((report.piecesSold || 0) / goal) * 100);
+                            return `<span class="consolidated-value">${report.piecesSold || 0} / ${goal} (${pct}%)</span>`;
+                        })()}
                     </div>
                     <div class="consolidated-card">
                         <span class="consolidated-label">Efectivo</span>

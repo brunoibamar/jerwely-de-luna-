@@ -162,6 +162,11 @@ class BarcodeScanner {
     static SCAN_MIN_LENGTH = 4;       // longitud mínima de código de barras válido
     static callback = null;
 
+    static isModalOpen() {
+        const visible = document.querySelectorAll('.modal-overlay:not(.hidden), .payment-overlay:not(.hidden), .license-overlay:not(.hidden)');
+        return visible.length > 0;
+    }
+
     static startListening(callback) {
         this.callback = callback;
         this.isListening = true;
@@ -185,6 +190,7 @@ class BarcodeScanner {
 
         document.addEventListener('keypress', (e) => {
             if (!this.isListening) return;
+            if (this.isModalOpen()) return;
 
             const tag = document.activeElement?.tagName?.toLowerCase();
             const id = document.activeElement?.id || '';
@@ -206,6 +212,7 @@ class BarcodeScanner {
 
         document.addEventListener('keydown', (e) => {
             if (!this.isListening) return;
+            if (this.isModalOpen()) return;
 
             if (e.key === 'Enter') {
                 const now = Date.now();
@@ -238,9 +245,18 @@ class BarcodeScanner {
         // Re-enfocar tras perder el foco (mantener escucha activa)
         barcodeInput.addEventListener('blur', () => {
             setTimeout(() => {
+                if (this.isModalOpen()) return;
                 const salesSection = document.getElementById('sales-section');
                 if (salesSection && salesSection.classList.contains('active')) {
-                    barcodeInput.focus();
+                    // No re-enfocar si el usuario está editando otro campo en la tabla
+                    const activeEl = document.activeElement;
+                    const isEditingCart = activeEl && (
+                        activeEl.classList.contains('price-input') ||
+                        activeEl.classList.contains('qty-input')
+                    );
+                    if (!isEditingCart) {
+                        barcodeInput.focus();
+                    }
                 }
             }, 100);
         });

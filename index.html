@@ -9,41 +9,6 @@
     <body>
     <div id="toast-container" class="toast-container"></div>
 
-    <!-- Selector de Negocio / Cliente -->
-    <div id="business-screen" class="login-screen">
-        <div class="login-card">
-            <img src="assets/logo.png" alt="Jewerly De Luna" class="login-logo">
-            <h1 class="login-title">Seleccionar Negocio</h1>
-            <p class="cash-open-message" style="margin-bottom: 24px;">
-                Elige el negocio para acceder o crea uno nuevo.
-                Cada negocio tiene datos completamente aislados.
-            </p>
-
-            <div id="business-list" class="business-list">
-                <!-- Negocios disponibles renderizados dinámicamente -->
-            </div>
-
-            <button type="button" id="create-business-btn" class="btn btn-outline login-btn">Crear Nuevo Negocio</button>
-
-            <div id="business-error" class="login-error"></div>
-        </div>
-
-        <!-- Modal: Crear Nuevo Negocio -->
-        <div id="create-business-modal" class="modal-overlay hidden">
-            <div class="modal">
-                <h3 class="modal-title">Crear Nuevo Negocio</h3>
-                <div class="input-group">
-                    <input type="text" id="new-business-name" placeholder=" " autocomplete="off" required>
-                    <label for="new-business-name">Nombre del Negocio</label>
-                </div>
-                <div class="modal-actions">
-                    <button type="button" id="cancel-create-business" class="btn btn-outline">Cancelar</button>
-                    <button type="button" id="confirm-create-business" class="btn btn-primary">Crear</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
     <div id="login-screen" class="login-screen hidden">
         <div class="login-card">
             <img src="assets/logo.png" alt="Jewerly De Luna" class="login-logo">
@@ -102,7 +67,23 @@
         </div>
     </div>
 
-    <!-- Modal: Apertura de Caja -->
+    <!-- Modal: Acceso a Reportes (Invitado) -->
+    <div id="reports-password-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h3 class="modal-title">Acceso a Reportes</h3>
+            <p>Ingresa la contraseña de Administrador para ver los reportes de ventas del turno.</p>
+            <div class="input-group">
+                <input type="password" id="reports-admin-password" placeholder=" " required>
+                <label for="reports-admin-password">Contraseña de Administrador</label>
+            </div>
+            <div id="reports-password-error" class="login-error"></div>
+            <div class="modal-actions">
+                <button type="button" id="cancel-reports-access" class="btn btn-outline">Cancelar</button>
+                <button type="button" id="confirm-reports-access" class="btn btn-primary">Acceder</button>
+            </div>
+        </div>
+    </div>
+
     <div id="cash-open-overlay" class="modal-overlay hidden">
         <div class="modal cash-modal">
             <h3 class="modal-title">Apertura de Caja</h3>
@@ -210,8 +191,7 @@
                 </button>
                 <h1 class="pos-title">Jewerly De Luna</h1>
                 <span class="user-badge" id="current-user">Cajero: <span id="user-name"></span></span>
-                <button id="switch-business-btn" class="btn btn-outline btn-sm admin-only">Cambiar Negocio</button>
-            </div>
+             </div>
             <div class="header-right">
                 <button id="cash-drawer-btn" class="btn btn-outline admin-only">Corte de Caja</button>
                 <button id="cash-close-btn" class="btn btn-outline guest-only">Cierre de Caja</button>
@@ -227,7 +207,7 @@
                 <nav class="nav-menu">
                     <a href="#" class="nav-item active" data-section="sales"> Ventas</a>
                     <a href="#" class="nav-item admin-only" data-section="inventory">Inventario</a>
-                    <a href="#" class="nav-item admin-only" data-section="reports">Reportes</a>
+                    <a href="#" class="nav-item guest-allowed" data-section="reports">Reportes</a>
                     <a href="#" class="nav-item admin-only" data-section="settings">Configuración</a>
                 </nav>
             </aside>
@@ -307,13 +287,13 @@
 
                         <!-- Selector de método de pago -->
                         <div class="payment-method-selector">
-                            <button class="payment-method-btn active" data-method="cash">
+                            <button type="button" class="payment-method-btn active" data-method="cash">
                                 <span class="method-icon">💵</span> Efectivo
                             </button>
-                            <button class="payment-method-btn" data-method="card">
+                            <button type="button" class="payment-method-btn" data-method="card">
                                 <span class="method-icon">💳</span> Tarjeta
                             </button>
-                            <button class="payment-method-btn" data-method="mixed">
+                            <button type="button" class="payment-method-btn" data-method="mixed">
                                 <span class="method-icon">🔄</span> Pago Mixto
                             </button>
                         </div>
@@ -679,10 +659,12 @@
         </div>
     </div>
 
-    <!-- EmailJS SDK para envío directo de correos -->
-    <script type="text/javascript" src="https://cdn.emailjs.com/dist/email.min.js"></script>
-    <!-- Aislamiento de datos por negocio (debe cargar primero) -->
+    <!-- EmailJS SDK v4 para envío directo de correos -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+    <!-- Mononegocio unificado: namespace fijo de localStorage -->
     <script src="js/business.js"></script>
+    <!-- Capturador global de errores (Error Boundary) -->
+    <script src="js/errorBoundary.js"></script>
     <script src="js/auth.js"></script>
     <!-- Módulo POS: VolumePricing, HeldSales, BarcodeScanner, PaymentProcessor -->
     <script src="js/pos.js"></script>

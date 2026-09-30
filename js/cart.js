@@ -49,6 +49,19 @@ class Cart {
         this.updateTotals();
     }
 
+    // Actualizar el precio de venta de un producto (solo admin).
+    // Recalcula el importe, el subtotal y el total en tiempo real.
+    updatePrice(barcode, newPrice) {
+        const item = this.items.find(i => i.barcode === barcode);
+        const price = parseFloat(newPrice);
+        if (item && !isNaN(price) && price >= 0) {
+            item.price = price;
+            item.amount = price * item.quantity;
+            this.render();
+            this.updateTotals();
+        }
+    }
+
     // Actualizar cantidad de un producto.
     // Re-aplica precios de volumen si el producto los usa.
     updateQuantity(barcode, quantity) {
@@ -111,7 +124,15 @@ class Cart {
             tr.innerHTML = `
                 <td class="barcode-cell">${item.barcode}</td>
                 <td class="description-cell">${item.description}</td>
-                <td class="price-cell">$${item.price.toFixed(2)}</td>
+                <td class="price-cell">
+                    ${Auth.isAdmin()
+                        ? `<input type="number" min="0" step="0.01" value="${item.price.toFixed(2)}"
+                            onfocus="this.select()"
+                            onchange="window.app.cart.updatePrice('${item.barcode}', this.value)"
+                            class="price-input">`
+                        : `$${item.price.toFixed(2)}`
+                    }
+                </td>
                 <td class="qty-cell">
                     <input type="number" min="1" max="${item.stock}" value="${item.quantity}"
                            onchange="window.app.cart.updateQuantity('${item.barcode}', parseInt(this.value))"

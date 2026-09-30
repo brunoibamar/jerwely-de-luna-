@@ -258,6 +258,18 @@ class Print {
                         <div class="summary-value">${report.transactionCount}</div>
                     </div>
                     <div class="summary-item">
+                        <div class="summary-label">Piezas Vendidas</div>
+                        <div class="summary-value">${report.piecesSold || 0}</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-label">Meta del Día (100 Pzas)</div>
+                        ${(() => {
+                            const goal = 100;
+                            const pct = Math.round(((report.piecesSold || 0) / goal) * 100);
+                            return `<div class="summary-value">${report.piecesSold || 0} / ${goal} (${pct}%)</div>`;
+                        })()}
+                    </div>
+                    <div class="summary-item">
                         <div class="summary-label">Cortes</div>
                         <div class="summary-value">${report.sessionCount}</div>
                     </div>

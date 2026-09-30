@@ -1,17 +1,27 @@
 // ============================================================
-//  Business: Aislamiento de Datos por Negocio/Cliente
-//  Todos los datos de inventario, ventas y cortes de caja
-//  se guardan de forma aislada usando prefijos de negocio
-//  en localStorage. Ningún usuario puede sobrescribir o ver
-//  la información de otro negocio.
+//  Business: Mononegocio Unificado (Jewerly De Luna)
+//  El sistema opera bajo un único negocio fijo. Todos los
+//  datos de inventario, ventas y cortes de caja se guardan
+//  en una estructura única de localStorage usando un namespace
+//  fijo (pos_<clave>__biz_default). Ningún usuario puede
+//  sobrescribir o ver información de otro negocio porque no
+//  existe selección ni creación de múltiples negocios.
 // ============================================================
 
 class Business {
-    // Claves globales (NO namespaced) para el registro de negocios
-    static CURRENT_BIZ_KEY = 'pos_current_business';
-    static REGISTRY_KEY = 'pos_business_registry';
+    // Identificador fijo del único negocio
+    static FIXED_BIZ_ID = 'default';
 
-    // Listado maestro de todas las claves que deben ser namespaced
+    // Nombre fijo del negocio
+    static BUSINESS_NAME = 'Jewerly De Luna';
+
+    // Clave fija (global, NO namespaced) para el nombre del negocio.
+    // Se usa para determinar si la aplicación ya fue inicializada y
+    // para persistir el nombre entre sesiones.
+    static BUSINESS_NAME_KEY = 'jewelry_deluna_business_name';
+
+    // Listado maestro de claves que deben guardarse namespaced
+    // bajo el negocio único (pos_<clave>__biz_default).
     static ALL_NAMESPACED_KEYS = [
         'pos_inventory',
         'pos_sales',
@@ -36,101 +46,52 @@ class Business {
         'pos_last_annual_report',
         'pos_license_expiration',
         'pos_last_usage',
-        'pos_clock_tampered'
+        'pos_clock_tampered',
+        'pos_email_send_log'
     ];
 
-    // --- Obtener el ID del negocio actual ---
-    static getCurrentBusinessId() {
-        return localStorage.getItem(this.CURRENT_BIZ_KEY) || 'default';
-    }
-
-    // --- Establecer el negocio activo ---
-    static setCurrentBusinessId(id) {
-        localStorage.setItem(this.CURRENT_BIZ_KEY, id);
-    }
-
-    // --- Verificar si hay un negocio seleccionado ---
-    static hasCurrentBusiness() {
-        return localStorage.getItem(this.CURRENT_BIZ_KEY) !== null;
-    }
-
-    // --- Generar una clave namespaced por negocio ---
+    // --- Generar una clave namespaced bajo el negocio único ---
     // Ejemplo: Business.key('pos_inventory') -> 'pos_inventory__biz_default'
     static key(baseKey) {
-        const id = this.getCurrentBusinessId();
-        return `${baseKey}__biz_${id}`;
+        return `${baseKey}__biz_${this.FIXED_BIZ_ID}`;
     }
 
-    // --- Registro de negocios disponibles ---
-    static getBusinesses() {
-        const stored = localStorage.getItem(this.REGISTRY_KEY);
-        const defaultBiz = this.getDefaultBusiness();
-        if (!stored) return [defaultBiz];
-        try {
-            const parsed = JSON.parse(stored);
-            if (!Array.isArray(parsed) || parsed.length === 0) return [defaultBiz];
-            return parsed;
-        } catch {
-            return [defaultBiz];
+    // --- Nombre del negocio (clave fija global) ---
+    static getBusinessName() {
+        const stored = localStorage.getItem(this.BUSINESS_NAME_KEY);
+        if (stored) return stored;
+        return this.BUSINESS_NAME;
+    }
+
+    static setBusinessName(name) {
+        if (name && name.trim()) {
+            localStorage.setItem(this.BUSINESS_NAME_KEY, name.trim());
         }
     }
 
-    static getDefaultBusiness() {
-        return {
-            id: 'default',
-            name: 'Jewerly De Luna',
-            isDefault: true,
-            createdAt: new Date().toISOString()
-        };
+    static hasBusinessName() {
+        return localStorage.getItem(this.BUSINESS_NAME_KEY) !== null;
     }
 
-    static saveBusinesses(businesses) {
-        localStorage.setItem(this.REGISTRY_KEY, JSON.stringify(businesses));
-    }
-
-    static createBusiness(name) {
-        if (!name || !name.trim()) {
-            return { success: false, error: 'El nombre del negocio es requerido' };
-        }
-        const businesses = this.getBusinesses();
-        const id = `biz_${Date.now()}`;
-        const newBiz = {
-            id,
-            name: name.trim(),
-            isDefault: false,
-            createdAt: new Date().toISOString()
-        };
-        businesses.push(newBiz);
-        this.saveBusinesses(businesses);
-        this.setCurrentBusinessId(id);
-        this.migrateExistingData();
-        return { success: true, business: newBiz };
-    }
-
-    static selectBusiness(id) {
-        const businesses = this.getBusinesses();
-        const biz = businesses.find(b => b.id === id);
-        if (!biz) {
-            return { success: false, error: 'Negocio no encontrado' };
-        }
-        this.setCurrentBusinessId(id);
-        this.migrateExistingData();
-        return { success: true, business: biz };
-    }
-
-    static getBusiness(id = null) {
-        const bizId = id || this.getCurrentBusinessId();
-        const businesses = this.getBusinesses();
-        return businesses.find(b => b.id === bizId) || this.getDefaultBusiness();
-    }
-
+    // --- Nombre de la tienda (alias, mantiene compatibilidad con backup.js, cut.js, etc.) ---
     static getStoreName() {
-        const biz = this.getBusiness();
-        return biz?.name || 'Jewerly De Luna';
+        return this.getBusinessName();
     }
 
-    // --- Migrar datos existentes (no namespaced) a claves namespaced ---
-    // Se ejecuta al seleccionar o crear un negocio por primera vez.
+    // --- ID del negocio actual (fijo) ---
+    static getCurrentBusinessId() {
+        return this.FIXED_BIZ_ID;
+    }
+
+    // --- Inicializar datos por defecto si aún no existen ---
+    static initDefaults() {
+        if (!this.hasBusinessName()) {
+            this.setBusinessName(this.BUSINESS_NAME);
+        }
+    }
+
+    // --- Migrar datos existentes (no namespaced) a claves namespaced del negocio único ---
+    // Se ejecuta una sola vez al iniciar para preservar datos de versiones anteriores.
     static migrateExistingData() {
         const migrated = [];
         this.ALL_NAMESPACED_KEYS.forEach(key => {
@@ -143,33 +104,6 @@ class Business {
             }
         });
         return migrated;
-    }
-
-    // --- Borrar todos los datos del negocio actual ---
-    static clearCurrentBusinessData() {
-        this.ALL_NAMESPACED_KEYS.forEach(key => {
-            localStorage.removeItem(this.key(key));
-        });
-    }
-
-    // --- Eliminar un negocio y sus datos ---
-    static deleteBusiness(id) {
-        if (id === 'default') {
-            return { success: false, error: 'No se puede eliminar el negocio predeterminado' };
-        }
-        const businesses = this.getBusinesses();
-        const filtered = businesses.filter(b => b.id !== id);
-        this.saveBusinesses(filtered);
-
-        this.ALL_NAMESPACED_KEYS.forEach(key => {
-            localStorage.removeItem(`${key}__biz_${id}`);
-        });
-
-        if (this.getCurrentBusinessId() === id) {
-            this.setCurrentBusinessId('default');
-        }
-
-        return { success: true, message: 'Negocio eliminado correctamente' };
     }
 }
 

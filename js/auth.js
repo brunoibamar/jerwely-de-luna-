@@ -245,8 +245,12 @@ class Auth {
         return this.isAdmin();
     }
 
+     static verifyAdminPassword(password) {
+        return password === this.getAdminPassword();
+    }
+
     static canAccessReports() {
-        return this.isAdmin();
+        return this.isAdmin() || this.isGuest();
     }
 
     static canViewReportCharts() {
@@ -378,19 +382,21 @@ class License {
 
     // --- Obtener tiempo del servidor (online) o local (offline) ---
     static async getServerTime() {
+        let timeoutId;
         try {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            timeoutId = setTimeout(() => controller.abort(), 5000);
             const response = await fetch('https://worldtimeapi.org/api/timezone/etc/utc', {
                 signal: controller.signal
             });
-            clearTimeout(timeoutId);
             if (response.ok) {
                 const data = await response.json();
                 return new Date(data.datetime);
             }
         } catch (e) {
             // Sin internet o API no disponible
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
         }
         return new Date();
     }
@@ -446,6 +452,7 @@ class License {
         const backup = {
             timestamp: new Date().toISOString(),
             store: Business.getStoreName(),
+            businessName: Business.getBusinessName(),
             businessId: Business.getCurrentBusinessId(),
             license: {
                 expiration: localStorage.getItem(this.storageKeys.expiration),
