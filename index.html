@@ -10,38 +10,63 @@
     <div id="toast-container" class="toast-container"></div>
 
     <div id="login-screen" class="login-screen hidden">
-        <div class="login-card">
+        <!-- Header: logotipo circular con halo de destellos dorados -->
+        <div class="login-header">
             <img src="assets/logo.png" alt="Jewerly De Luna" class="login-logo">
-            <h1 class="login-title">Jewerly De Luna</h1>
+            <span class="logo-sparkle"></span>
+            <span class="logo-sparkle logo-sparkle-2"></span>
+            <span class="logo-sparkle logo-sparkle-3"></span>
+        </div>
 
-            <div class="login-tabs">
-                <button type="button" class="login-tab-btn active" data-login-type="admin">Administrador</button>
-                <button type="button" class="login-tab-btn" data-login-type="guest">Invitado</button>
+        <h1 class="login-title">Jewerly De Luna</h1>
+
+        <!-- Módulo de Selección de Rol -->
+        <div id="role-selection" class="role-selection">
+            <div class="role-cards">
+                <button type="button" class="role-card role-card-admin" data-role="admin">
+                    <svg class="role-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M3 18 L21 18 L17 10 L13 12 L9 8 L5 10 Z"></path>
+                    </svg>
+                    <span class="role-label">Administrador</span>
+                </button>
+                <button type="button" class="role-card role-card-guest" data-role="guest">
+                    <svg class="role-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"></path>
+                    </svg>
+                    <span class="role-label">Invitado</span>
+                </button>
             </div>
+        </div>
 
-            <form id="admin-login-form" class="login-form" data-login-form="admin">
-                <div class="input-group">
-                    <input type="text" name="username" placeholder=" " autocomplete="off" required>
-                    <label>Usuario</label>
-                </div>
-                <div class="input-group">
-                    <input type="password" name="password" placeholder=" " autocomplete="off" required>
-                    <label>Contraseña</label>
-                </div>
-                <button type="submit" class="btn btn-primary login-btn">Ingresar</button>
-                <button type="button" id="forgot-password-btn" class="btn btn-link">¿Olvidó su contraseña?</button>
-                <div id="login-error" class="login-error"></div>
-            </form>
+        <!-- Formularios (revelados tras seleccionar un rol) -->
+        <div id="login-forms-wrapper" class="login-forms-wrapper hidden">
+            <div class="login-card">
+                <form id="admin-login-form" class="login-form" data-login-form="admin">
+                    <div class="input-group">
+                        <input type="text" name="username" placeholder=" " autocomplete="off" required>
+                        <label>Usuario</label>
+                    </div>
+                    <div class="input-group">
+                        <input type="password" name="password" placeholder=" " autocomplete="off" required>
+                        <label>Contraseña</label>
+                    </div>
+                    <button type="submit" class="btn btn-primary login-btn">Ingresar</button>
+                    <button type="button" id="forgot-password-btn" class="btn btn-link">¿Olvidó su contraseña?</button>
+                    <div id="login-error" class="login-error"></div>
+                </form>
 
-            <form id="guest-login-form" class="login-form hidden" data-login-form="guest">
-                <div class="input-group">
-                    <input type="password" name="guest-key" inputmode="numeric" placeholder=" " autocomplete="off">
-                    <label>Clave de Cajero (opcional)</label>
-                </div>
-                <button type="submit" class="btn btn-primary login-btn">Ingresar con Clave</button>
-                <button type="button" id="guest-direct-btn" class="btn btn-outline login-btn">Ingresar como Invitado</button>
-                <div id="guest-login-error" class="login-error"></div>
-            </form>
+                <form id="guest-login-form" class="login-form hidden" data-login-form="guest">
+                    <div class="input-group">
+                        <input type="password" name="guest-key" inputmode="numeric" placeholder=" " autocomplete="off">
+                        <label>Clave de Cajero (opcional)</label>
+                    </div>
+                    <button type="submit" class="btn btn-primary login-btn">Ingresar con Clave</button>
+                    <button type="button" id="guest-direct-btn" class="btn btn-outline login-btn">Ingresar como Invitado</button>
+                    <div id="guest-login-error" class="login-error"></div>
+                </form>
+
+                <button type="button" id="back-to-roles" class="btn btn-link back-to-roles">← Volver a la selección de rol</button>
+            </div>
         </div>
 
         <div id="recovery-modal" class="modal-overlay hidden">
@@ -185,18 +210,21 @@
 
     <div id="pos-app" class="pos-app hidden">
         <header class="pos-header">
-            <div class="header-left">
+        <div class="header-left">
+                <img src="assets/moon-logo.svg" alt="Jewerly De Luna" class="header-logo">
+                <h1 class="pos-title">Jewerly De Luna</h1>
                 <button id="menu-toggle" class="btn btn-icon menu-btn">
                     <span class="hamburger"></span>
                 </button>
-                <h1 class="pos-title">Jewerly De Luna</h1>
-                <span class="user-badge" id="current-user">Cajero: <span id="user-name"></span></span>
              </div>
-            <div class="header-right">
+             <div class="header-right">
+                <span class="user-badge" id="current-user">Cajero: <span id="user-name"></span></span>
                 <button id="cash-drawer-btn" class="btn btn-outline admin-only">Corte de Caja</button>
                 <button id="cash-close-btn" class="btn btn-outline guest-only">Cierre de Caja</button>
                 <button id="backup-btn" class="btn btn-outline admin-only">Respaldo</button>
                 <button id="returns-btn" class="btn btn-outline admin-only">Devoluciones</button>
+                <button id="cancel-sale-btn" class="btn btn-outline admin-only">Anular Venta</button>
+                <button id="guarantee-btn" class="btn btn-outline admin-only">Cambio por Garantía</button>
                 <button id="expenses-btn" class="btn btn-outline admin-only">Gastos</button>
                 <button id="logout-btn" class="btn btn-outline">Salir</button>
             </div>
@@ -224,6 +252,7 @@
                             <!-- Botones de pausa y recuperación de ventas -->
                             <button id="pause-sale-btn" class="btn btn-outline">Pausar Venta</button>
                             <button id="held-sales-btn" class="btn btn-outline">Ventas en Espera ( <span id="held-count">0</span> )</button>
+                            <button id="reprint-last-btn" class="btn btn-outline">Reimprimir Último Ticket</button>
                             <button id="clear-cart-btn" class="btn btn-outline">Limpiar</button>
                             <button id="checkout-btn" class="btn btn-primary">Finalizar Venta</button>
                         </div>
@@ -317,6 +346,7 @@
                             </div>
 
                             <div class="calculator-actions">
+                                <button class="btn btn-outline btn-exact-cash" id="exact-cash-btn">Efectivo Exacto</button>
                                 <button class="btn btn-outline" id="clear-received-btn">Limpiar</button>
                                 <button class="btn btn-primary" id="confirm-cash-btn" disabled>Confirmar Pago en Efectivo</button>
                             </div>
@@ -385,6 +415,172 @@
                         <div class="modal-actions">
                             <button type="button" id="cancel-pause-btn" class="btn btn-outline">Cancelar</button>
                             <button type="button" id="confirm-pause-btn" class="btn btn-primary">Pausar Venta</button>
+                        </div>
+                    </div>
+                </div>
+
+    <!-- Modal: Devoluciones de Piezas -->
+                <div id="returns-overlay" class="modal-overlay hidden">
+                    <div class="modal" style="max-width: 720px;">
+                        <h3 class="modal-title">Devolución de Piezas</h3>
+                        <div class="returns-step" id="returns-step-search">
+                            <p class="returns-help-text">Busca una venta por folio o fecha para devolver piezas.</p>
+                            <div class="input-group">
+                                <input type="text" id="return-sale-search" placeholder=" " autocomplete="off">
+                                <label for="return-sale-search">Folio de Venta</label>
+                            </div>
+                            <div class="returns-sale-list" id="returns-sale-list">
+                                <p class="empty-text">Ingresa el folio de la venta para buscar</p>
+                            </div>
+                        </div>
+                        <div class="returns-step hidden" id="returns-step-items">
+                            <div class="returns-sale-header">
+                                <div class="returns-sale-id">Folio: <span id="returns-selected-sale-id"></span></div>
+                                <div class="returns-sale-meta" id="returns-selected-sale-meta"></div>
+                                <button type="button" id="returns-back-btn" class="btn btn-outline btn-sm">← Cambiar Venta</button>
+                            </div>
+                            <div class="returns-items" id="returns-items-list">
+                            </div>
+                            <div class="returns-refund-summary">
+                                <div class="returns-refund-row">
+                                    <span class="returns-refund-label">Total a Devolver:</span>
+                                    <span class="returns-refund-value" id="returns-refund-amount">$0.00</span>
+                                </div>
+                            </div>
+                            <div class="input-group">
+                                <label>Método de Reembolso</label>
+                                <div class="payment-method-selector" style="margin-top: 4px;">
+                                    <button type="button" class="payment-method-btn active" data-refund-method="cash">
+                                        <span class="method-icon">💵</span> Efectivo
+                                    </button>
+                                    <button type="button" class="payment-method-btn" data-refund-method="card">
+                                        <span class="method-icon">💳</span> Tarjeta
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="input-group">
+                                <input type="text" id="return-note-input" placeholder=" " autocomplete="off">
+                                <label for="return-note-input">Nota (opcional)</label>
+                            </div>
+                        </div>
+                        <div class="modal-actions">
+                            <button type="button" id="cancel-returns-btn" class="btn btn-outline">Cancelar</button>
+                            <button type="button" id="confirm-return-btn" class="btn btn-primary" disabled>Confirmar Devolución</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal: Anulación de Venta -->
+                <div id="cancel-sale-overlay" class="modal-overlay hidden">
+                    <div class="modal" style="max-width: 640px;">
+                        <h3 class="modal-title">Anular Venta</h3>
+                        <div class="cancel-step" id="cancel-step-search">
+                            <p class="returns-help-text">Busca una venta por folio para anular.</p>
+                            <div class="input-group">
+                                <input type="text" id="cancel-sale-search" placeholder=" " autocomplete="off">
+                                <label for="cancel-sale-search">Folio de Venta</label>
+                            </div>
+                            <div class="cancel-sale-list" id="cancel-sale-list">
+                                <p class="empty-text">Ingresa el folio de la venta para buscar</p>
+                            </div>
+                        </div>
+                        <div class="cancel-step hidden" id="cancel-step-confirm">
+                            <div class="cancel-sale-header">
+                                <div class="cancel-sale-id">Folio: <span id="cancel-selected-sale-id"></span></div>
+                                <div class="cancel-sale-meta" id="cancel-selected-sale-meta"></div>
+                                <button type="button" id="cancel-back-btn" class="btn btn-outline btn-sm">← Cambiar Venta</button>
+                            </div>
+                            <div class="returns-help-text" style="margin-bottom: 12px;">
+                                Estado: <span class="cancel-sale-status">Activa</span>
+                            </div>
+                            <div class="input-group">
+                                <input type="text" id="cancel-reason-input" placeholder=" " autocomplete="off">
+                                <label for="cancel-reason-input">Motivo de Anulación</label>
+                            </div>
+                        </div>
+                        <div class="modal-actions">
+                            <button type="button" id="cancel-modal-close-btn" class="btn btn-outline">Cancelar</button>
+                            <button type="button" id="confirm-cancel-btn" class="btn btn-primary" disabled>Anular Venta</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Modal: Cambio por Garantía / Defecto -->
+                <div id="guarantee-overlay" class="modal-overlay hidden">
+                    <div class="modal" style="max-width: 720px;">
+                        <h3 class="modal-title">Cambio por Garantía / Defecto</h3>
+                        <div class="guarantee-step" id="guarantee-step-search">
+                            <p class="returns-help-text">Busca una venta por folio para registrar un cambio por garantía.</p>
+                            <div class="returns-help-text" style="color: var(--success); margin-bottom: 12px;">
+                                Sin movimiento de efectivo ($0.00) - Solo ajuste físico de inventario
+                            </div>
+                            <div class="input-group">
+                                <input type="text" id="guarantee-sale-search" placeholder=" " autocomplete="off">
+                                <label for="guarantee-sale-search">Folio de Venta</label>
+                            </div>
+                            <div class="guarantee-sale-list" id="guarantee-sale-list">
+                                <p class="empty-text">Ingresa el folio de la venta para buscar</p>
+                            </div>
+                        </div>
+                        <div class="guarantee-step hidden" id="guarantee-step-items">
+                            <div class="guarantee-sale-header">
+                                <div class="guarantee-sale-id">Folio: <span id="guarantee-selected-sale-id"></span></div>
+                                <div class="guarantee-sale-meta" id="guarantee-selected-sale-meta"></div>
+                                <button type="button" id="guarantee-back-btn" class="btn btn-outline btn-sm">← Cambiar Venta</button>
+                            </div>
+
+                            <div class="guarantee-defective-section">
+                                <h4 class="guarantee-section-title">Piezas Defectuosas (Reingreso)</h4>
+                                <p class="returns-help-text">Selecciona las piezas dañadas, rotas o defectuosas de esta venta:</p>
+                                <div class="guarantee-defective-items" id="guarantee-defective-items">
+                                </div>
+                            </div>
+
+                            <div class="guarantee-replacement-section">
+                                <h4 class="guarantee-section-title">Piezas de Reemplazo (Salida)</h4>
+                                <p class="returns-help-text">Busca y selecciona las piezas de sustitución desde el inventario:</p>
+                                <div class="input-group">
+                                    <input type="text" id="guarantee-inventory-search" placeholder=" " autocomplete="off">
+                                    <label for="guarantee-inventory-search">Buscar Pieza de Reemplazo</label>
+                                </div>
+                                <div class="guarantee-inventory-results" id="guarantee-inventory-results">
+                                    <p class="empty-text">Busca piezas en el inventario</p>
+                                </div>
+                                <div id="guarantee-replacement-summary">
+                                    <p class="empty-text">No has seleccionado piezas de reemplazo</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="guarantee-step hidden" id="guarantee-step-confirm">
+                            <div class="guarantee-confirm-summary">
+                                <h4>Confirmar Cambio por Garantía</h4>
+                                <div class="guarantee-confirm-sale">
+                                    <div class="detail-row"><span class="detail-label">Venta Original:</span><span class="detail-value" id="guarantee-confirm-sale-id"></span></div>
+                                </div>
+                                <div class="guarantee-confirm-defective">
+                                    <h5 class="guarantee-subtitle">Piezas por Garantía (Baja)</h5>
+                                    <div id="guarantee-confirm-defective-list"></div>
+                                </div>
+                                <div class="guarantee-confirm-replacement">
+                                    <h5 class="guarantee-subtitle">Piezas de Reemplazo (Salida)</h5>
+                                    <div id="guarantee-confirm-replacement-list"></div>
+                                </div>
+                                <div class="guarantee-zero-impact">
+                                    <span class="zero-impact-label">Impacto en Caja:</span>
+                                    <span class="zero-impact-value">$0.00</span>
+                                    <span class="zero-impact-note">(Sin movimiento de efectivo)</span>
+                                </div>
+                            </div>
+                            <div class="input-group">
+                                <input type="text" id="guarantee-note-input" placeholder=" " autocomplete="off">
+                                <label for="guarantee-note-input">Nota (opcional)</label>
+                            </div>
+                        </div>
+                        <div class="modal-actions">
+                            <button type="button" id="guarantee-cancel-btn" class="btn btn-outline">Cancelar</button>
+                            <button type="button" id="guarantee-prev-btn" class="btn btn-outline hidden">← Atrás</button>
+                            <button type="button" id="guarantee-next-btn" class="btn btn-outline hidden">Continuar</button>
+                            <button type="button" id="guarantee-confirm-btn" class="btn btn-primary hidden">Confirmar Cambio</button>
                         </div>
                     </div>
                 </div>
@@ -649,11 +845,37 @@
                             </div>
                         </div>
 
-                        <div id="settings-error" class="login-error"></div>
+                          <div class="form-divider admin-only">
+                              <h3 class="form-divider-title">Importar / Restaurar Copia de Seguridad</h3>
+                          </div>
+                          <div class="admin-only" id="backup-restore-section">
+                              <p class="volume-help-text-small">
+                                  Exporta toda la base de datos local (inventario, historial completo de
+                                  ventas del día, piezas, cortes de caja, retiros/ajustes y configuraciones)
+                                  a un archivo <strong>.json</strong> estructurado con fecha y hora
+                                  <code>POS_Backup_YYYYMMDD_HHMMSS.json</code>. Permite la sincronización
+                                  remota y la recuperación ante actualizaciones o fallos.
+                              </p>
+                              <div class="backup-actions">
+                                  <button type="button" id="export-backup-setting-btn" class="btn btn-outline">Exportar Copia de Seguridad</button>
+                                  <button type="button" id="import-backup-setting-btn" class="btn btn-outline">Importar / Restaurar Copia de Seguridad</button>
+                                  <input type="file" id="import-backup-setting-file" accept="application/json,.json" style="display: none;">
+                              </div>
+                              <div class="checkbox-group">
+                                  <input type="checkbox" id="factory-restore-checkbox" style="margin-right: 8px;">
+                                  <label for="factory-restore-checkbox" style="position: static; transform: none; background: none; padding: 0; display: inline;">
+                                      Restauración de Fábrica (limpiar todo y reemplazar completo)
+                                  </label>
+                              </div>
+                              <div id="backup-setting-error" class="login-error"></div>
+                              <div id="backup-setting-success" class="success-message"></div>
+                          </div>
+
+                          <div id="settings-error" class="login-error"></div>
                         <div id="settings-success" class="success-message"></div>
 
-                        <button id="save-settings-btn" class="btn btn-primary">Guardar Configuración General</button>
-                    </div>
+                         <button id="save-settings-btn" class="btn btn-primary">Guardar Configuración General</button>
+                     </div>
                 </section>
             </main>
         </div>
@@ -675,6 +897,8 @@
     <script src="js/reports.js"></script>
     <script src="js/print.js"></script>
     <script src="js/backup.js"></script>
+    <script src="js/returns.js"></script>
+    <script src="js/guarantee.js"></script>
     <script src="js/app.js"></script>
 </body>
 </html>

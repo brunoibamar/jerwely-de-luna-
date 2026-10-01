@@ -6,8 +6,12 @@
 
 // ============================================================
 //  VolumePricing: Gestión de precios mayoreo por volumen
-//  Aplica descuentos automáticos según la cantidad total de
-//  piezas del mismo tipo agregadas a la venta.
+//  Evaluador multicategoría: suma GLOBAL de unidades calificadas
+//  (aplicaPromocion === true) de TODOS los artículos del carrito,
+//  sin agrupar por categoría ni por producto (anillos, pulseras,
+//  dijes, etc. combinados). Si el total alcanza o supera el umbral
+//  configurado en los rangos, aplica el precio unitario preferencial
+//  (tarifa de promoción) a cada artículo calificado.
 //  Rangos por defecto: 1→$70, 2→$65, 3-4→$60, 5+→$50
 //  Modificable desde el panel de Administrador.
 // ============================================================
@@ -81,9 +85,25 @@ class VolumePricing {
         return { success: true, message: 'Precios de volumen restablecidos por defecto' };
     }
 
-    // Verificar si un producto usa precios de volumen
+    // Verificar si un producto participa en la promoción por volumen
     static isProductEligible(product) {
-        return product.volumePricing === true;
+        return product.aplicaPromocion === true;
+    }
+
+    // --- Evaluador multicategoría ---
+    // Suma global de unidades calificadas: recorre TODOS los artículos del
+    // carrito y suma las cantidades de aquellos cuyo producto indique
+    // aplicaPromocion === true, sin importar la categoría. Si el total
+    // alcanza o supera el umbral configurado en los rangos, devuelve el
+    // precio unitario preferencial (tarifa de promoción) que corresponde a
+    // cada artículo; devuelve null cuando no hay artículos calificados.
+    static getGlobalUnitPrice(items) {
+        const total = (items || []).reduce(
+            (sum, item) => sum + (item.aplicaPromocion === true ? item.quantity : 0),
+            0
+        );
+        if (total <= 0) return null;
+        return this.getUnitPrice(total);
     }
 }
 

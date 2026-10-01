@@ -1,7 +1,10 @@
 // ============================================================
 //  Cart: Gestión del carrito de ventas
-//  Integra precios de volumen (wholesale) y soporte para
-//  guardado/restauración de carritos (ventas en espera).
+//  Integra la promoción por volumen multicategoría: suma global
+//  de unidades calificadas (aplicaPromocion === true) y aplica el
+//  precio unitario preferencial a cada artículo calificado cuando
+//  el total alcanza el umbral configurado.
+//  Soporte para guardado/restauración de carritos (ventas en espera).
 // ============================================================
 
 class Cart {
@@ -10,8 +13,8 @@ class Cart {
     }
 
     // Agregar un producto al carrito.
-    // Si el producto tiene volumePricing activado, el precio unitario
-    // se calcula dinámicamente según la cantidad total en el carrito.
+    // El precio unitario de los artículos calificados (aplicaPromocion)
+    // se evalúa de forma global/multicategoría tras cada agregado.
     addItem(product) {
         const existing = this.items.find(item => item.barcode === product.barcode);
 
@@ -22,22 +25,16 @@ class Cart {
                 barcode: product.barcode,
                 description: product.description,
                 price: product.price,
+                originalPrice: product.price,
                 quantity: 1,
                 amount: product.price,
                 stock: product.stock,
-                hasVolumePricing: product.volumePricing === true
+                aplicaPromocion: product.aplicaPromocion === true
             });
         }
 
-        // Re-evaluar el precio unitario con precios de volumen si aplica
-        const item = existing || this.items[this.items.length - 1];
-        if (item.hasVolumePricing) {
-            const unitPrice = VolumePricing.getUnitPrice(item.quantity);
-            item.price = unitPrice;
-            item.amount = unitPrice * item.quantity;
-        } else {
-            item.amount = item.price * item.quantity;
-        }
+        // Re-evaluar la promoción por volumen multicategoría (total global)
+        this.applyVolumePromotion();
 
         this.render();
         this.updateTotals();
@@ -45,6 +42,8 @@ class Cart {
 
     removeItem(barcode) {
         this.items = this.items.filter(item => item.barcode !== barcode);
+        // Recalcular el total global: al quitar un artículo el umbral puede cambiar
+        this.applyVolumePromotion();
         this.render();
         this.updateTotals();
     }
@@ -63,23 +62,36 @@ class Cart {
     }
 
     // Actualizar cantidad de un producto.
-    // Re-aplica precios de volumen si el producto los usa.
+    // Re-aplica la promoción por volumen multicategoría (recalcula el total global).
     updateQuantity(barcode, quantity) {
         const item = this.items.find(i => i.barcode === barcode);
         if (item && quantity > 0) {
             item.quantity = quantity;
-
-            if (item.hasVolumePricing) {
-                const unitPrice = VolumePricing.getUnitPrice(item.quantity);
-                item.price = unitPrice;
-                item.amount = unitPrice * item.quantity;
-            } else {
-                item.amount = item.price * item.quantity;
-            }
-
+            this.applyVolumePromotion();
             this.render();
             this.updateTotals();
         }
+    }
+
+    // --- Promoción por volumen multicategoría ---
+    // Suma global de unidades calificadas (aplicaPromocion === true) de
+    // TODOS los artículos, sin agrupar por categoría. Si el total alcanza
+    // o supera el umbral configurado en los rangos, aplica el precio unitario
+    // preferencial a cada artículo calificado (solo cuando es un descuento
+    // real frente al precio base); el resto conserva su precio.
+    applyVolumePromotion() {
+        const items = this.items;
+        const unitPrice = VolumePricing.getGlobalUnitPrice(items);
+
+        items.forEach(item => {
+            if (typeof item.originalPrice !== 'number') {
+                item.originalPrice = item.price;
+            }
+            if (item.aplicaPromocion === true && unitPrice !== null) {
+                item.price = unitPrice < item.originalPrice ? unitPrice : item.originalPrice;
+            }
+            item.amount = item.price * item.quantity;
+        });
     }
 
     canAddItem(barcode) {
@@ -167,6 +179,7 @@ class Cart {
 
     restoreFromData(data) {
         this.items = data.items.map(item => ({ ...item }));
+        this.applyVolumePromotion();
         this.render();
         this.updateTotals();
     }

@@ -136,15 +136,18 @@ class Print {
                     <tbody>
                         ${itemsRows}
                     </tbody>
-                </table>
-                <div class="total-row">
-                    <div style="display: flex; justify-content: space-between;">
-                        <span>Total:</span>
-                        <span>$${data.total.toFixed(2)}</span>
-                    </div>
-                    ${(showPaymentMethod || showPaymentDetails)
-                        ? `<div style="text-align: center; margin-top: 10px; font-size: 11px;">`
-                        : '<div style="display: none;">'}
+                 </table>
+                 <div class="total-row">
+                     <div style="display: flex; justify-content: space-between;">
+                         <span>Total:</span>
+                         <span>$${data.total.toFixed(2)}</span>
+                     </div>
+                     ${(data.totalSavings && data.totalSavings > 0)
+                         ? `<div class="savings-line" style="text-align: center; margin-top: 10px; font-size: 12px; font-weight: bold; color: #d4af37;">¡Te ahorraste: $${data.totalSavings.toFixed(2)}!</div>`
+                         : ''}
+                     ${(showPaymentMethod || showPaymentDetails)
+                         ? `<div style="text-align: center; margin-top: 10px; font-size: 11px;">`
+                         : '<div style="display: none;">'}
                         ${showPaymentMethod ? `Pago: ${data.paymentMethod}` : ''}
                         ${showPaymentDetails && data.amountReceived > 0 ? `<br>Recibido: $${data.amountReceived.toFixed(2)}` : ''}
                         ${showPaymentDetails && data.change > 0 ? `<br>Cambio: $${data.change.toFixed(2)}` : ''}
@@ -279,6 +282,13 @@ class Print {
                     <tr><th>Efectivo</th><th>Tarjeta</th><th>Ganancia Neta</th><th>Margen</th></tr>
                     <tr><td>$${fmt(report.cashTotal)}</td><td>$${fmt(report.cardTotal)}</td><td>$${fmt(report.profit)}</td><td>${report.margin}%</td></tr>
                 </table>
+                ${report.adjustmentCount > 0 ? `
+                <h2>Ajustes de Caja (${report.adjustmentCount})</h2>
+                <table>
+                    <tr><th>Concepto</th><th>Monto</th></tr>
+                    <tr style="color:#e74c3c;"><td>Devoluciones / Anulaciones</td><td>-$${fmt(Math.abs(report.cashAdjustments + report.cardAdjustments))}</td></tr>
+                </table>
+                ` : ''}
                 <h2>Detalle de Cortes de Caja (${report.sessionCount})</h2>
                 ${sessionsHtml}
             </body>
@@ -333,13 +343,14 @@ class Print {
                 <h3>Resumen</h3>
                 <table>
                     <tr><th>Concepto</th><th>Valor</th></tr>
-                    <tr><td>Monto Inicial</td><td>$${report.initialAmount.toFixed(2)}</td></tr>
-                    <tr><td>Total Ventas</td><td>$${report.totalSales.toFixed(2)}</td></tr>
-                    <tr><td>Efectivo</td><td>$${report.cashSales.toFixed(2)}</td></tr>
-                    <tr><td>Tarjeta</td><td>$${report.cardSales.toFixed(2)}</td></tr>
-                    <tr><td>Transacciones</td><td>${report.transactionCount}</td></tr>
-                    ${report.salesInSession !== undefined ? `<tr><td>Ventas en Sesión</td><td>${report.salesInSession}</td></tr>` : ''}
-                    <tr class="total-row"><td>Caja Final</td><td>$${report.closingAmount.toFixed(2)}</td></tr>
+                     <tr><td>Monto Inicial</td><td>$${report.initialAmount.toFixed(2)}</td></tr>
+                     <tr><td>Total Ventas</td><td>$${report.totalSales.toFixed(2)}</td></tr>
+                     <tr><td>Efectivo</td><td>$${report.cashSales.toFixed(2)}</td></tr>
+                     <tr><td>Tarjeta</td><td>$${report.cardSales.toFixed(2)}</td></tr>
+                     <tr><td>Transacciones</td><td>${report.transactionCount}</td></tr>
+                     ${report.salesInSession !== undefined ? `<tr><td>Ventas en Sesión</td><td>${report.salesInSession}</td></tr>` : ''}
+                     ${report.adjustmentCount > 0 ? `<tr><td>Devoluciones / Anulaciones</td><td style="color:#e74c3c;">-${Math.abs(report.totalAdjustments || 0).toFixed(2)}</td></tr>` : ''}
+                     <tr class="total-row"><td>Caja Final</td><td>$${report.closingAmount.toFixed(2)}</td></tr>
                     ${report.profit !== undefined ? `<tr class="total-row"><td>Ganancia Neta</td><td>$${report.profit.toFixed(2)}</td></tr>` : ''}
                     ${report.margin !== undefined ? `<tr class="total-row"><td>Margen</td><td>${report.margin}%</td></tr>` : ''}
                 </table>

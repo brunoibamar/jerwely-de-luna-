@@ -293,6 +293,10 @@ class Auth {
         return this.isAdmin();
     }
 
+    static canManageGuarantees() {
+        return this.isAdmin();
+    }
+
     static canCancelTickets() {
         return this.isAdmin();
     }
@@ -470,8 +474,10 @@ class License {
             shift: localStorage.getItem(Business.key('pos_shift_opened')),
             shiftSession: localStorage.getItem(Cut.storageKey),
             shiftHistory: localStorage.getItem(Cut.shiftHistoryKey),
-            heldSales: localStorage.getItem(HeldSales.storageKey),
-            reportHistory: localStorage.getItem(Backup.reportHistoryKey),
+                heldSales: localStorage.getItem(HeldSales.storageKey),
+                returns: localStorage.getItem(Returns.storageKey),
+                cashAdjustments: localStorage.getItem(CashAdjustment.storageKey),
+                reportHistory: localStorage.getItem(Backup.reportHistoryKey),
             backup: localStorage.getItem(Backup.backupKey),
             emailConfig: localStorage.getItem(Backup.emailConfigKey),
             dayChangeKey: localStorage.getItem(ReportService.dayChangeKey)

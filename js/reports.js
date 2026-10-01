@@ -199,6 +199,17 @@ class ReportService {
             }
         });
 
+        // Ajustes de caja por devoluciones y anulaciones del día
+        const adjustmentsRaw = typeof CashAdjustment !== 'undefined'
+            ? CashAdjustment.getByDate(target)
+            : [];
+        let adjustmentCash = 0;
+        let adjustmentCard = 0;
+        adjustmentsRaw.forEach(a => {
+            if (a.paymentMethod === 'cash') adjustmentCash += a.amount;
+            else if (a.paymentMethod === 'card') adjustmentCard += a.amount;
+        });
+
         return {
             date: target,
             totalSales: allSales.reduce((sum, s) => sum + s.total, 0),
@@ -209,6 +220,9 @@ class ReportService {
             mixedTransactionCount: mixedSales,
             cashTotal: cashTotal,
             cardTotal: cardTotal,
+            cashAdjustments: adjustmentCash,
+            cardAdjustments: adjustmentCard,
+            adjustmentCount: adjustmentsRaw.length,
             profit: profit,
             margin: margin,
             sessions: reportSessions,
@@ -375,14 +389,24 @@ class ReportService {
                             return `<span class="consolidated-value">${report.piecesSold || 0} / ${goal} (${pct}%)</span>`;
                         })()}
                     </div>
-                    <div class="consolidated-card">
-                        <span class="consolidated-label">Efectivo</span>
-                        <span class="consolidated-value">${fmt(report.cashTotal)}</span>
-                    </div>
-                    <div class="consolidated-card">
-                        <span class="consolidated-label">Tarjeta</span>
-                        <span class="consolidated-value">${fmt(report.cardTotal)}</span>
-                    </div>
+                     <div class="consolidated-card">
+                         <span class="consolidated-label">Efectivo</span>
+                         <span class="consolidated-value">${fmt(report.cashTotal)}</span>
+                     </div>
+                     <div class="consolidated-card">
+                         <span class="consolidated-label">Tarjeta</span>
+                         <span class="consolidated-value">${fmt(report.cardTotal)}</span>
+                     </div>
+                     ${report.adjustmentCount > 0 ? `
+                     <div class="consolidated-card">
+                         <span class="consolidated-label">Ajustes Dev/Adm</span>
+                         <span class="consolidated-value">${fmt(report.cashAdjustments + report.cardAdjustments)}</span>
+                     </div>
+                     <div class="consolidated-card">
+                         <span class="consolidated-label">Neto (Ventas - Ajustes)</span>
+                         <span class="consolidated-value gold">${fmt(report.totalSales + report.cashAdjustments + report.cardAdjustments)}</span>
+                     </div>
+                     ` : ''}
                     <div class="consolidated-card admin-only">
                         <span class="consolidated-label">Ganancia Neta</span>
                         <span class="consolidated-value">${fmt(report.profit)}</span>
@@ -392,11 +416,47 @@ class ReportService {
                         <span class="consolidated-value">${report.margin}%</span>
                     </div>
                 </div>
-                <div class="sessions-container">
-                    <h4>Cortes de Caja del Día (${report.sessionCount})</h4>
-                    ${sessionsHtml || '<p class="empty-text">No hay cortes registrados para este día</p>'}
+                 <div class="sessions-container">
+                     <h4>Cortes de Caja del Día (${report.sessionCount})</h4>
+                     ${sessionsHtml || '<p class="empty-text">No hay cortes registrados para este día</p>'}
+                 </div>
+                 ${report.adjustmentCount > 0 ? `
+                 <div class="adjustments-container" style="margin-top: 24px;">
+                     <h4>Ajustes de Caja (${report.adjustmentCount})</h4>
+                     <div class="adjustments-list" style="background: var(--bg-secondary); border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 12px 16px;">
+                         ${this.renderAdjustmentsDetail(report.date)}
+                     </div>
+                 </div>
+                 ` : ''}
+             </div>
+         `;
+    }
+
+    static renderAdjustmentsDetail(date) {
+        if (typeof CashAdjustment === 'undefined') return '';
+        const adjustments = CashAdjustment.getByDate(date);
+        if (adjustments.length === 0) return '<p class="empty-text">No hay ajustes</p>';
+
+        const fmt = (v) => (typeof v === 'number' ? `$${v.toFixed(2)}` : '$0.00');
+        let html = '';
+        adjustments.forEach(a => {
+            const time = new Date(a.date).toLocaleTimeString('es-MX', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            const typeLabel = a.type === 'return' ? 'Devolución'
+                : a.type === 'cancel' ? 'Anulación'
+                : 'Ajuste';
+            const sign = a.amount < 0 ? '-' : '+';
+            const absAmount = Math.abs(a.amount);
+            const amountClass = a.amount < 0 ? 'color: var(--danger)' : 'color: var(--success)';
+            html += `
+                <div class="adjustment-row">
+                    <span>${typeLabel} • ${time} • ${a.description}</span>
+                    <span class="adjustment-value" style="${amountClass}">${sign}${fmt(absAmount)}</span>
                 </div>
-            </div>
-        `;
+            `;
+        });
+        return html;
     }
 }

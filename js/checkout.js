@@ -29,7 +29,8 @@ class Checkout {
                 change: paymentDetails.change || 0,
                 receivedBreakdown: paymentDetails.receivedBreakdown || {}
             },
-            cashier: Auth.getCurrentUser()?.name || 'Desconocido'
+            cashier: Auth.getCurrentUser()?.name || 'Desconocido',
+            status: 'active'
         };
 
         SaleService.saveSale(sale);
@@ -60,6 +61,19 @@ class Checkout {
 
         const pd = sale.paymentDetails || {};
 
+        const items = sale.items.map(item => ({
+            description: item.description,
+            qty: item.quantity,
+            price: item.price,
+            amount: item.amount,
+            originalPrice: item.originalPrice || item.price
+        }));
+
+        const totalSavings = items.reduce((sum, item) => {
+            const saved = Math.max(0, (item.originalPrice - item.price) * item.qty);
+            return sum + saved;
+        }, 0);
+
         return {
             store: settings.storeName || 'Jewerly De Luna',
             address: settings.storeAddress || 'Av. Reforma 123, CDMX',
@@ -75,14 +89,10 @@ class Checkout {
             saleId: sale.id,
             date: new Date(sale.date).toLocaleString('es-MX'),
             cashier: sale.cashier,
-            items: sale.items.map(item => ({
-                description: item.description,
-                qty: item.quantity,
-                price: item.price,
-                amount: item.amount
-            })),
+            items: items,
             subtotal: sale.subtotal,
             total: sale.total,
+            totalSavings: parseFloat(totalSavings.toFixed(2)),
             paymentMethod: methodLabels[sale.paymentMethod] || sale.paymentMethod,
             // Detalles de pago para el ticket (cambio, montos desglosados)
             amountReceived: pd.amountReceived || 0,

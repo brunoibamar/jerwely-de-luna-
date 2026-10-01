@@ -4,6 +4,13 @@ class Backup {
     static get emailConfigKey() { return Business.key('pos_email_config'); }
     static get reportHistoryKey() { return Business.key('pos_report_history'); }
 
+    // Generar sello de fecha/hora con formato YYYYMMDD_HHMMSS para nombres de archivo
+    static formatDateStamp(now = new Date()) {
+        const pad = (n) => n.toString().padStart(2, '0');
+        return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}` +
+            `_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    }
+
     static createBackup() {
         const data = {
             version: '1.2',
@@ -12,12 +19,16 @@ class Backup {
             businessName: Business.getBusinessName(),
             businessId: Business.getCurrentBusinessId(),
             inventory: Inventory.getAll(),
-            sales: SaleService.getAll(),
+            sales: SaleService.getAll(true),
             users: Auth.adminProfile,
             settings: Settings.getSettings(),
             shiftSession: localStorage.getItem(Cut.storageKey),
             shiftHistory: localStorage.getItem(Cut.shiftHistoryKey),
-            heldSales: HeldSales.getAll(),
+            heldSales: localStorage.getItem(HeldSales.storageKey),
+            returns: (typeof Returns !== 'undefined') ? Returns.getAll() : JSON.parse(localStorage.getItem(Returns.storageKey) || '[]'),
+            cashAdjustments: (typeof CashAdjustment !== 'undefined') ? CashAdjustment.getAll() : JSON.parse(localStorage.getItem(CashAdjustment.storageKey) || '[]'),
+            guaranteeExchanges: (typeof GuaranteeExchange !== 'undefined') ? GuaranteeExchange.getAll() : JSON.parse(localStorage.getItem(GuaranteeExchange.storageKey) || '[]'),
+            lastReceiptSale: localStorage.getItem(Business.key('pos_last_receipt_sale')),
             reportHistory: localStorage.getItem(this.reportHistoryKey),
             dayChangeKey: localStorage.getItem(ReportService.dayChangeKey)
         };
@@ -28,7 +39,7 @@ class Backup {
 
         const a = document.createElement('a');
         a.href = url;
-        a.download = `jewerly-de-luna-backup-${new Date().toISOString().split('T')[0]}.json`;
+        a.download = `POS_Backup_${this.formatDateStamp()}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -43,7 +54,10 @@ class Backup {
             inventory: Inventory.getAll(),
             sales: SaleService.getAll(),
             settings: Settings.getSettings(),
-            heldSales: HeldSales.getAll()
+            heldSales: HeldSales.getAll(),
+            returns: (typeof Returns !== 'undefined') ? Returns.getAll() : [],
+            cashAdjustments: (typeof CashAdjustment !== 'undefined') ? CashAdjustment.getAll() : [],
+            guaranteeExchanges: (typeof GuaranteeExchange !== 'undefined') ? GuaranteeExchange.getAll() : []
         };
         localStorage.setItem(this.backupKey, JSON.stringify(data));
         return { success: true, message: 'Respaldo guardado en localStorage' };
@@ -58,12 +72,21 @@ class Backup {
         SaleService.save(data.sales || []);
         Settings.saveSettings(data.settings || {});
         if (data.heldSales) localStorage.setItem(HeldSales.storageKey, JSON.stringify(data.heldSales));
+        if (data.returns) localStorage.setItem(Returns.storageKey, JSON.stringify(data.returns));
+        if (data.cashAdjustments) localStorage.setItem(CashAdjustment.storageKey, JSON.stringify(data.cashAdjustments));
+        if (data.guaranteeExchanges) localStorage.setItem(GuaranteeExchange.storageKey, JSON.stringify(data.guaranteeExchanges));
 
         return { success: true, message: 'Datos restaurados correctamente' };
     }
 
-    static importFromFile(file) {
+    static importFromFile(file, options = {}) {
+        const { factoryRestore = false } = options;
         return new Promise((resolve, reject) => {
+            if (!file) {
+                resolve({ success: false, error: 'No se seleccionó ningún archivo' });
+                return;
+            }
+
             const reader = new FileReader();
             reader.onload = e => {
                 try {
@@ -72,16 +95,115 @@ class Backup {
                         resolve({ success: false, error: 'Archivo de respaldo inválido' });
                         return;
                     }
-                    if (data.inventory) Inventory.saveProducts(data.inventory);
-                    if (data.sales) SaleService.save(data.sales);
-                    if (data.settings) Settings.saveSettings(data.settings);
-                    if (data.store) Business.setBusinessName(data.store);
+
+                    if (factoryRestore) {
+                        this._factoryRestore(data);
+                        resolve({
+                            success: true,
+                            message: 'Restauración de fábrica completada. Recargue la página para aplicar los cambios.',
+                            factoryRestore: true
+                        });
+                        return;
+                    }
+
+                    const stats = { added: 0, updated: 0, unchanged: 0 };
+
+                    const backupSales = this._normalizeArray(data.sales);
+                    if (backupSales.length > 0) {
+                        const result = this._mergeById(
+                            SaleService.getAll(true),
+                            backupSales,
+                            'id',
+                            'date'
+                        );
+                        SaleService.save(result.merged);
+                        stats.added += result.added;
+                        stats.updated += result.updated;
+                        stats.unchanged += result.skipped;
+                    }
+
+                    const backupReturns = this._normalizeArray(data.returns);
+                    if (backupReturns.length > 0) {
+                        const result = this._mergeById(
+                            Returns.getAll(),
+                            backupReturns,
+                            'id',
+                            'date'
+                        );
+                        Returns.save(result.merged);
+                        stats.added += result.added;
+                        stats.updated += result.updated;
+                        stats.unchanged += result.skipped;
+                    }
+
+                    const backupAdjustments = this._normalizeArray(data.cashAdjustments);
+                    if (backupAdjustments.length > 0) {
+                        const result = this._mergeById(
+                            CashAdjustment.getAll(),
+                            backupAdjustments,
+                            'id',
+                            'date'
+                        );
+                        CashAdjustment.save(result.merged);
+                        stats.added += result.added;
+                        stats.updated += result.updated;
+                        stats.unchanged += result.skipped;
+                    }
+
+                    const backupGuaranteeExchanges = this._normalizeArray(data.guaranteeExchanges);
+                    if (typeof GuaranteeExchange !== 'undefined' && backupGuaranteeExchanges.length > 0) {
+                        const result = this._mergeById(
+                            GuaranteeExchange.getAll(),
+                            backupGuaranteeExchanges,
+                            'id',
+                            'date'
+                        );
+                        GuaranteeExchange.save(result.merged);
+                        stats.added += result.added;
+                        stats.updated += result.updated;
+                        stats.unchanged += result.skipped;
+                    }
+                    if (backupHeldSales.length > 0) {
+                        const result = this._mergeById(
+                            HeldSales.getAll(),
+                            backupHeldSales,
+                            'id',
+                            'date'
+                        );
+                        HeldSales.save(result.merged);
+                        stats.added += result.added;
+                        stats.updated += result.updated;
+                        stats.unchanged += result.skipped;
+                    }
+
+                    const backupInventory = this._normalizeArray(data.inventory);
+                    if (backupInventory.length > 0) {
+                        const invResult = this._mergeInventory(backupInventory);
+                        stats.added += invResult.added;
+                        stats.updated += invResult.updated;
+                    }
+
+                    if (data.settings) {
+                        const backupSettings = this._normalizeObject(data.settings);
+                        if (Object.keys(backupSettings).length > 0) {
+                            const current = Settings.getSettings();
+                            Settings.saveSettings({ ...current, ...backupSettings });
+                        }
+                    }
+
                     if (data.shiftSession) localStorage.setItem(Cut.storageKey, data.shiftSession);
                     if (data.shiftHistory) localStorage.setItem(Cut.shiftHistoryKey, data.shiftHistory);
-                    if (data.heldSales) localStorage.setItem(HeldSales.storageKey, JSON.stringify(data.heldSales));
-                    if (data.reportHistory) localStorage.setItem(this.reportHistoryKey, JSON.stringify(data.reportHistory));
+                    if (data.shift) localStorage.setItem(Business.key('pos_shift_opened'), data.shift);
+                    if (data.lastReceiptSale) localStorage.setItem(Business.key('pos_last_receipt_sale'), data.lastReceiptSale);
+                    if (data.reportHistory) localStorage.setItem(this.reportHistoryKey, data.reportHistory);
                     if (data.dayChangeKey) localStorage.setItem(ReportService.dayChangeKey, data.dayChangeKey);
-                    resolve({ success: true, message: 'Datos importados correctamente' });
+                    if (data.emailConfig) localStorage.setItem(this.emailConfigKey, data.emailConfig);
+
+                    resolve({
+                        success: true,
+                        message: 'Datos importados correctamente. Agregadas: ' + stats.added + ', actualizadas: ' + stats.updated + ', sin cambios: ' + stats.unchanged + '.',
+                        stats
+                    });
                 } catch (err) {
                     reject({ success: false, error: 'Error al leer el archivo: ' + err.message });
                 }
@@ -91,6 +213,158 @@ class Backup {
         });
     }
 
+    static _normalizeArray(value) {
+        if (Array.isArray(value)) return value;
+        if (typeof value === 'string' && value.trim()) {
+            try {
+                const parsed = JSON.parse(value);
+                return Array.isArray(parsed) ? parsed : [];
+            } catch {
+                return [];
+            }
+        }
+        return [];
+    }
+
+    static _normalizeObject(value) {
+        if (typeof value === 'string' && value.trim()) {
+            try {
+                const parsed = JSON.parse(value);
+                return (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) ? parsed : {};
+            } catch {
+                return {};
+            }
+        }
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) return value;
+        return {};
+    }
+
+    static _mergeById(localArr, backupArr, idKey = 'id', dateKey = 'date') {
+        const localMap = new Map();
+        const result = [...localArr];
+
+        localArr.forEach(item => {
+            if (item && item[idKey] != null) localMap.set(item[idKey], item);
+        });
+
+        let added = 0, updated = 0, skipped = 0;
+
+        backupArr.forEach(item => {
+            if (!item || item[idKey] == null) {
+                result.push(item);
+                added++;
+                return;
+            }
+            const existing = localMap.get(item[idKey]);
+            if (!existing) {
+                result.push(item);
+                added++;
+            } else {
+                const localDate = new Date(existing[dateKey] || 0);
+                const backupDate = new Date(item[dateKey] || 0);
+                if (backupDate > localDate) {
+                    const idx = result.findIndex(m => m[idKey] === item[idKey]);
+                    if (idx !== -1) {
+                        result[idx] = item;
+                        updated++;
+                    }
+                } else {
+                    skipped++;
+                }
+            }
+        });
+
+        return { merged: result, added, updated, skipped };
+    }
+
+    static _mergeInventory(backupInventory) {
+        const local = Inventory.getAll();
+        const localMap = new Map();
+        local.forEach(p => {
+            if (p && p.barcode != null) localMap.set(p.barcode, p);
+        });
+
+        let added = 0, updated = 0;
+        const merged = [...local];
+
+        backupInventory.forEach(product => {
+            if (!product || product.barcode == null) return;
+            const existing = localMap.get(product.barcode);
+            if (!existing) {
+                merged.push(product);
+                added++;
+            } else {
+                const idx = merged.findIndex(p => p.barcode === product.barcode);
+                if (idx !== -1) {
+                    merged[idx] = {
+                        ...existing,
+                        ...product,
+                        stock: Math.max(existing.stock || 0, product.stock || 0)
+                    };
+                    updated++;
+                }
+            }
+        });
+
+        Inventory.saveProducts(merged);
+        return { added, updated };
+    }
+
+    static _factoryRestore(data) {
+        Business.ALL_NAMESPACED_KEYS.forEach(key => {
+            localStorage.removeItem(Business.key(key));
+        });
+        localStorage.removeItem(Business.BUSINESS_NAME_KEY);
+
+        const backupInventory = this._normalizeArray(data.inventory);
+        Inventory.saveProducts(backupInventory.length ? backupInventory : Inventory.defaultProducts);
+
+        const backupSales = this._normalizeArray(data.sales);
+        SaleService.save(backupSales);
+
+        if (data.settings) {
+            const backupSettings = this._normalizeObject(data.settings);
+            Settings.saveSettings(Object.keys(backupSettings).length ? backupSettings : Settings.defaultSettings);
+        }
+
+        if (data.store) Business.setBusinessName(data.store);
+
+        if (data.auth) {
+            const auth = this._normalizeObject(data.auth);
+            if (auth.adminPassword) localStorage.setItem(Auth.storageKeys.adminPassword, auth.adminPassword);
+            if (auth.guestKey) localStorage.setItem(Auth.storageKeys.guestKey, auth.guestKey);
+            if (auth.adminUsername) localStorage.setItem(Auth.adminUsernameKey, auth.adminUsername);
+        }
+
+        if (data.license) {
+            const license = this._normalizeObject(data.license);
+            if (license.expiration) localStorage.setItem(License.storageKeys.expiration, license.expiration);
+            if (license.lastUsage) localStorage.setItem(License.storageKeys.lastUsage, license.lastUsage);
+            if (license.tampered) localStorage.setItem(License.storageKeys.tampered, license.tampered);
+        }
+
+        if (data.shiftSession) localStorage.setItem(Cut.storageKey, data.shiftSession);
+        if (data.shiftHistory) localStorage.setItem(Cut.shiftHistoryKey, data.shiftHistory);
+        if (data.shift) localStorage.setItem(Business.key('pos_shift_opened'), data.shift);
+
+        const backupHeldSales = this._normalizeArray(data.heldSales);
+        localStorage.setItem(HeldSales.storageKey, JSON.stringify(backupHeldSales));
+
+        const backupReturns = this._normalizeArray(data.returns);
+        localStorage.setItem(Returns.storageKey, JSON.stringify(backupReturns));
+
+        const backupAdjustments = this._normalizeArray(data.cashAdjustments);
+        localStorage.setItem(CashAdjustment.storageKey, JSON.stringify(backupAdjustments));
+
+        const backupGuaranteeExchanges = this._normalizeArray(data.guaranteeExchanges);
+        localStorage.setItem(GuaranteeExchange.storageKey, JSON.stringify(backupGuaranteeExchanges));
+
+        if (data.lastReceiptSale) localStorage.setItem(Business.key('pos_last_receipt_sale'), data.lastReceiptSale);
+        if (data.reportHistory) localStorage.setItem(this.reportHistoryKey, data.reportHistory);
+        if (data.dayChangeKey) localStorage.setItem(ReportService.dayChangeKey, data.dayChangeKey);
+        if (data.emailConfig) localStorage.setItem(this.emailConfigKey, data.emailConfig);
+    }
+
     static getBackupInfo() {
         const stored = localStorage.getItem(this.backupKey);
         if (!stored) return null;
@@ -98,7 +372,10 @@ class Backup {
         return {
             timestamp: data.timestamp,
             inventoryCount: data.inventory?.length || 0,
-            salesCount: data.sales?.length || 0
+            salesCount: data.sales?.length || 0,
+            returnsCount: data.returns?.length || 0,
+            cashAdjustmentsCount: data.cashAdjustments?.length || 0,
+            guaranteeExchangesCount: data.guaranteeExchanges?.length || 0
         };
     }
 
@@ -177,6 +454,21 @@ class Backup {
             });
             report.profit = totalRevenue - totalCost;
             report.margin = totalCost > 0 ? ((report.profit / totalCost) * 100).toFixed(1) : '0.0';
+
+            if (typeof CashAdjustment !== 'undefined') {
+                const reportDateStr = reportDate;
+                const adjustments = CashAdjustment.getByDate(reportDateStr);
+                let adjCash = 0;
+                let adjCard = 0;
+                adjustments.forEach(a => {
+                    if (a.paymentMethod === 'cash') adjCash += a.amount;
+                    else if (a.paymentMethod === 'card') adjCard += a.amount;
+                });
+                report.cashAdjustments = adjCash;
+                report.cardAdjustments = adjCard;
+                report.totalAdjustments = adjCash + adjCard;
+                report.adjustmentCount = adjustments.length;
+            }
         }
 
         return report;
@@ -553,6 +845,11 @@ class Backup {
                 text += `Ganancia Neta: $${fmt(report.profit)}\n`;
                 text += `Margen: ${report.margin}%\n`;
             }
+            if (report.adjustmentCount > 0) {
+                text += `\n--- Ajustes de Caja ---\n`;
+                text += `Devoluciones / Anulaciones: -$${fmt(Math.abs(report.cashAdjustments + report.cardAdjustments))}\n`;
+                text += `Cantidad de Ajustes: ${report.adjustmentCount}\n`;
+            }
             if (report.items && report.items.length > 0) {
                 text += `\n--- Detalle de Transacciones ---\n`;
                 report.items.forEach(item => {
@@ -582,6 +879,11 @@ class Backup {
                 text += `\n--- Utilidades (Solo Admin) ---\n`;
                 text += `Ganancia Neta: $${fmt(report.profit)}\n`;
                 text += `Margen: ${report.margin}%\n`;
+            }
+            if (report.adjustmentCount > 0) {
+                text += `\n--- Ajustes de Caja ---\n`;
+                text += `Devoluciones / Anulaciones: -$${fmt(Math.abs(report.cashAdjustments + report.cardAdjustments))}\n`;
+                text += `Cantidad de Ajustes: ${report.adjustmentCount}\n`;
             }
             if (report.items && report.items.length > 0) {
                 text += `\n--- Detalle de Transacciones ---\n`;

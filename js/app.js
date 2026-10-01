@@ -1,9 +1,12 @@
 class SaleService {
     static get storageKey() { return Business.key('pos_sales'); }
 
-    static getAll() {
+    static getAll(includeCanceled = false) {
         const stored = localStorage.getItem(this.storageKey);
-        return stored ? JSON.parse(stored) : [];
+        if (!stored) return [];
+        const all = JSON.parse(stored);
+        if (includeCanceled) return all;
+        return all.filter(s => s.status !== 'canceled');
     }
 
     static save(sales) {
@@ -11,14 +14,14 @@ class SaleService {
     }
 
     static saveSale(sale) {
-        const sales = this.getAll();
+        const sales = this.getAll(true);
         sales.push(sale);
         this.save(sales);
         return sale;
     }
 
     static getById(saleId) {
-        return this.getAll().find(s => s.id === saleId);
+        return this.getAll(true).find(s => s.id === saleId);
     }
 
     static getSalesByDate(date) {
@@ -38,6 +41,33 @@ class SaleService {
             transactionCount: sales.length,
             itemsSold: itemCount
         };
+    }
+
+    // --- Anulación / Cancelación de venta (solo admin) ---
+    // Marca una venta como cancelada y devuelve los datos para reversar stock y caja.
+    static cancelSale(saleId, reason = '') {
+        const sales = this.getAll(true);
+        const index = sales.findIndex(s => s.id === saleId);
+        if (index === -1) {
+            return { success: false, error: 'Venta no encontrada' };
+        }
+        const sale = sales[index];
+        if (sale.status === 'canceled') {
+            return { success: false, error: 'La venta ya está anulada' };
+        }
+        sale.status = 'canceled';
+        sale.canceledAt = new Date().toISOString();
+        sale.cancelReason = reason.trim();
+        this.save(sales);
+        return { success: true, sale };
+    }
+
+    // Obtener todas las ventas anuladas del día
+    static getCanceledSales(date = null) {
+        const all = this.getAll(true);
+        return all.filter(s => s.status === 'canceled' && (
+            !date || s.date.startsWith(date)
+        ));
     }
 }
 
@@ -194,6 +224,8 @@ class App {
         this.bindPosEvents();
         this.bindPauseEvents();
         this.bindHeldSalesEvents();
+        this.bindReturnsEvents();
+        this.bindGuaranteeEvents();
         this.bindPaymentEvents();
 
         this.initApp();
@@ -378,42 +410,31 @@ class App {
     restoreFromBackup(file) {
         if (!file) return;
 
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                const data = JSON.parse(e.target.result);
-                if (data.inventory) localStorage.setItem(Inventory.storageKey, data.inventory);
-                if (data.sales) localStorage.setItem(SaleService.storageKey, data.sales);
-                if (data.settings) localStorage.setItem(Settings.storageKey, data.settings);
-                if (data.store) Business.setBusinessName(data.store);
-                if (data.auth) {
-                    if (data.auth.adminPassword) localStorage.setItem(Auth.storageKeys.adminPassword, data.auth.adminPassword);
-                    if (data.auth.guestKey) localStorage.setItem(Auth.storageKeys.guestKey, data.auth.guestKey);
-                    if (data.auth.adminUsername) localStorage.setItem(Auth.adminUsernameKey, data.auth.adminUsername);
+        Backup.importFromFile(file, { factoryRestore: false })
+            .then(result => {
+                if (result.success) {
+                    const msg = result.stats
+                        ? 'Respalado importado. Agregadas: ' + result.stats.added + ', actualizadas: ' + result.stats.updated + ', sin cambios: ' + result.stats.unchanged + '.'
+                        : (result.message || 'Respalado importado correctamente.');
+                    Toast.success(msg + ' Recargue la página para aplicar los cambios.');
+                } else {
+                    Toast.error(result.error);
                 }
-                if (data.license) {
-                    if (data.license.expiration) localStorage.setItem(License.storageKeys.expiration, data.license.expiration);
-                    if (data.license.lastUsage) localStorage.setItem(License.storageKeys.lastUsage, data.license.lastUsage);
-                    if (data.license.tampered) localStorage.setItem(License.storageKeys.tampered, data.license.tampered);
-                }
-                if (data.shift) localStorage.setItem(Business.key('pos_shift_opened'), data.shift);
-                if (data.shiftSession) localStorage.setItem(Cut.storageKey, data.shiftSession);
-                if (data.shiftHistory) localStorage.setItem(Cut.shiftHistoryKey, data.shiftHistory);
-                if (data.reportHistory) localStorage.setItem(Backup.reportHistoryKey, data.reportHistory);
-                if (data.dayChangeKey) localStorage.setItem(ReportService.dayChangeKey, data.dayChangeKey);
-                if (data.emailConfig) localStorage.setItem(Backup.emailConfigKey, data.emailConfig);
-
-                Toast.success('Respalado importado correctamente. Recargue la página para aplicar los cambios.');
-            } catch (err) {
-                Toast.error('Error al leer el archivo: ' + err.message);
-            }
-        };
-        reader.readAsText(file);
+            })
+            .catch(err => {
+                Toast.error(err.error || 'Error al leer el archivo: ' + err.message);
+            });
     }
 
     showLogin() {
         document.getElementById('login-screen')?.classList.remove('hidden');
         document.getElementById('pos-app')?.classList.add('hidden');
+        const roleSelection = document.getElementById('role-selection');
+        const formsWrapper = document.getElementById('login-forms-wrapper');
+        if (roleSelection) roleSelection.classList.remove('hidden');
+        if (formsWrapper) formsWrapper.classList.add('hidden');
+        document.querySelectorAll('[data-login-form]').forEach(form => form.classList.add('hidden'));
+        document.querySelectorAll('.login-error').forEach(el => { el.textContent = ''; });
     }
 
     showApp() {
@@ -514,17 +535,29 @@ class App {
             });
         }
 
-        const loginTabs = document.querySelectorAll('.login-tab-btn');
-        loginTabs.forEach(tab => {
-            tab.addEventListener('click', () => {
-                loginTabs.forEach(t => t.classList.remove('active'));
-                tab.classList.add('active');
-                const loginType = tab.dataset.loginType;
+        const roleCards = document.querySelectorAll('.role-card');
+        const roleSelection = document.getElementById('role-selection');
+        const formsWrapper = document.getElementById('login-forms-wrapper');
+        const backToRolesBtn = document.getElementById('back-to-roles');
+
+        roleCards.forEach(card => {
+            card.addEventListener('click', () => {
+                const role = card.dataset.role;
+                roleSelection?.classList.add('hidden');
+                formsWrapper?.classList.remove('hidden');
                 document.querySelectorAll('[data-login-form]').forEach(form => {
                     form.classList.add('hidden');
                 });
-                const targetForm = document.querySelector(`[data-login-form="${loginType}"]`);
+                const targetForm = document.querySelector(`[data-login-form="${role}"]`);
                 if (targetForm) targetForm.classList.remove('hidden');
+            });
+        });
+
+        backToRolesBtn?.addEventListener('click', () => {
+            formsWrapper?.classList.add('hidden');
+            roleSelection?.classList.remove('hidden');
+            document.querySelectorAll('[data-login-form]').forEach(form => {
+                form.classList.add('hidden');
             });
         });
 
@@ -704,47 +737,53 @@ class App {
                 const openTime = report.formattedOpenTime || '';
                 const closeTime = report.formattedCloseTime || '';
 
-                summaryEl.innerHTML = `
-                    <div class="session-timestamps">
-                        <div class="session-time-row">
-                            <span class="summary-label">Apertura:</span>
-                            <span class="summary-value">${openTime}</span>
-                        </div>
-                        <div class="session-time-row">
-                            <span class="summary-label">Cierre:</span>
-                            <span class="summary-value">${closeTime}</span>
-                        </div>
-                    </div>
-                    <div class="summary-row">
-                        <span class="summary-label">Monto Inicial</span>
-                        <span class="summary-value">$${report.initialAmount.toFixed(2)}</span>
-                    </div>
-                    <div class="summary-row">
-                        <span class="summary-label">Total Ventas</span>
-                        <span class="summary-value">$${report.totalSales.toFixed(2)}</span>
-                    </div>
-                    <div class="summary-row">
-                        <span class="summary-label">Efectivo</span>
-                        <span class="summary-value">$${report.cashSales.toFixed(2)}</span>
-                    </div>
-                    <div class="summary-row">
-                        <span class="summary-label">Tarjeta</span>
-                        <span class="summary-value">$${report.cardSales.toFixed(2)}</span>
-                    </div>
-                    <div class="summary-row">
-                        <span class="summary-label">Transacciones</span>
-                        <span class="summary-value">${report.transactionCount}</span>
-                    </div>
-                    <div class="summary-row">
-                        <span class="summary-label">Ventas en Sesión</span>
-                        <span class="summary-value">${report.salesInSession !== undefined ? report.salesInSession : report.transactionCount}</span>
-                    </div>
-                    <div class="summary-row total">
-                        <span class="summary-label">Caja Final</span>
-                        <span class="summary-value gold">$${report.closingAmount.toFixed(2)}</span>
-                    </div>
-                    ${profitRows}
-                `;
+                 summaryEl.innerHTML = `
+                     <div class="session-timestamps">
+                         <div class="session-time-row">
+                             <span class="summary-label">Apertura:</span>
+                             <span class="summary-value">${openTime}</span>
+                         </div>
+                         <div class="session-time-row">
+                             <span class="summary-label">Cierre:</span>
+                             <span class="summary-value">${closeTime}</span>
+                         </div>
+                     </div>
+                     <div class="summary-row">
+                         <span class="summary-label">Monto Inicial</span>
+                         <span class="summary-value">$${report.initialAmount.toFixed(2)}</span>
+                     </div>
+                     <div class="summary-row">
+                         <span class="summary-label">Total Ventas</span>
+                         <span class="summary-value">$${report.totalSales.toFixed(2)}</span>
+                     </div>
+                     <div class="summary-row">
+                         <span class="summary-label">Efectivo</span>
+                         <span class="summary-value">$${report.cashSales.toFixed(2)}</span>
+                     </div>
+                     <div class="summary-row">
+                         <span class="summary-label">Tarjeta</span>
+                         <span class="summary-value">$${report.cardSales.toFixed(2)}</span>
+                     </div>
+                     ${report.adjustmentCount > 0 ? `
+                     <div class="summary-row">
+                         <span class="summary-label">Devoluciones / Anulaciones</span>
+                         <span class="summary-value" style="color: var(--danger);">-${Math.abs(report.totalAdjustments).toFixed(2)}</span>
+                     </div>
+                     ` : ''}
+                     <div class="summary-row">
+                         <span class="summary-label">Transacciones</span>
+                         <span class="summary-value">${report.transactionCount}</span>
+                     </div>
+                     <div class="summary-row">
+                         <span class="summary-label">Ventas en Sesión</span>
+                         <span class="summary-value">${report.salesInSession !== undefined ? report.salesInSession : report.transactionCount}</span>
+                     </div>
+                     <div class="summary-row total">
+                         <span class="summary-label">Caja Final</span>
+                         <span class="summary-value gold">$${report.closingAmount.toFixed(2)}</span>
+                     </div>
+                     ${profitRows}
+                 `;
             } else {
                 // --- Invitado / Cajero: vista restringida ---
                 // No se muestra dinero, ganancias ni montos totales.
@@ -877,13 +916,14 @@ class App {
                 <h3>Resumen</h3>
                 <table>
                     <tr><th>Concepto</th><th>Valor</th></tr>
-                    <tr><td>Monto Inicial</td><td>$${report.initialAmount.toFixed(2)}</td></tr>
-                    <tr><td>Total Ventas</td><td>$${report.totalSales.toFixed(2)}</td></tr>
-                    <tr><td>Efectivo</td><td>$${report.cashSales.toFixed(2)}</td></tr>
-                    <tr><td>Tarjeta</td><td>$${report.cardSales.toFixed(2)}</td></tr>
-                    <tr><td>Transacciones</td><td>${report.transactionCount}</td></tr>
-                    ${report.salesInSession !== undefined ? `<tr><td>Ventas en Sesión</td><td>${report.salesInSession}</td></tr>` : ''}
-                    <tr class="total-row"><td>Caja Final</td><td>$${report.closingAmount.toFixed(2)}</td></tr>
+                     <tr><td>Monto Inicial</td><td>$${report.initialAmount.toFixed(2)}</td></tr>
+                     <tr><td>Total Ventas</td><td>$${report.totalSales.toFixed(2)}</td></tr>
+                     <tr><td>Efectivo</td><td>$${report.cashSales.toFixed(2)}</td></tr>
+                     <tr><td>Tarjeta</td><td>$${report.cardSales.toFixed(2)}</td></tr>
+                     <tr><td>Transacciones</td><td>${report.transactionCount}</td></tr>
+                     ${report.salesInSession !== undefined ? `<tr><td>Ventas en Sesión</td><td>${report.salesInSession}</td></tr>` : ''}
+                     ${report.adjustmentCount > 0 ? `<tr><td>Devoluciones / Anulaciones</td><td style="color:#e74c3c;">-${Math.abs(report.totalAdjustments || 0).toFixed(2)}</td></tr>` : ''}
+                     <tr class="total-row"><td>Caja Final</td><td>$${report.closingAmount.toFixed(2)}</td></tr>
                     ${report.profit !== undefined ? `<tr class="total-row"><td>Ganancia Neta</td><td>$${report.profit.toFixed(2)}</td></tr>` : ''}
                     ${report.margin !== undefined ? `<tr class="total-row"><td>Margen</td><td>${report.margin}%</td></tr>` : ''}
                 </table>
@@ -1033,6 +1073,13 @@ class App {
         if (checkoutBtn) {
             checkoutBtn.addEventListener('click', () => {
                 this.processCheckout();
+            });
+        }
+
+        const reprintLastBtn = document.getElementById('reprint-last-btn');
+        if (reprintLastBtn) {
+            reprintLastBtn.addEventListener('click', () => {
+                this.reprintLastTicket();
             });
         }
     }
@@ -1226,13 +1273,27 @@ class App {
 
         renderMixedDenoms(document.getElementById('mixed-denom-bills'), mixedBillDenoms);
         renderMixedDenoms(document.getElementById('mixed-denom-coins'), mixedCoinDenoms);
-
+        
         // Botón Limpiar (reiniciar monto recibido)
         const clearBtn = document.getElementById('clear-received-btn');
         if (clearBtn) {
             clearBtn.addEventListener('click', () => {
                 this.receivedAmount = 0;
                 this.updateCashDisplay(this.cart.getTotal());
+            });
+        }
+
+        // Botón Efectivo Exacto (Recibido = Total, Cambio = $0.00, confirmar en un clic)
+        const exactCashBtn = document.getElementById('exact-cash-btn');
+        if (exactCashBtn) {
+            exactCashBtn.addEventListener('click', () => {
+                const total = this.cart.getTotal();
+                this.receivedAmount = total;
+                this.updateCashDisplay(total);
+                const confirmBtn = document.getElementById('confirm-cash-btn');
+                if (confirmBtn && !confirmBtn.disabled) {
+                    confirmBtn.click();
+                }
             });
         }
 
@@ -1349,6 +1410,9 @@ class App {
                     result.sale.items.map(i => ({ barcode: i.barcode, quantity: i.quantity }))
                 );
 
+                // Guardar referencia a la venta recién completada para reimpresión rápida
+                this.saveLastPrintedSale(result.sale);
+
                 setTimeout(() => {
                     Print.printReceipt(result.sale);
                 }, 300);
@@ -1366,6 +1430,43 @@ class App {
         } finally {
             this.hidePaymentModal();
         }
+    }
+
+    // --- Reimpresión de tickets ---
+
+    static get lastReceiptKey() { return Business.key('pos_last_receipt_sale'); }
+
+    // Guardar la última venta completada para reimpresión rápida
+    saveLastPrintedSale(sale) {
+        localStorage.setItem(App.lastReceiptKey, JSON.stringify(sale));
+    }
+
+    // Obtener la última venta imprimida desde localStorage
+    getLastPrintedSale() {
+        const stored = localStorage.getItem(App.lastReceiptKey);
+        return stored ? JSON.parse(stored) : null;
+    }
+
+    // Reimprimir el último ticket generado
+    reprintLastTicket() {
+        const sale = this.getLastPrintedSale();
+        if (!sale) {
+            Toast.warning('No hay tickets recientes para reimprimir');
+            return;
+        }
+        Print.printReceipt(sale);
+        Toast.info(`Reimprimiendo ticket - Folio: ${sale.id}`);
+    }
+
+    // Reimprimir un ticket específico por su ID de venta
+    reprintTicket(saleId) {
+        const sale = SaleService.getById(saleId);
+        if (!sale) {
+            Toast.error('No se encontró la venta seleccionada');
+            return;
+        }
+        Print.printReceipt(sale);
+        Toast.info(`Reimprimiendo ticket - Folio: ${sale.id}`);
     }
 
     updateDailyReport() {
@@ -1752,6 +1853,7 @@ class App {
                             <th>Cant.</th>
                             <th>Total</th>
                             <th>Pago</th>
+                            <th>Acciones</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -1765,6 +1867,13 @@ class App {
                                 <td class="qty-cell">${s.itemCount}</td>
                                 <td class="amount-cell">$${s.total.toFixed(2)}</td>
                                 <td>${s.paymentMethod}</td>
+                                <td class="action-cell">
+                                    <button class="btn btn-icon btn-sm"
+                                            onclick="window.app.reprintTicket('${s.id}')"
+                                            title="Reimprimir ticket">
+                                        ↻
+                                    </button>
+                                </td>
                             </tr>
                         `).join('')}
                     </tbody>
@@ -1972,7 +2081,7 @@ class App {
                     </div>
                     <div class="input-group">
                         <div class="checkbox-group" style="margin-top: 12px;">
-                            <input type="checkbox" id="product-volume-pricing" name="volumePricing" value="1" style="margin-right: 8px;">
+                            <input type="checkbox" id="product-volume-pricing" name="aplicaPromocion" value="1" style="margin-right: 8px;">
                             <label for="product-volume-pricing" style="position: static; transform: none; background: none; padding: 0; display: inline;">
                                 Precio Mayoreo por Volumen
                             </label>
@@ -2013,7 +2122,7 @@ class App {
                 stock: parseInt(formData.get('stock')),
                 cost: formData.get('cost') ? parseFloat(formData.get('cost')) : 0,
                 category: formData.get('category') ? formData.get('category').trim() : 'General',
-                volumePricing: e.target.volumePricing.checked
+                aplicaPromocion: e.target.aplicaPromocion.checked
             };
 
             const result = Inventory.add(product);
@@ -2150,8 +2259,89 @@ class App {
                        testEmailBtn.disabled = false;
                        testEmailBtn.textContent = originalText;
                    }
-               });
-           }
+                });
+            }
+
+          // --- Respaldo y Restauración (Exportar / Importar .json) ---
+          // Módulo 1: sincronización remota y recuperación ante fallos.
+          // Requiere privilegios de administrador (Configuración).
+          const exportBackupSettingBtn = document.getElementById('export-backup-setting-btn');
+          if (exportBackupSettingBtn) {
+              exportBackupSettingBtn.addEventListener('click', () => {
+                  if (!Auth.canAccessConfig()) {
+                      Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+                      return;
+                  }
+                  const result = Backup.createBackup();
+                  Toast.success(result.message);
+              });
+          }
+
+          const importBackupSettingBtn = document.getElementById('import-backup-setting-btn');
+          const importBackupSettingFile = document.getElementById('import-backup-setting-file');
+          const factoryRestoreCheckbox = document.getElementById('factory-restore-checkbox');
+          if (importBackupSettingBtn && importBackupSettingFile) {
+              importBackupSettingBtn.addEventListener('click', () => {
+                  if (!Auth.canAccessConfig()) {
+                      Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+                      return;
+                  }
+                  importBackupSettingFile.click();
+              });
+              importBackupSettingFile.addEventListener('change', (e) => {
+                  this.importBackupFile(e.target.files[0]);
+                  e.target.value = '';
+              });
+          }
+
+          if (factoryRestoreCheckbox) {
+              factoryRestoreCheckbox.addEventListener('change', () => {
+                  if (importBackupSettingBtn) {
+                      importBackupSettingBtn.textContent = factoryRestoreCheckbox.checked
+                          ? 'Restaurar (Fábrica)'
+                          : 'Importar / Restaurar Copia de Seguridad';
+                  }
+              });
+          }
+        }
+
+    // Importar una copia de seguridad .json exportada por el sistema
+    async importBackupFile(file) {
+        if (!file) return;
+
+        const errorEl = document.getElementById('backup-setting-error');
+        const successEl = document.getElementById('backup-setting-success');
+        if (errorEl) errorEl.textContent = '';
+        if (successEl) successEl.textContent = '';
+
+        const factoryCheckbox = document.getElementById('factory-restore-checkbox');
+        const factoryRestore = factoryCheckbox ? factoryCheckbox.checked : false;
+
+        if (factoryRestore) {
+            if (!confirm('¿Estás seguro? La Restauración de Fábrica borrará TODOS los datos locales y los reemplazará con los del archivo. Este proceso no se puede deshacer.')) {
+                if (factoryCheckbox) factoryCheckbox.checked = false;
+                return;
+            }
+        }
+
+        try {
+            const result = await Backup.importFromFile(file, { factoryRestore: factoryRestore });
+            if (result.success) {
+                const baseMsg = result.factoryRestore
+                    ? 'Restauración de fábrica completada.'
+                    : 'Datos importados con fusión inteligente por folio/ID.';
+                if (successEl) successEl.textContent = baseMsg + ' Recargue la página para aplicar los cambios.';
+                Toast.success(result.message + '. Recargue la página para aplicar los cambios.');
+                if (factoryCheckbox) factoryCheckbox.checked = false;
+            } else {
+                if (errorEl) errorEl.textContent = result.error;
+                Toast.error(result.error);
+            }
+        } catch (err) {
+            const msg = 'Error al leer el archivo: ' + (err?.message || err);
+            if (errorEl) errorEl.textContent = msg;
+            Toast.error(msg);
+        }
     }
 
     // Renderizar campos de configuración de tienda
@@ -2569,6 +2759,1068 @@ class App {
         this.updateHeldSalesButton();
         BarcodeScanner.focusInput();
         Toast.success('Venta recuperada correctamente');
+    }
+
+    // ============================================================
+    //  MÓDULO DE DEVOLUCIONES Y ANULACIONES
+    //  - Devolución de piezas: reintegra stock y registra ajuste en caja
+    //  - Anulación de ventas: revierte montos y stock del día
+    //  Ambos son exclusivos del rol Administrador.
+    // ============================================================
+
+    bindReturnsEvents() {
+        const returnsBtn = document.getElementById('returns-btn');
+        if (returnsBtn) {
+            returnsBtn.addEventListener('click', () => {
+                if (!Auth.canPerformReturns()) {
+                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    return;
+                }
+                this.showReturnsModal();
+            });
+        }
+
+        const cancelSaleBtn = document.getElementById('cancel-sale-btn');
+        if (cancelSaleBtn) {
+            cancelSaleBtn.addEventListener('click', () => {
+                if (!Auth.canCancelTickets()) {
+                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    return;
+                }
+                this.showCancelSaleModal();
+            });
+        }
+
+        const returnSearch = document.getElementById('return-sale-search');
+        if (returnSearch) {
+            returnSearch.addEventListener('input', (e) => {
+                const query = e.target.value.trim();
+                this.renderReturnsSaleList(query);
+            });
+        }
+
+        const confirmReturnBtn = document.getElementById('confirm-return-btn');
+        if (confirmReturnBtn) {
+            confirmReturnBtn.addEventListener('click', () => {
+                this.processReturn();
+            });
+        }
+
+        const cancelReturnsBtn = document.getElementById('cancel-returns-btn');
+        if (cancelReturnsBtn) {
+            cancelReturnsBtn.addEventListener('click', () => {
+                this.hideReturnsModal();
+            });
+        }
+
+        const returnsBackBtn = document.getElementById('returns-back-btn');
+        if (returnsBackBtn) {
+            returnsBackBtn.addEventListener('click', () => {
+                this.switchReturnStep('search');
+            });
+        }
+
+        const returnsOverlay = document.getElementById('returns-overlay');
+        if (returnsOverlay) {
+            returnsOverlay.addEventListener('click', (e) => {
+                if (e.target === returnsOverlay) {
+                    this.hideReturnsModal();
+                }
+            });
+        }
+
+        // Refund method selector buttons
+        const refundMethodBtns = document.querySelectorAll('[data-refund-method]');
+        refundMethodBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                refundMethodBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            });
+        });
+
+        // Cancel sale search
+        const cancelSearch = document.getElementById('cancel-sale-search');
+        if (cancelSearch) {
+            cancelSearch.addEventListener('input', (e) => {
+                const query = e.target.value.trim();
+                this.renderCancelSaleList(query);
+            });
+        }
+
+        const confirmCancelBtn = document.getElementById('confirm-cancel-btn');
+        if (confirmCancelBtn) {
+            confirmCancelBtn.addEventListener('click', () => {
+                this.cancelSaleConfirm();
+            });
+        }
+
+        const cancelModalCloseBtn = document.getElementById('cancel-modal-close-btn');
+        if (cancelModalCloseBtn) {
+            cancelModalCloseBtn.addEventListener('click', () => {
+                this.hideCancelSaleModal();
+            });
+        }
+
+        const cancelBackBtn = document.getElementById('cancel-back-btn');
+        if (cancelBackBtn) {
+            cancelBackBtn.addEventListener('click', () => {
+                this.switchCancelStep('search');
+            });
+        }
+
+        const cancelOverlay = document.getElementById('cancel-sale-overlay');
+        if (cancelOverlay) {
+            cancelOverlay.addEventListener('click', (e) => {
+                if (e.target === cancelOverlay) {
+                    this.hideCancelSaleModal();
+                }
+            });
+        }
+    }
+
+    // --- Devolución de Piezas ---
+
+    showReturnsModal() {
+        const overlay = document.getElementById('returns-overlay');
+        if (!overlay) return;
+        overlay.classList.remove('hidden');
+        this.switchReturnStep('search');
+        const searchInput = document.getElementById('return-sale-search');
+        if (searchInput) {
+            searchInput.value = '';
+            this.renderReturnsSaleList('');
+        }
+    }
+
+    hideReturnsModal() {
+        const overlay = document.getElementById('returns-overlay');
+        if (overlay) overlay.classList.add('hidden');
+    }
+
+    switchReturnStep(step) {
+        const searchStep = document.getElementById('returns-step-search');
+        const itemsStep = document.getElementById('returns-step-items');
+        const confirmBtn = document.getElementById('confirm-return-btn');
+
+        if (step === 'items') {
+            if (searchStep) searchStep.classList.add('hidden');
+            if (itemsStep) itemsStep.classList.remove('hidden');
+        } else {
+            if (searchStep) searchStep.classList.remove('hidden');
+            if (itemsStep) itemsStep.classList.add('hidden');
+            if (confirmBtn) confirmBtn.disabled = true;
+        }
+    }
+
+    // Renderizar la lista de ventas activas para buscar devolución
+    renderReturnsSaleList(query) {
+        const list = document.getElementById('returns-sale-list');
+        if (!list) return;
+
+        let sales = SaleService.getAll();
+        sales = sales.filter(s => s.status !== 'canceled');
+
+        if (query) {
+            sales = sales.filter(s =>
+                s.id.toLowerCase().includes(query.toLowerCase()) ||
+                s.cashier?.toLowerCase().includes(query.toLowerCase())
+            );
+        }
+
+        sales = sales.sort((a, b) => new Date(b.date) - new Date(a.date));
+        sales = sales.slice(0, 20);
+
+        if (sales.length === 0) {
+            list.innerHTML = '<p class="empty-text">No se encontraron ventas</p>';
+            return;
+        }
+
+        list.innerHTML = '';
+        sales.forEach(sale => {
+            const card = document.createElement('div');
+            card.className = 'returns-sale-card';
+            const time = new Date(sale.date).toLocaleTimeString('es-MX', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            const date = new Date(sale.date).toLocaleDateString('es-MX');
+            card.innerHTML = `
+                <div class="returns-sale-id">${sale.id} • ${time}</div>
+                <div class="returns-sale-meta">
+                    ${date} • ${sale.items.length} pieza(s) • $${sale.total.toFixed(2)} • ${sale.cashier || 'N/A'}
+                </div>
+            `;
+            card.addEventListener('click', () => {
+                list.querySelectorAll('.returns-sale-card').forEach(c => c.classList.remove('selected'));
+                card.classList.add('selected');
+                this.selectReturnSale(sale);
+            });
+            list.appendChild(card);
+        });
+    }
+
+    selectedReturnSale = null;
+    currentRefundMethod = 'cash';
+    returnItemStates = {};
+
+    selectReturnSale(sale) {
+        this.selectedReturnSale = sale;
+        this.returnItemStates = {};
+        sale.items.forEach(item => {
+            this.returnItemStates[item.barcode] = Math.min(1, item.quantity);
+        });
+
+        const idEl = document.getElementById('returns-selected-sale-id');
+        const metaEl = document.getElementById('returns-selected-sale-meta');
+        if (idEl) idEl.textContent = sale.id;
+
+        const date = new Date(sale.date).toLocaleString('es-MX');
+        const totalItems = sale.items.reduce((sum, i) => sum + i.quantity, 0);
+        if (metaEl) {
+            metaEl.innerHTML = `
+                <div>Fecha: ${date}</div>
+                <div>Total: $${sale.total.toFixed(2)}</div>
+                <div>Pago: ${sale.paymentMethod === 'cash' ? 'Efectivo' : sale.paymentMethod === 'card' ? 'Tarjeta' : 'Mixto'}</div>
+                <div>${totalItems} pieza(s) • ${sale.cashier || 'N/A'}</div>
+            `;
+        }
+
+        this.renderReturnItems(sale);
+        this.updateReturnRefundAmount();
+        this.switchReturnStep('items');
+    }
+
+    renderReturnItems(sale) {
+        const container = document.getElementById('returns-items-list');
+        if (!container) return;
+
+        container.innerHTML = '';
+
+        sale.items.forEach(item => {
+            const maxQty = item.quantity;
+            const returnQty = this.returnItemStates[item.barcode] || 0;
+            const refundableAmount = (returnQty * item.price).toFixed(2);
+
+            const row = document.createElement('div');
+            row.className = 'returns-item';
+            row.innerHTML = `
+                <div class="returns-item-name">${item.description}</div>
+                <div class="returns-item-price">$${item.price.toFixed(2)}</div>
+                <div class="returns-item-qty">
+                    <label>Devolver:</label>
+                    <input type="number" min="0" max="${maxQty}" value="${returnQty}"
+                           onchange="window.app.updateReturnItemQty('${item.barcode}', parseInt(this.value))"
+                           style="width: 60px; text-align: center;">
+                    <span>/ ${maxQty}</span>
+                </div>
+                <div class="returns-item-amount">$${refundableAmount}</div>
+            `;
+            container.appendChild(row);
+        });
+    }
+
+    updateReturnItemQty(barcode, quantity) {
+        const sale = this.selectedReturnSale;
+        if (!sale) return;
+        const item = sale.items.find(i => i.barcode === barcode);
+        if (!item) return;
+
+        const qty = Math.max(0, Math.min(quantity, item.quantity));
+        this.returnItemStates[barcode] = qty;
+        this.updateReturnRefundAmount();
+        this.renderReturnItems(sale);
+    }
+
+    updateReturnRefundAmount() {
+        const sale = this.selectedReturnSale;
+        const confirmBtn = document.getElementById('confirm-return-btn');
+        const amountEl = document.getElementById('returns-refund-amount');
+
+        if (!sale) return;
+
+        let total = 0;
+        sale.items.forEach(item => {
+            const qty = this.returnItemStates[item.barcode] || 0;
+            total += qty * item.price;
+        });
+
+        if (amountEl) amountEl.textContent = `$${total.toFixed(2)}`;
+        if (confirmBtn) confirmBtn.disabled = total <= 0;
+    }
+
+    processReturn() {
+        const sale = this.selectedReturnSale;
+        if (!sale) {
+            Toast.error('No has seleccionado una venta');
+            return;
+        }
+
+        const refundMethodBtns = document.querySelectorAll('[data-refund-method]');
+        let method = 'cash';
+        refundMethodBtns.forEach(btn => {
+            if (btn.classList.contains('active')) {
+                method = btn.dataset.refundMethod;
+            }
+        });
+        this.currentRefundMethod = method;
+
+        const itemsToReturn = [];
+        sale.items.forEach(item => {
+            const qty = this.returnItemStates[item.barcode] || 0;
+            if (qty > 0) {
+                itemsToReturn.push({
+                    barcode: item.barcode,
+                    description: item.description,
+                    quantity: qty,
+                    price: item.price,
+                    amount: qty * item.price
+                });
+            }
+        });
+
+        if (itemsToReturn.length === 0) {
+            Toast.warning('Selecciona al menos una pieza para devolver');
+            return;
+        }
+
+        const refundAmount = itemsToReturn.reduce((sum, i) => sum + i.amount, 0);
+        const noteInput = document.getElementById('return-note-input');
+        const note = noteInput ? noteInput.value.trim() : '';
+
+        try {
+            // Reabastecer stock
+            Inventory.increaseStock(itemsToReturn.map(i => ({
+                barcode: i.barcode,
+                quantity: i.quantity
+            })));
+
+            // Registrar la devolución
+            const returnRecord = Returns.add({
+                saleId: sale.id,
+                items: itemsToReturn,
+                refundAmount: refundAmount,
+                refundMethod: method,
+                note: note
+            });
+
+            // Registrar ajuste en caja
+            CashAdjustment.add({
+                type: 'return',
+                amount: -refundAmount,
+                description: `Devolución parcial - Venta ${sale.id}`,
+                paymentMethod: method,
+                relatedSaleId: sale.id,
+                note: note
+            });
+
+            // Actualizar reportes y UI
+            this.updateDailyReport();
+            this.renderDailyConsolidated();
+            this.updateHeldSalesButton();
+            BarcodeScanner.focusInput();
+
+            Toast.success(`Devolución procesada - Folio: ${returnRecord.id} | $${refundAmount.toFixed(2)} reembolsados`);
+            this.hideReturnsModal();
+        } catch (err) {
+            Toast.error('Error al procesar la devolución: ' + (err?.message || err));
+        }
+    }
+
+    // --- Anulación de Ventas (solo admin) ---
+
+    showCancelSaleModal() {
+        const overlay = document.getElementById('cancel-sale-overlay');
+        if (!overlay) return;
+        overlay.classList.remove('hidden');
+        this.switchCancelStep('search');
+        const searchInput = document.getElementById('cancel-sale-search');
+        if (searchInput) {
+            searchInput.value = '';
+            this.renderCancelSaleList('');
+        }
+    }
+
+    hideCancelSaleModal() {
+        const overlay = document.getElementById('cancel-sale-overlay');
+        if (overlay) overlay.classList.add('hidden');
+    }
+
+    switchCancelStep(step) {
+        const searchStep = document.getElementById('cancel-step-search');
+        const confirmStep = document.getElementById('cancel-step-confirm');
+        const confirmBtn = document.getElementById('confirm-cancel-btn');
+
+        if (step === 'confirm') {
+            if (searchStep) searchStep.classList.add('hidden');
+            if (confirmStep) confirmStep.classList.remove('hidden');
+        } else {
+            if (searchStep) searchStep.classList.remove('hidden');
+            if (confirmStep) confirmStep.classList.add('hidden');
+            if (confirmBtn) confirmBtn.disabled = true;
+        }
+    }
+
+    // Renderizar la lista de ventas para buscar anulación
+    renderCancelSaleList(query) {
+        const list = document.getElementById('cancel-sale-list');
+        if (!list) return;
+
+        let sales = SaleService.getAll(true);
+        sales = sales.filter(s => s.status !== 'canceled');
+
+        if (query) {
+            sales = sales.filter(s =>
+                s.id.toLowerCase().includes(query.toLowerCase()) ||
+                s.cashier?.toLowerCase().includes(query.toLowerCase())
+            );
+        }
+
+        sales = sales.sort((a, b) => new Date(b.date) - new Date(a.date));
+        sales = sales.slice(0, 20);
+
+        if (sales.length === 0) {
+            list.innerHTML = '<p class="empty-text">No se encontraron ventas</p>';
+            return;
+        }
+
+        list.innerHTML = '';
+        sales.forEach(sale => {
+            const card = document.createElement('div');
+            card.className = 'cancel-sale-card';
+            const time = new Date(sale.date).toLocaleTimeString('es-MX', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            const date = new Date(sale.date).toLocaleDateString('es-MX');
+            card.innerHTML = `
+                <div class="cancel-sale-id">${sale.id} • ${time}</div>
+                <div class="cancel-sale-meta">
+                    ${date} • ${sale.items.length} pieza(s) • $${sale.total.toFixed(2)} • ${sale.cashier || 'N/A'}
+                </div>
+            `;
+            card.addEventListener('click', () => {
+                list.querySelectorAll('.cancel-sale-card').forEach(c => c.classList.remove('selected'));
+                card.classList.add('selected');
+                this.selectCancelSale(sale);
+            });
+            list.appendChild(card);
+        });
+    }
+
+    selectedCancelSale = null;
+
+    selectCancelSale(sale) {
+        this.selectedCancelSale = sale;
+
+        const idEl = document.getElementById('cancel-selected-sale-id');
+        const metaEl = document.getElementById('cancel-selected-sale-meta');
+        const statusEl = document.querySelector('.cancel-sale-status');
+        const reasonInput = document.getElementById('cancel-reason-input');
+
+        if (idEl) idEl.textContent = sale.id;
+
+        const date = new Date(sale.date).toLocaleString('es-MX');
+        const totalItems = sale.items.reduce((sum, i) => sum + i.quantity, 0);
+        if (metaEl) {
+            metaEl.innerHTML = `
+                <div>Fecha: ${date}</div>
+                <div>Total: $${sale.total.toFixed(2)}</div>
+                <div>Pago: ${sale.paymentMethod === 'cash' ? 'Efectivo' : sale.paymentMethod === 'card' ? 'Tarjeta' : 'Mixto'}</div>
+                <div>${totalItems} pieza(s) • ${sale.cashier || 'N/A'}</div>
+            `;
+        }
+
+        if (statusEl) {
+            statusEl.textContent = 'Activa';
+            statusEl.className = 'cancel-sale-status active';
+        }
+
+        if (reasonInput) reasonInput.value = '';
+        this.updateCancelConfirmState();
+        this.switchCancelStep('confirm');
+    }
+
+    updateCancelConfirmState() {
+        const confirmBtn = document.getElementById('confirm-cancel-btn');
+        if (confirmBtn) {
+            confirmBtn.disabled = !this.selectedCancelSale;
+        }
+    }
+
+    cancelSaleConfirm() {
+        const sale = this.selectedCancelSale;
+        if (!sale) {
+            Toast.error('No has seleccionado una venta');
+            return;
+        }
+
+        if (!Auth.canCancelTickets()) {
+            Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+            return;
+        }
+
+        const reasonInput = document.getElementById('cancel-reason-input');
+        const reason = reasonInput ? reasonInput.value.trim() : '';
+        if (!reason) {
+            if (!confirm('¿Estás seguro de anular esta venta sin motivo?')) {
+                return;
+            }
+        }
+
+        try {
+            // Anular la venta en SaleService
+            const result = SaleService.cancelSale(sale.id, reason);
+            if (!result.success) {
+                Toast.error(result.error || 'Error al anular la venta');
+                return;
+            }
+
+            // Reabastecer stock de los productos involucrados
+            Inventory.increaseStock(sale.items.map(i => ({
+                barcode: i.barcode,
+                quantity: i.quantity
+            })));
+
+            // Registrar ajuste en caja (revertir montos del día)
+            CashAdjustment.add({
+                type: 'cancel',
+                amount: -sale.total,
+                description: `Anulación de venta ${sale.id}`,
+                paymentMethod: sale.paymentMethod,
+                relatedSaleId: sale.id,
+                note: reason
+            });
+
+            // Actualizar reportes y UI
+            this.updateDailyReport();
+            this.renderDailyConsolidated();
+            this.updateHeldSalesButton();
+            BarcodeScanner.focusInput();
+
+            Toast.success(`Venta anulada - Folio: ${sale.id} | $${sale.total.toFixed(2)} revertidos`);
+            this.hideCancelSaleModal();
+        } catch (err) {
+            Toast.error('Error al anular la venta: ' + (err?.message || err));
+        }
+    }
+
+    // ============================================================
+    //  MÓDULO DE CAMBIO POR GARANTÍA / DEFECTO
+    //  - Reingreso de pieza defectuosa con estatus "Baja por Garantía"
+    //  - Salida de pieza de reemplazo (del inventario)
+    //  - Impacto contable: $0.00 (ningún movimiento en caja)
+    //  - Ajuste físico: descuenta pieza entregada, registra pieza recibida
+    //  Exclusivo del rol Administrador.
+    // ============================================================
+
+    bindGuaranteeEvents() {
+        const guaranteeBtn = document.getElementById('guarantee-btn');
+        if (guaranteeBtn) {
+            guaranteeBtn.addEventListener('click', () => {
+                if (!Auth.canManageGuarantees()) {
+                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    return;
+                }
+                this.showGuaranteeModal();
+            });
+        }
+
+        const guaranteeSearch = document.getElementById('guarantee-sale-search');
+        if (guaranteeSearch) {
+            guaranteeSearch.addEventListener('input', (e) => {
+                const query = e.target.value.trim();
+                this.renderGuaranteeSaleList(query);
+            });
+        }
+
+        const confirmBtn = document.getElementById('guarantee-confirm-btn');
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', () => {
+                this.processGuaranteeExchange();
+            });
+        }
+
+        const cancelBtn = document.getElementById('guarantee-cancel-btn');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                this.hideGuaranteeModal();
+            });
+        }
+
+        const backBtn = document.getElementById('guarantee-back-btn');
+        if (backBtn) {
+            backBtn.addEventListener('click', () => {
+                this.switchGuaranteeStep('search');
+            });
+        }
+
+        const prevBtn = document.getElementById('guarantee-prev-btn');
+        if (prevBtn) {
+            prevBtn.addEventListener('click', () => {
+                this.switchGuaranteeStep('items');
+            });
+        }
+
+        const nextBtn = document.getElementById('guarantee-next-btn');
+        if (nextBtn) {
+            nextBtn.addEventListener('click', () => {
+                this.prepareGuaranteeConfirm();
+            });
+        }
+
+        const inventorySearch = document.getElementById('guarantee-inventory-search');
+        if (inventorySearch) {
+            inventorySearch.addEventListener('input', (e) => {
+                const query = e.target.value.trim();
+                this.renderGuaranteeInventoryResults(query);
+            });
+        }
+
+        const overlay = document.getElementById('guarantee-overlay');
+        if (overlay) {
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    this.hideGuaranteeModal();
+                }
+            });
+        }
+    }
+
+    showGuaranteeModal() {
+        const overlay = document.getElementById('guarantee-overlay');
+        if (!overlay) return;
+        overlay.classList.remove('hidden');
+        this.switchGuaranteeStep('search');
+        const searchInput = document.getElementById('guarantee-sale-search');
+        if (searchInput) {
+            searchInput.value = '';
+            this.renderGuaranteeSaleList('');
+        }
+    }
+
+    hideGuaranteeModal() {
+        const overlay = document.getElementById('guarantee-overlay');
+        if (overlay) overlay.classList.add('hidden');
+        this.selectedGuaranteeSale = null;
+        this.defectiveItemStates = {};
+        this.replacementItems = {};
+    }
+
+    switchGuaranteeStep(step) {
+        const searchStep = document.getElementById('guarantee-step-search');
+        const itemsStep = document.getElementById('guarantee-step-items');
+        const confirmStep = document.getElementById('guarantee-step-confirm');
+        const cancelBtn = document.getElementById('guarantee-cancel-btn');
+        const prevBtn = document.getElementById('guarantee-prev-btn');
+        const nextBtn = document.getElementById('guarantee-next-btn');
+        const confirmExchangeBtn = document.getElementById('guarantee-confirm-btn');
+
+        if (searchStep) searchStep.classList.add('hidden');
+        if (itemsStep) itemsStep.classList.add('hidden');
+        if (confirmStep) confirmStep.classList.add('hidden');
+
+        if (prevBtn) prevBtn.classList.add('hidden');
+        if (nextBtn) nextBtn.classList.add('hidden');
+        if (confirmExchangeBtn) confirmExchangeBtn.classList.add('hidden');
+
+        if (cancelBtn) cancelBtn.classList.remove('hidden');
+
+        if (step === 'search') {
+            if (searchStep) searchStep.classList.remove('hidden');
+        } else if (step === 'items') {
+            if (itemsStep) itemsStep.classList.remove('hidden');
+            if (prevBtn) prevBtn.classList.remove('hidden');
+            if (nextBtn) nextBtn.classList.remove('hidden');
+            const inventorySearch = document.getElementById('guarantee-inventory-search');
+            if (inventorySearch) inventorySearch.value = '';
+            this.renderGuaranteeInventoryResults('');
+        } else if (step === 'confirm') {
+            if (confirmStep) confirmStep.classList.remove('hidden');
+            if (prevBtn) prevBtn.classList.remove('hidden');
+            if (confirmExchangeBtn) confirmExchangeBtn.classList.remove('hidden');
+        }
+
+        this.updateGuaranteeNextBtnState();
+    }
+
+    updateGuaranteeNextBtnState() {
+        const nextBtn = document.getElementById('guarantee-next-btn');
+        if (!nextBtn) return;
+        const hasDefective = Object.values(this.defectiveItemStates || {}).some(q => q > 0);
+        nextBtn.disabled = !hasDefective;
+    }
+
+    selectedGuaranteeSale = null;
+    defectiveItemStates = {};
+    replacementItems = {};
+
+    renderGuaranteeSaleList(query) {
+        const list = document.getElementById('guarantee-sale-list');
+        if (!list) return;
+
+        let sales = SaleService.getAll();
+
+        if (query) {
+            sales = sales.filter(s =>
+                s.id.toLowerCase().includes(query.toLowerCase()) ||
+                s.cashier?.toLowerCase().includes(query.toLowerCase())
+            );
+        }
+
+        sales = sales.sort((a, b) => new Date(b.date) - new Date(a.date));
+        sales = sales.slice(0, 20);
+
+        if (sales.length === 0) {
+            list.innerHTML = '<p class="empty-text">No se encontraron ventas</p>';
+            return;
+        }
+
+        list.innerHTML = '';
+        sales.forEach(sale => {
+            const card = document.createElement('div');
+            card.className = 'guarantee-sale-card';
+            const time = new Date(sale.date).toLocaleTimeString('es-MX', {
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            const date = new Date(sale.date).toLocaleDateString('es-MX');
+            card.innerHTML = `
+                <div class="guarantee-sale-id">${sale.id} • ${time}</div>
+                <div class="guarantee-sale-meta">
+                    ${date} • ${sale.items.length} pieza(s) • $${sale.total.toFixed(2)} • ${sale.cashier || 'N/A'}
+                </div>
+            `;
+            card.addEventListener('click', () => {
+                list.querySelectorAll('.guarantee-sale-card').forEach(c => c.classList.remove('selected'));
+                card.classList.add('selected');
+                this.selectGuaranteeSale(sale);
+            });
+            list.appendChild(card);
+        });
+    }
+
+    selectGuaranteeSale(sale) {
+        this.selectedGuaranteeSale = sale;
+        this.defectiveItemStates = {};
+        this.replacementItems = {};
+
+        sale.items.forEach(item => {
+            this.defectiveItemStates[item.barcode] = 0;
+        });
+
+        const idEl = document.getElementById('guarantee-selected-sale-id');
+        const metaEl = document.getElementById('guarantee-selected-sale-meta');
+        if (idEl) idEl.textContent = sale.id;
+
+        const date = new Date(sale.date).toLocaleString('es-MX');
+        const totalItems = sale.items.reduce((sum, i) => sum + i.quantity, 0);
+        if (metaEl) {
+            metaEl.innerHTML = `
+                <div>Fecha: ${date}</div>
+                <div>Total: $${sale.total.toFixed(2)}</div>
+                <div>Pago: ${sale.paymentMethod === 'cash' ? 'Efectivo' : sale.paymentMethod === 'card' ? 'Tarjeta' : 'Mixto'}</div>
+                <div>${totalItems} pieza(s) • ${sale.cashier || 'N/A'}</div>
+            `;
+        }
+
+        this.renderGuaranteeDefectiveItems(sale);
+        this.renderGuaranteeReplacementSummary();
+        this.updateGuaranteeNextBtnState();
+        this.switchGuaranteeStep('items');
+    }
+
+    renderGuaranteeDefectiveItems(sale) {
+        const container = document.getElementById('guarantee-defective-items');
+        if (!container) return;
+
+        container.innerHTML = '';
+
+        sale.items.forEach(item => {
+            const maxQty = item.quantity;
+            const selectedQty = this.defectiveItemStates[item.barcode] || 0;
+            const row = document.createElement('div');
+            row.className = 'returns-item';
+            row.innerHTML = `
+                <div class="returns-item-name">${item.description}</div>
+                <div class="returns-item-price">$${item.price.toFixed(2)}</div>
+                <div class="returns-item-qty">
+                    <label>Defectuosa:</label>
+                    <input type="number" min="0" max="${maxQty}" value="${selectedQty}"
+                           onchange="window.app.updateDefectiveItemQty('${item.barcode}', parseInt(this.value))"
+                           style="width: 60px; text-align: center;">
+                    <span>/ ${maxQty}</span>
+                </div>
+                <div class="returns-item-amount">$${((selectedQty * item.price)).toFixed(2)}</div>
+            `;
+            container.appendChild(row);
+        });
+    }
+
+    updateDefectiveItemQty(barcode, quantity) {
+        const sale = this.selectedGuaranteeSale;
+        if (!sale) return;
+        const item = sale.items.find(i => i.barcode === barcode);
+        if (!item) return;
+
+        const qty = Math.max(0, Math.min(quantity, item.quantity));
+        this.defectiveItemStates[barcode] = qty;
+        this.renderGuaranteeDefectiveItems(sale);
+        this.updateGuaranteeNextBtnState();
+    }
+
+    renderGuaranteeInventoryResults(query) {
+        const container = document.getElementById('guarantee-inventory-results');
+        if (!container) return;
+
+        let products = query ? Inventory.search(query) : Inventory.getAll();
+        products = products.slice(0, 20);
+
+        if (products.length === 0) {
+            container.innerHTML = '<p class="empty-text">No se encontraron piezas</p>';
+            return;
+        }
+
+        container.innerHTML = '';
+        products.forEach(product => {
+            const isSelected = this.replacementItems[product.barcode] !== undefined;
+            const selectedQty = this.replacementItems[product.barcode] || 0;
+            const card = document.createElement('div');
+            card.className = 'guarantee-inventory-card';
+            if (isSelected) card.classList.add('selected');
+            card.innerHTML = `
+                <div class="guarantee-inventory-name">${product.description}</div>
+                <div class="guarantee-inventory-sku">Código: ${product.barcode}</div>
+                <div class="product-price">$${product.price.toFixed(2)}</div>
+                <div class="product-stock">Existencia: ${product.stock} unidades</div>
+                ${product.stock > 0 ? `
+                <div class="guarantee-inventory-qty" style="margin-top: 8px;">
+                    <label>Cant. a Entregar:</label>
+                    <input type="number" min="1" max="${product.stock}" value="${selectedQty || 1}"
+                           onchange="window.app.updateReplacementQty('${product.barcode}', parseInt(this.value))"
+                           style="width: 60px; text-align: center;">
+                </div>
+                ` : '<div style="color: var(--danger); font-size: 12px; margin-top: 8px;">Sin stock</div>'}
+            `;
+            container.appendChild(card);
+        });
+    }
+
+    updateReplacementQty(barcode, quantity) {
+        const product = Inventory.findByBarcode(barcode);
+        if (!product) return;
+
+        const qty = Math.max(1, Math.min(quantity, product.stock));
+        if (qty > 0) {
+            this.replacementItems[barcode] = qty;
+        } else {
+            delete this.replacementItems[barcode];
+        }
+        this.renderGuaranteeReplacementSummary();
+    }
+
+    renderGuaranteeReplacementSummary() {
+        const summary = document.getElementById('guarantee-replacement-summary');
+        if (!summary) return;
+
+        const barcodes = Object.keys(this.replacementItems || {});
+        if (barcodes.length === 0) {
+            summary.innerHTML = '<p class="empty-text">No has seleccionado piezas de reemplazo</p>';
+            return;
+        }
+
+        let html = '<div class="guarantee-replacement-list">';
+        barcodes.forEach(barcode => {
+            const product = Inventory.findByBarcode(barcode);
+            const qty = this.replacementItems[barcode];
+            if (!product) return;
+            html += `
+                <div class="returns-item">
+                    <div class="returns-item-name">${product.description} <span style="color: var(--text-muted); font-size: 11px;">[${barcode}]</span></div>
+                    <div class="returns-item-price">$${product.price.toFixed(2)}</div>
+                    <div class="returns-item-qty">${qty}x</div>
+                    <div class="action-cell">
+                        <button onclick="window.app.removeReplacementItem('${barcode}')"
+                                class="btn btn-icon btn-sm" title="Quitar">×</button>
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        summary.innerHTML = html;
+
+        this.updateGuaranteeNextBtnStateWithReplacements();
+    }
+
+    updateGuaranteeNextBtnStateWithReplacements() {
+        const nextBtn = document.getElementById('guarantee-next-btn');
+        if (!nextBtn) return;
+        const hasDefective = Object.values(this.defectiveItemStates || {}).some(q => q > 0);
+        const hasReplacement = Object.keys(this.replacementItems || {}).length > 0;
+        nextBtn.disabled = !hasDefective || !hasReplacement;
+    }
+
+    removeReplacementItem(barcode) {
+        delete this.replacementItems[barcode];
+        this.renderGuaranteeReplacementSummary();
+        this.renderGuaranteeInventoryResults('');
+        this.updateGuaranteeNextBtnStateWithReplacements();
+    }
+
+    prepareGuaranteeConfirm() {
+        const sale = this.selectedGuaranteeSale;
+        if (!sale) {
+            Toast.error('No has seleccionado una venta');
+            return;
+        }
+
+        const hasDefective = Object.values(this.defectiveItemStates || {}).some(q => q > 0);
+        const hasReplacement = Object.keys(this.replacementItems || {}).length > 0;
+
+        if (!hasDefective) {
+            Toast.warning('Selecciona al menos una pieza defectuosa');
+            return;
+        }
+        if (!hasReplacement) {
+            Toast.warning('Selecciona al menos una pieza de reemplazo');
+            return;
+        }
+
+        const idEl = document.getElementById('guarantee-confirm-sale-id');
+        if (idEl) idEl.textContent = sale.id;
+
+        this.renderGuaranteeConfirmDefective();
+        this.renderGuaranteeConfirmReplacement();
+
+        const noteInput = document.getElementById('guarantee-note-input');
+        if (noteInput) noteInput.value = '';
+
+        this.switchGuaranteeStep('confirm');
+    }
+
+    renderGuaranteeConfirmDefective() {
+        const container = document.getElementById('guarantee-confirm-defective-list');
+        if (!container) return;
+
+        const sale = this.selectedGuaranteeSale;
+        if (!sale) return;
+
+        let html = '';
+        sale.items.forEach(item => {
+            const qty = this.defectiveItemStates[item.barcode] || 0;
+            if (qty > 0) {
+                html += `
+                    <div class="returns-item">
+                        <div class="returns-item-name">${item.description} <span class="sale-canceled-badge">Baja por Garantía</span></div>
+                        <div class="returns-item-price">$${item.price.toFixed(2)}</div>
+                        <div class="returns-item-qty">${qty}x</div>
+                        <div class="returns-item-amount">$${(qty * item.price).toFixed(2)}</div>
+                    </div>
+                `;
+            }
+        });
+        container.innerHTML = html;
+    }
+
+    renderGuaranteeConfirmReplacement() {
+        const container = document.getElementById('guarantee-confirm-replacement-list');
+        if (!container) return;
+
+        let html = '';
+        Object.keys(this.replacementItems || {}).forEach(barcode => {
+            const product = Inventory.findByBarcode(barcode);
+            const qty = this.replacementItems[barcode];
+            if (!product) return;
+            html += `
+                <div class="returns-item">
+                    <div class="returns-item-name">${product.description} <span style="color: var(--text-muted); font-size: 11px;">[${barcode}]</span></div>
+                    <div class="returns-item-price">$${product.price.toFixed(2)}</div>
+                    <div class="returns-item-qty">${qty}x</div>
+                    <div class="returns-item-amount">$${(qty * product.price).toFixed(2)}</div>
+                </div>
+            `;
+        });
+        container.innerHTML = html;
+    }
+
+    processGuaranteeExchange() {
+        const sale = this.selectedGuaranteeSale;
+        if (!sale) {
+            Toast.error('No has seleccionado una venta');
+            return;
+        }
+
+        if (!Auth.canManageGuarantees()) {
+            Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+            return;
+        }
+
+        const defectiveItems = [];
+        sale.items.forEach(item => {
+            const qty = this.defectiveItemStates[item.barcode] || 0;
+            if (qty > 0) {
+                defectiveItems.push({
+                    barcode: item.barcode,
+                    description: item.description,
+                    quantity: qty,
+                    price: item.price,
+                    amount: qty * item.price,
+                    status: 'Baja por Garantía'
+                });
+            }
+        });
+
+        const replacementItems = [];
+        const stockUpdates = [];
+        Object.keys(this.replacementItems || {}).forEach(barcode => {
+            const product = Inventory.findByBarcode(barcode);
+            const qty = this.replacementItems[barcode];
+            if (!product) return;
+            replacementItems.push({
+                barcode: barcode,
+                description: product.description,
+                quantity: qty,
+                price: product.price,
+                amount: qty * product.price
+            });
+            stockUpdates.push({ barcode: barcode, quantity: qty });
+        });
+
+        if (defectiveItems.length === 0) {
+            Toast.warning('Selecciona al menos una pieza defectuosa');
+            return;
+        }
+        if (replacementItems.length === 0) {
+            Toast.warning('Selecciona al menos una pieza de reemplazo');
+            return;
+        }
+
+        const noteInput = document.getElementById('guarantee-note-input');
+        const note = noteInput ? noteInput.value.trim() : '';
+
+        try {
+            // Deduct replacement pieces from inventory stock
+            Inventory.updateStock(stockUpdates);
+
+            // Guardar el intercambio por garantía (sin movimiento de caja)
+            const exchangeRecord = GuaranteeExchange.add({
+                saleId: sale.id,
+                itemsReceived: defectiveItems,
+                itemsDelivered: replacementItems,
+                note: note,
+                amount: 0,
+                cashAdjustment: false
+            });
+
+            // Actualizar reportes y UI
+            this.updateDailyReport();
+            this.updateHeldSalesButton();
+            BarcodeScanner.focusInput();
+
+            Toast.success(`Cambio por garantía registrado - Folio: ${exchangeRecord.id} | $${exchangeRecord.amount.toFixed(2)} en caja (sin movimiento)`);
+            this.hideGuaranteeModal();
+        } catch (err) {
+            Toast.error('Error al registrar el cambio por garantía: ' + (err?.message || err));
+        }
     }
 
     // --- Precios de volumen (configuración admin) ---

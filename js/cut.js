@@ -177,7 +177,7 @@ class Cut {
             type: 'session',
             sessionId: session.id,
             date: now.toISOString().split('T')[0],
-             store: (typeof Settings !== 'undefined' && Settings.getSettings ? Settings.getSettings().storeName : null) || Business.getStoreName(),
+           store: (typeof Settings !== 'undefined' && Settings.getSettings ? Settings.getSettings().storeName : null) || Business.getStoreName(),
             cashier: session.openedBy,
             closedBy: session.openedBy,
             openedBy: session.openedBy,
@@ -202,6 +202,19 @@ class Cut {
                 paymentMethod: s.paymentMethod,
                 time: new Date(s.date).toLocaleTimeString('es-MX')
             })),
+            // Ajustes de caja (devoluciones y anulaciones) del día
+            totalAdjustments: (CashAdjustment && CashAdjustment.getTotal)
+                ? CashAdjustment.getTotal(now.toISOString().split('T')[0]).total
+                : 0,
+            cashAdjustments: (CashAdjustment && CashAdjustment.getTotal)
+                ? CashAdjustment.getTotal(now.toISOString().split('T')[0]).cash
+                : 0,
+            cardAdjustments: (CashAdjustment && CashAdjustment.getTotal)
+                ? CashAdjustment.getTotal(now.toISOString().split('T')[0]).card
+                : 0,
+            adjustmentCount: (CashAdjustment && CashAdjustment.getByDate)
+                ? CashAdjustment.getByDate(now.toISOString().split('T')[0]).length
+                : 0,
             profit: profit,
             margin: margin
         };

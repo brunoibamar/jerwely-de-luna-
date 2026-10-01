@@ -10,8 +10,8 @@ class Inventory {
         { barcode: '7501000100063', description: 'Reloj de Pulsera de Acero', price: 750.00, cost: 400.00, stock: 10, category: 'Relojes' },
         { barcode: '7501000100070', description: 'Collar de Cadenas Dobles', price: 680.00, cost: 340.00, stock: 18, category: 'Collares' },
         { barcode: '7501000100087', description: 'Anillo de Plata con Zircon', price: 520.00, cost: 260.00, stock: 22, category: 'Anillos' },
-        { barcode: '7501000100094', description: 'Aro de Plata 925', price: 70.00, cost: 30.00, stock: 100, volumePricing: true, category: 'Anillos' },
-        { barcode: '7501000100100', description: 'Collar de Plata Simple', price: 70.00, cost: 30.00, stock: 80, volumePricing: true, category: 'Collares' }
+        { barcode: '7501000100094', description: 'Aro de Plata 925', price: 70.00, cost: 30.00, stock: 100, aplicaPromocion: true, category: 'Anillos' },
+        { barcode: '7501000100100', description: 'Collar de Plata Simple', price: 70.00, cost: 30.00, stock: 80, aplicaPromocion: true, category: 'Collares' }
     ];
 
     static init() {
@@ -23,7 +23,20 @@ class Inventory {
 
     static getAll() {
         const stored = localStorage.getItem(this.storageKey);
-        return stored ? JSON.parse(stored) : [];
+        if (!stored) return [];
+        try {
+            const parsed = JSON.parse(stored);
+            if (!Array.isArray(parsed)) return [];
+            // Migrar flag legado volumePricing -> aplicaPromocion (BD previa)
+            return parsed.map(p => {
+                if (p && typeof p.aplicaPromocion === 'undefined' && typeof p.volumePricing !== 'undefined') {
+                    p.aplicaPromocion = p.volumePricing === true;
+                }
+                return p;
+            });
+        } catch {
+            return [];
+        }
     }
 
     static saveProducts(products) {
@@ -49,7 +62,7 @@ class Inventory {
             return { success: false, error: 'Ya existe un producto con ese código' };
         }
         delete product.id;
-        product.volumePricing = product.volumePricing === true;
+        product.aplicaPromocion = product.aplicaPromocion === true;
         product.cost = parseFloat(product.cost) || 0;
         product.price = parseFloat(product.price) || 0;
         product.stock = parseInt(product.stock) || 0;
@@ -80,6 +93,18 @@ class Inventory {
             const product = products.find(p => p.barcode === barcode);
             if (product) {
                 product.stock = Math.max(0, product.stock - quantity);
+            }
+        });
+        this.saveProducts(products);
+    }
+
+    // --- Reabastecer stock (usado por devoluciones y anulaciones) ---
+    static increaseStock(items) {
+        const products = this.getAll();
+        items.forEach(({ barcode, quantity }) => {
+            const product = products.find(p => p.barcode === barcode);
+            if (product) {
+                product.stock = (product.stock || 0) + (parseInt(quantity) || 0);
             }
         });
         this.saveProducts(products);

@@ -44,10 +44,12 @@ class Business {
         'pos_report_history',
         'pos_last_monthly_report',
         'pos_last_annual_report',
+        'pos_last_receipt_sale',
         'pos_license_expiration',
         'pos_last_usage',
         'pos_clock_tampered',
-        'pos_email_send_log'
+        'pos_email_send_log',
+        'pos_guarantee_exchanges'
     ];
 
     // --- Generar una clave namespaced bajo el negocio único ---
