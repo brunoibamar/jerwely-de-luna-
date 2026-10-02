@@ -11,8 +11,9 @@ class Backup {
             `_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
     }
 
-    static createBackup() {
-        const data = {
+    // Datos completos del respaldo (usado por la descarga manual y el respaldo automático)
+    static buildBackupData() {
+        return {
             version: '1.2',
             timestamp: new Date().toISOString(),
             store: Business.getStoreName(),
@@ -32,7 +33,10 @@ class Backup {
             reportHistory: localStorage.getItem(this.reportHistoryKey),
             dayChangeKey: localStorage.getItem(ReportService.dayChangeKey)
         };
+    }
 
+    static createBackup() {
+        const data = this.buildBackupData();
         const backupStr = JSON.stringify(data, null, 2);
         const blob = new Blob([backupStr], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -80,7 +84,6 @@ class Backup {
     }
 
     static importFromFile(file, options = {}) {
-        const { factoryRestore = false } = options;
         return new Promise((resolve, reject) => {
             if (!file) {
                 resolve({ success: false, error: 'No se seleccionó ningún archivo' });
@@ -90,120 +93,7 @@ class Backup {
             const reader = new FileReader();
             reader.onload = e => {
                 try {
-                    const data = JSON.parse(e.target.result);
-                    if (!data.version || !data.store) {
-                        resolve({ success: false, error: 'Archivo de respaldo inválido' });
-                        return;
-                    }
-
-                    if (factoryRestore) {
-                        this._factoryRestore(data);
-                        resolve({
-                            success: true,
-                            message: 'Restauración de fábrica completada. Recargue la página para aplicar los cambios.',
-                            factoryRestore: true
-                        });
-                        return;
-                    }
-
-                    const stats = { added: 0, updated: 0, unchanged: 0 };
-
-                    const backupSales = this._normalizeArray(data.sales);
-                    if (backupSales.length > 0) {
-                        const result = this._mergeById(
-                            SaleService.getAll(true),
-                            backupSales,
-                            'id',
-                            'date'
-                        );
-                        SaleService.save(result.merged);
-                        stats.added += result.added;
-                        stats.updated += result.updated;
-                        stats.unchanged += result.skipped;
-                    }
-
-                    const backupReturns = this._normalizeArray(data.returns);
-                    if (backupReturns.length > 0) {
-                        const result = this._mergeById(
-                            Returns.getAll(),
-                            backupReturns,
-                            'id',
-                            'date'
-                        );
-                        Returns.save(result.merged);
-                        stats.added += result.added;
-                        stats.updated += result.updated;
-                        stats.unchanged += result.skipped;
-                    }
-
-                    const backupAdjustments = this._normalizeArray(data.cashAdjustments);
-                    if (backupAdjustments.length > 0) {
-                        const result = this._mergeById(
-                            CashAdjustment.getAll(),
-                            backupAdjustments,
-                            'id',
-                            'date'
-                        );
-                        CashAdjustment.save(result.merged);
-                        stats.added += result.added;
-                        stats.updated += result.updated;
-                        stats.unchanged += result.skipped;
-                    }
-
-                    const backupGuaranteeExchanges = this._normalizeArray(data.guaranteeExchanges);
-                    if (typeof GuaranteeExchange !== 'undefined' && backupGuaranteeExchanges.length > 0) {
-                        const result = this._mergeById(
-                            GuaranteeExchange.getAll(),
-                            backupGuaranteeExchanges,
-                            'id',
-                            'date'
-                        );
-                        GuaranteeExchange.save(result.merged);
-                        stats.added += result.added;
-                        stats.updated += result.updated;
-                        stats.unchanged += result.skipped;
-                    }
-                    if (backupHeldSales.length > 0) {
-                        const result = this._mergeById(
-                            HeldSales.getAll(),
-                            backupHeldSales,
-                            'id',
-                            'date'
-                        );
-                        HeldSales.save(result.merged);
-                        stats.added += result.added;
-                        stats.updated += result.updated;
-                        stats.unchanged += result.skipped;
-                    }
-
-                    const backupInventory = this._normalizeArray(data.inventory);
-                    if (backupInventory.length > 0) {
-                        const invResult = this._mergeInventory(backupInventory);
-                        stats.added += invResult.added;
-                        stats.updated += invResult.updated;
-                    }
-
-                    if (data.settings) {
-                        const backupSettings = this._normalizeObject(data.settings);
-                        if (Object.keys(backupSettings).length > 0) {
-                            const current = Settings.getSettings();
-                            Settings.saveSettings({ ...current, ...backupSettings });
-                        }
-                    }
-
-                    if (data.shiftSession) localStorage.setItem(Cut.storageKey, data.shiftSession);
-                    if (data.shiftHistory) localStorage.setItem(Cut.shiftHistoryKey, data.shiftHistory);
-                    if (data.shift) localStorage.setItem(Business.key('pos_shift_opened'), data.shift);
-                    if (data.lastReceiptSale) localStorage.setItem(Business.key('pos_last_receipt_sale'), data.lastReceiptSale);
-                    if (data.reportHistory) localStorage.setItem(this.reportHistoryKey, data.reportHistory);
-                    if (data.dayChangeKey) localStorage.setItem(ReportService.dayChangeKey, data.dayChangeKey);
-                    if (data.emailConfig) localStorage.setItem(this.emailConfigKey, data.emailConfig);
-
-                    resolve({
-                        success: true,
-                        message: 'Datos importados correctamente. Agregadas: ' + stats.added + ', actualizadas: ' + stats.updated + ', sin cambios: ' + stats.unchanged + '.',
-                        stats
-                    });
+                    resolve(this.importData(JSON.parse(e.target.result), options));
                 } catch (err) {
                     reject({ success: false, error: 'Error al leer el archivo: ' + err.message });
                 }
@@ -211,6 +101,131 @@ class Backup {
             reader.onerror = () => reject({ success: false, error: 'Error al leer el archivo' });
             reader.readAsText(file);
         });
+    }
+
+    // Importa un respaldo ya leído (archivo manual o respaldo automático).
+    // Por defecto fusiona por folio/ID sin borrar nada de lo local.
+    static importData(data, options = {}) {
+        const { factoryRestore = false } = options;
+        if (!data.version || !data.store) {
+            return { success: false, error: 'Archivo de respaldo inválido' };
+        }
+
+        if (factoryRestore) {
+            this._factoryRestore(data);
+            return {
+                success: true,
+                message: 'Restauración de fábrica completada. Recargue la página para aplicar los cambios.',
+                factoryRestore: true
+            };
+        }
+
+        const stats = { added: 0, updated: 0, unchanged: 0 };
+
+        const backupSales = this._normalizeArray(data.sales);
+        if (backupSales.length > 0) {
+            const result = this._mergeById(
+                SaleService.getAll(true),
+                backupSales,
+                'id',
+                'date'
+            );
+            SaleService.save(result.merged);
+            stats.added += result.added;
+            stats.updated += result.updated;
+            stats.unchanged += result.skipped;
+        }
+
+        const backupReturns = this._normalizeArray(data.returns);
+        if (backupReturns.length > 0) {
+            const result = this._mergeById(
+                Returns.getAll(),
+                backupReturns,
+                'id',
+                'date'
+            );
+            Returns.save(result.merged);
+            stats.added += result.added;
+            stats.updated += result.updated;
+            stats.unchanged += result.skipped;
+        }
+
+        const backupAdjustments = this._normalizeArray(data.cashAdjustments);
+        if (backupAdjustments.length > 0) {
+            const result = this._mergeById(
+                CashAdjustment.getAll(),
+                backupAdjustments,
+                'id',
+                'date'
+            );
+            CashAdjustment.save(result.merged);
+            stats.added += result.added;
+            stats.updated += result.updated;
+            stats.unchanged += result.skipped;
+        }
+
+        const backupGuaranteeExchanges = this._normalizeArray(data.guaranteeExchanges);
+        if (typeof GuaranteeExchange !== 'undefined' && backupGuaranteeExchanges.length > 0) {
+            const result = this._mergeById(
+                GuaranteeExchange.getAll(),
+                backupGuaranteeExchanges,
+                'id',
+                'date'
+            );
+            GuaranteeExchange.save(result.merged);
+            stats.added += result.added;
+            stats.updated += result.updated;
+            stats.unchanged += result.skipped;
+        }
+
+        const backupHeldSales = this._normalizeArray(data.heldSales);
+        if (backupHeldSales.length > 0) {
+            const result = this._mergeById(
+                HeldSales.getAll(),
+                backupHeldSales,
+                'id',
+                'date'
+            );
+            HeldSales.save(result.merged);
+            stats.added += result.added;
+            stats.updated += result.updated;
+            stats.unchanged += result.skipped;
+        }
+
+        const backupInventory = this._normalizeArray(data.inventory);
+        if (backupInventory.length > 0) {
+            const invResult = this._mergeInventory(backupInventory);
+            stats.added += invResult.added;
+            stats.updated += invResult.updated;
+        }
+
+        if (data.settings) {
+            const backupSettings = this._normalizeObject(data.settings);
+            if (Object.keys(backupSettings).length > 0) {
+                const current = Settings.getSettings();
+                Settings.saveSettings({ ...current, ...backupSettings });
+            }
+        }
+
+        // No reemplazar un turno abierto en este momento
+        if (data.shiftSession && !Cut.isShiftOpen()) localStorage.setItem(Cut.storageKey, data.shiftSession);
+        // Historial de cortes: fusionar en lugar de sobrescribir
+        const backupHistory = this._normalizeArray(data.shiftHistory);
+        if (backupHistory.length > 0) {
+            const result = this._mergeById(Cut.getSessionHistory(), backupHistory, 'id', 'openedAt');
+            SafeStorage.setItem(Cut.shiftHistoryKey, JSON.stringify(result.merged));
+        }
+        if (data.shift) localStorage.setItem(Business.key('pos_shift_opened'), data.shift);
+        if (data.lastReceiptSale) localStorage.setItem(Business.key('pos_last_receipt_sale'), data.lastReceiptSale);
+        if (data.reportHistory) localStorage.setItem(this.reportHistoryKey, data.reportHistory);
+        if (data.dayChangeKey) localStorage.setItem(ReportService.dayChangeKey, data.dayChangeKey);
+        if (data.emailConfig) localStorage.setItem(this.emailConfigKey, data.emailConfig);
+
+        return {
+            success: true,
+            message: 'Datos importados correctamente. Agregadas: ' + stats.added + ', actualizadas: ' + stats.updated + ', sin cambios: ' + stats.unchanged + '.',
+            stats
+        };
     }
 
     static _normalizeArray(value) {
@@ -239,38 +254,71 @@ class Backup {
         return {};
     }
 
+    // Fusiona por folio/ID sin perder registros:
+    // - Mismo folio y misma fecha  -> es el mismo registro; gana la versión
+    //   modificada más recientemente (updatedAt / canceledAt / fecha).
+    // - Mismo folio y fecha distinta -> son registros DISTINTOS (folio repetido
+    //   en otro dispositivo o versión anterior); se agrega con sufijo -R2, -R3...
     static _mergeById(localArr, backupArr, idKey = 'id', dateKey = 'date') {
         const localMap = new Map();
         const result = [...localArr];
+        const usedIds = new Set();
 
         localArr.forEach(item => {
-            if (item && item[idKey] != null) localMap.set(item[idKey], item);
+            if (item && item[idKey] != null) {
+                localMap.set(item[idKey], item);
+                usedIds.add(item[idKey]);
+            }
         });
 
+        const stamp = (rec) => new Date(rec.updatedAt || rec.canceledAt || rec[dateKey] || 0).getTime();
         let added = 0, updated = 0, skipped = 0;
 
         backupArr.forEach(item => {
             if (!item || item[idKey] == null) {
-                result.push(item);
-                added++;
+                if (item) {
+                    result.push(item);
+                    added++;
+                }
                 return;
             }
             const existing = localMap.get(item[idKey]);
             if (!existing) {
                 result.push(item);
+                usedIds.add(item[idKey]);
+                localMap.set(item[idKey], item);
                 added++;
-            } else {
-                const localDate = new Date(existing[dateKey] || 0);
-                const backupDate = new Date(item[dateKey] || 0);
-                if (backupDate > localDate) {
-                    const idx = result.findIndex(m => m[idKey] === item[idKey]);
-                    if (idx !== -1) {
-                        result[idx] = item;
-                        updated++;
-                    }
-                } else {
+                return;
+            }
+
+            const sameRecord = (existing[dateKey] || '') === (item[dateKey] || '');
+            if (!sameRecord) {
+                // Si ya se importó antes con sufijo, no duplicar
+                const alreadyImported = result.some(r =>
+                    r && r.originalId === item[idKey] && (r[dateKey] || '') === (item[dateKey] || '')
+                );
+                if (alreadyImported) {
                     skipped++;
+                    return;
                 }
+                let n = 2;
+                let newId = `${item[idKey]}-R${n}`;
+                while (usedIds.has(newId)) newId = `${item[idKey]}-R${++n}`;
+                result.push({ ...item, originalId: item[idKey], [idKey]: newId });
+                usedIds.add(newId);
+                added++;
+                return;
+            }
+
+            if (stamp(item) > stamp(existing)) {
+                const idx = result.findIndex(m => m && m[idKey] === item[idKey]);
+                if (idx !== -1) {
+                    result[idx] = item;
+                    localMap.set(item[idKey], item);
+                    updated++;
+                }
+            } else {
+                skipped++;
             }
         });
 
@@ -380,6 +428,78 @@ class Backup {
     }
 
     // ============================================================
+    //  RESPALDO DE RECUPERACIÓN LOCAL (capa 1)
+    //  Snapshot silencioso en localStorage para recuperación rápida
+    //  después de una caída. Contiene el estado crítico del POS.
+    // ============================================================
+
+    static get localRecoveryKey() { return Business.key('pos_local_recovery'); }
+
+    // Consultar el estado del snapshot de recuperación local en LocalStorage.
+    // Devuelve null si no existe o está corrupto.
+    static getLocalRecoveryInfo() {
+        const stored = localStorage.getItem(this.localRecoveryKey);
+        if (!stored) return null;
+        const data = SafeJSON.parse(stored, null, 'local_recovery');
+        if (!data || !data.savedAt) return null;
+        return {
+            savedAt: data.savedAt,
+            reason: data.reason || 'manual'
+        };
+    }
+
+    // Crear un snapshot de recuperación local con los datos críticos.
+    // No lanza excepciones: un fallo del respaldo no debe bloquear la caja.
+    static createLocalRecovery(reason = 'manual') {
+        try {
+            const data = {
+                savedAt: new Date().toISOString(),
+                reason: reason,
+                inventory: Inventory.getAll(),
+                sales: SaleService.getAll(true),
+                settings: Settings.getSettings(),
+                heldSales: HeldSales.getAll(),
+                returns: Returns.getAll(),
+                cashAdjustments: CashAdjustment.getAll(),
+                guaranteeExchanges: GuaranteeExchange.getAll(),
+                shiftSession: localStorage.getItem(Cut.storageKey),
+                shiftHistory: localStorage.getItem(Cut.shiftHistoryKey)
+            };
+            SafeStorage.setItem(this.localRecoveryKey, SafeJSON.stringify(data));
+            return { savedAt: data.savedAt, reason: data.reason };
+        } catch (err) {
+            console.warn('[Backup] No se pudo crear el snapshot de recuperación local:', err?.message);
+            return null;
+        }
+    }
+
+    // Restaurar datos desde el snapshot de recuperación local.
+    // Nunca borra datos: fusiona el estado guardado sobre el actual.
+    static restoreLocalRecovery() {
+        const stored = localStorage.getItem(this.localRecoveryKey);
+        if (!stored) return { success: false, error: 'No hay snapshot de recuperación local disponible' };
+
+        const data = SafeJSON.parse(stored, null, 'local_recovery');
+        if (!data) return { success: false, error: 'El snapshot de recuperación local está corrupto' };
+
+        try {
+            if (data.inventory) Inventory.saveProducts(data.inventory);
+            if (data.sales) SaleService.save(data.sales);
+            if (data.settings) Settings.saveSettings(data.settings);
+            if (data.heldSales) SafeStorage.setItem(HeldSales.storageKey, SafeJSON.stringify(data.heldSales));
+            if (data.returns) SafeStorage.setItem(Returns.storageKey, SafeJSON.stringify(data.returns));
+            if (data.cashAdjustments) SafeStorage.setItem(CashAdjustment.storageKey, SafeJSON.stringify(data.cashAdjustments));
+            if (data.guaranteeExchanges) SafeStorage.setItem(GuaranteeExchange.storageKey, SafeJSON.stringify(data.guaranteeExchanges));
+            if (data.shiftSession) localStorage.setItem(Cut.storageKey, data.shiftSession);
+            if (data.shiftHistory) localStorage.setItem(Cut.shiftHistoryKey, JSON.stringify(data.shiftHistory));
+
+            return { success: true, message: 'Datos restaurados desde el snapshot local de recuperación' };
+        } catch (err) {
+            return { success: false, error: 'Error al restaurar el snapshot: ' + (err?.message || err) };
+        }
+    }
+
+    // ============================================================
     //  REPORTES POR CORREO
     // ============================================================
 
@@ -392,13 +512,13 @@ class Backup {
         let sales;
         let initialAmount;
         let reportType = 'daily';
-        let reportDate = new Date().toISOString().split('T')[0];
+        let reportDate = DateUtil.today();
 
         if (session) {
             reportType = 'session';
             sales = Cut.getSessionSales(session.openedAt, new Date().toISOString());
             initialAmount = session.initialAmount;
-            reportDate = session.openedAt.split('T')[0];
+            reportDate = DateUtil.toLocalDate(session.openedAt);
         } else {
             sales = SaleService.getDailySales();
             initialAmount = Auth.getDrawerInitial();
@@ -847,8 +967,20 @@ class Backup {
             }
             if (report.adjustmentCount > 0) {
                 text += `\n--- Ajustes de Caja ---\n`;
-                text += `Devoluciones / Anulaciones: -$${fmt(Math.abs(report.cashAdjustments + report.cardAdjustments))}\n`;
+                text += `Total Ajustes: -$${fmt(Math.abs(report.totalAdjustments || 0))}\n`;
                 text += `Cantidad de Ajustes: ${report.adjustmentCount}\n`;
+                if (typeof CashAdjustment !== 'undefined' && report.date) {
+                    const adjustments = CashAdjustment.getByDate(report.date);
+                    adjustments.forEach(a => {
+                        const aTypeLabel = a.type === 'return' ? 'Devolución'
+                            : a.type === 'cancel' ? 'Anulación'
+                            : a.type === 'expense' ? 'Retiro para Depósito'
+                            : 'Ajuste';
+                        const aSign = a.amount < 0 ? '-' : '+';
+                        const aTime = new Date(a.date).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+                        text += `${aTypeLabel} • ${aTime} • ${a.note || 'Sin nota'} • ${aSign}$${fmt(Math.abs(a.amount))}\n`;
+                    });
+                }
             }
             if (report.items && report.items.length > 0) {
                 text += `\n--- Detalle de Transacciones ---\n`;
@@ -882,8 +1014,20 @@ class Backup {
             }
             if (report.adjustmentCount > 0) {
                 text += `\n--- Ajustes de Caja ---\n`;
-                text += `Devoluciones / Anulaciones: -$${fmt(Math.abs(report.cashAdjustments + report.cardAdjustments))}\n`;
+                text += `Total Ajustes: -$${fmt(Math.abs(report.totalAdjustments || 0))}\n`;
                 text += `Cantidad de Ajustes: ${report.adjustmentCount}\n`;
+                if (typeof CashAdjustment !== 'undefined' && report.date) {
+                    const adjustments = CashAdjustment.getByDate(report.date);
+                    adjustments.forEach(a => {
+                        const aTypeLabel = a.type === 'return' ? 'Devolución'
+                            : a.type === 'cancel' ? 'Anulación'
+                            : a.type === 'expense' ? 'Retiro para Depósito'
+                            : 'Ajuste';
+                        const aSign = a.amount < 0 ? '-' : '+';
+                        const aTime = new Date(a.date).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+                        text += `${aTypeLabel} • ${aTime} • ${a.note || 'Sin nota'} • ${aSign}$${fmt(Math.abs(a.amount))}\n`;
+                    });
+                }
             }
             if (report.items && report.items.length > 0) {
                 text += `\n--- Detalle de Transacciones ---\n`;
@@ -1040,7 +1184,7 @@ class Backup {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `cierre-caja-${new Date().toISOString().split('T')[0]}.csv`;
+            a.download = `cierre-caja-${DateUtil.today()}.csv`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -1053,7 +1197,7 @@ class Backup {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `cierre-caja-${new Date().toISOString().split('T')[0]}.json`;
+        a.download = `cierre-caja-${DateUtil.today()}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -1070,11 +1214,457 @@ class Backup {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `cierre-invitado-${new Date().toISOString().split('T')[0]}.json`;
+        a.download = `cierre-invitado-${DateUtil.today()}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         return { success: true, message: 'Registro del turno guardado localmente' };
     }
+
+    // ============================================================
+    //  RESPALDO PROGRAMADO (capa 2: intervalo cada 1 hora)
+    // ============================================================
+
+    static get intervalBackupKey() { return Business.key('pos_interval_backup_last'); }
+
+    // Consultar el estado del respaldo programado (última ejecución y próxima).
+    static getIntervalBackupInfo() {
+        const stored = localStorage.getItem(this.intervalBackupKey);
+        if (!stored) return null;
+        const data = SafeJSON.parse(stored, null, 'interval_backup');
+        if (!data || !data.lastRun) return null;
+        try {
+            const lastRun = new Date(data.lastRun);
+            const nextRun = new Date(lastRun.getTime() + 60 * 60 * 1000);
+            return {
+                lastRun: lastRun.toISOString(),
+                nextRun: nextRun.toISOString()
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    // Iniciar el temporizador de respaldo programado (cada 1 hora).
+    static startIntervalBackup() {
+        try {
+            if (typeof setInterval !== 'undefined') {
+                setInterval(() => {
+                    try { this.runScheduledBackup(); } catch (err) {
+                        console.warn('[Backup] Error en respaldo programado:', err?.message);
+                    }
+                }, 60 * 60 * 1000);
+            }
+        } catch (err) {
+            console.warn('[Backup] No se pudo iniciar el respaldo programado:', err?.message);
+        }
+    }
+
+    // Ejecutar un respaldo programado: exportar a localStorage + crear snapshot local.
+    static runScheduledBackup() {
+        try {
+            this.exportToLocalStorage();
+            const now = new Date().toISOString();
+            SafeStorage.setItem(this.intervalBackupKey, JSON.stringify({ lastRun: now }));
+            this.createLocalRecovery('programado');
+        } catch (err) {
+            console.warn('[Backup] Error al ejecutar respaldo programado:', err?.message);
+        }
+    }
+
+    // Descargar un respaldo JSON con el estado completo del sistema + reporte de corte.
+    static downloadCutBackup(report) {
+        try {
+            const data = {
+                version: '1.2',
+                type: 'cut_backup',
+                timestamp: new Date().toISOString(),
+                store: Business.getStoreName(),
+                businessName: Business.getBusinessName(),
+                businessId: Business.getCurrentBusinessId(),
+                inventory: Inventory.getAll(),
+                sales: SaleService.getAll(true),
+                report: report
+            };
+            const backupStr = JSON.stringify(data, null, 2);
+            const blob = new Blob([backupStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `respaldo_pos_${this.formatDateStamp()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            return { success: true, message: 'Respalado de corte descargado correctamente' };
+        } catch (err) {
+            return { success: false, error: 'Error al descargar el respaldo: ' + (err?.message || err) };
+        }
+    }
 }
+
+// ============================================================
+//  AutoBackup: respaldo automático a un archivo en disco.
+//  Usa la File System Access API (Chrome / Edge de escritorio).
+//  El administrador elige el archivo una sola vez; después se
+//  reescribe completo al terminar cada venta, anulación,
+//  devolución, garantía y corte. El "manejador" del archivo se
+//  guarda en IndexedDB para recordarlo entre recargas.
+// ============================================================
+class AutoBackup {
+    static DB_NAME = 'jewelry_deluna_autobackup';
+    static STORE = 'handles';
+    static HANDLE_ID = 'backup-file';
+    static get lastSaveKey() { return Business.key('pos_autobackup_last'); }
+
+    static _handle = null;
+    static _queue = Promise.resolve();
+    static _pending = false;
+    static _errorShown = false;
+    static _permToastShown = false;
+    static _blockedToastShown = false;
+    static FILE_NAME = 'JewelryDeLuna_respaldo_automatico.json';
+
+    // 'id' hace que el navegador abra siempre la misma carpeta en el selector
+    static get pickerOptions() {
+        return {
+            id: 'jdl-autobackup',
+            startIn: 'documents',
+            types: [{ description: 'Respaldo JSON', accept: { 'application/json': ['.json'] } }]
+        };
+    }
+
+    static isSupported() {
+        return typeof window.showSaveFilePicker === 'function' && typeof indexedDB !== 'undefined';
+    }
+
+    // --- IndexedDB (persistencia del manejador del archivo) ---
+    static _openDb() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(this.DB_NAME, 1);
+            req.onupgradeneeded = () => req.result.createObjectStore(this.STORE);
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    static async _dbOp(mode, fn) {
+        const db = await this._openDb();
+        try {
+            return await new Promise((resolve, reject) => {
+                const tx = db.transaction(this.STORE, mode);
+                const req = fn(tx.objectStore(this.STORE));
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = () => reject(req.error);
+            });
+        } finally {
+            db.close();
+        }
+    }
+
+    static async _loadHandle() {
+        if (this._handle) return this._handle;
+        if (!this.isSupported()) return null;
+        try {
+            this._handle = (await this._dbOp('readonly', s => s.get(this.HANDLE_ID))) || null;
+        } catch {
+            this._handle = null;
+        }
+        return this._handle;
+    }
+
+    static async _permission(handle, request = false) {
+        const opts = { mode: 'readwrite' };
+        if (await handle.queryPermission(opts) === 'granted') return 'granted';
+        if (request) return handle.requestPermission(opts);
+        return 'prompt';
+    }
+
+    // --- Acciones del administrador ---
+    static async chooseFile() {
+        if (!this.isSupported()) {
+            Toast.warning('Este navegador no permite respaldo automático a archivo. Use Chrome o Edge en computadora.');
+            return false;
+        }
+        try {
+            const handle = await window.showSaveFilePicker({
+                ...this.pickerOptions,
+                suggestedName: this.FILE_NAME
+            });
+            await this._dbOp('readwrite', s => s.put(handle, this.HANDLE_ID));
+            this._handle = handle;
+            this._errorShown = false;
+            await this.saveNow('configuración');
+            Toast.success('Respaldo automático activado: ' + handle.name);
+            return true;
+        } catch (err) {
+            if (err && err.name === 'AbortError') return false;
+            Toast.error('No se pudo configurar el respaldo automático: ' + (err?.message || err));
+            return false;
+        } finally {
+            this.renderStatus();
+        }
+    }
+
+    static async reauthorize() {
+        const handle = await this._loadHandle();
+        if (!handle) return false;
+        try {
+            const perm = await this._permission(handle, true);
+            if (perm === 'granted') {
+                this._errorShown = false;
+                await this.saveNow('reactivación');
+                Toast.success('Respaldo automático reactivado');
+                return true;
+            }
+            Toast.warning('Sin permiso, el respaldo automático queda en pausa.');
+            return false;
+        } finally {
+            this.renderStatus();
+        }
+    }
+
+    static async disable() {
+        try {
+            await this._dbOp('readwrite', s => s.delete(this.HANDLE_ID));
+        } catch { /* ignorar */ }
+        this._handle = null;
+        this.renderStatus();
+        Toast.info('Respaldo automático desactivado');
+    }
+
+    // --- Guardado ---
+    // Encola el guardado para que dos operaciones seguidas no escriban
+    // el archivo al mismo tiempo. Nunca lanza excepciones: una falla del
+    // respaldo no debe impedir registrar la venta.
+    static save(reason = '') {
+        if (!this.isSupported()) return Promise.resolve(false);
+        // Si ya hay un guardado en espera, ese tomará los datos más recientes
+        if (this._pending) return this._queue;
+        this._pending = true;
+        this._queue = this._queue.then(() => {
+            this._pending = false;
+            return this.saveNow(reason);
+        });
+        return this._queue;
+    }
+
+    static async saveNow(reason = '') {
+        try {
+            const handle = await this._loadHandle();
+            if (!handle) return false;
+            if (await this._permission(handle) !== 'granted') {
+                this.notifyNeedsPermission();
+                return false;
+            }
+            // Candado: si el archivo tiene ventas que este navegador ya no tiene
+            // (se perdió información), NO sobrescribirlo; ofrecer restaurar.
+            const existing = await this._readFile(handle);
+            const missing = existing ? this._countMissingSales(existing) : 0;
+            if (missing > 0) {
+                this.notifyBlocked(missing);
+                this.renderStatus();
+                return false;
+            }
+
+            const data = Backup.buildBackupData();
+            data.autoBackup = { savedAt: new Date().toISOString(), reason, device: Device.getId() };
+            const writable = await handle.createWritable();
+            await writable.write(JSON.stringify(data, null, 2));
+            await writable.close();
+            try { localStorage.setItem(this.lastSaveKey, data.autoBackup.savedAt); } catch { /* sin espacio */ }
+            this._errorShown = false;
+            this.renderStatus();
+            return true;
+        } catch (err) {
+            if (!this._errorShown) {
+                this._errorShown = true;
+                Toast.warning('No se pudo actualizar el respaldo automático: ' + (err?.message || err), 6000);
+            }
+            this.renderStatus();
+            return false;
+        }
+    }
+
+    // --- Lectura del archivo de respaldo ---
+    static async _readFile(handle) {
+        try {
+            const file = await handle.getFile();
+            const text = await file.text();
+            if (!text.trim()) return null;
+            return JSON.parse(text);
+        } catch {
+            return null;
+        }
+    }
+
+    // Ventas del archivo que no existen en este navegador (mismo folio y fecha,
+    // o renombradas con sufijo -R al fusionar)
+    static _countMissingSales(fileData) {
+        const fileSales = Backup._normalizeArray(fileData.sales);
+        if (fileSales.length === 0) return 0;
+        const local = new Set();
+        SaleService.getAll(true).forEach(s => {
+            if (!s) return;
+            local.add(`${s.id}|${s.date}`);
+            if (s.originalId) local.add(`${s.originalId}|${s.date}`);
+        });
+        return fileSales.filter(s => s && s.id != null && !local.has(`${s.id}|${s.date}`)).length;
+    }
+
+    // ============================================================
+    //  RESTAURAR CON UN BOTÓN
+    //  - Si el navegador aún recuerda el archivo: lo lee directo.
+    //  - Si se borraron los datos del navegador (el permiso también
+    //    se pierde): abre el selector en la carpeta de siempre para
+    //    elegir el archivo, y lo vuelve a dejar como respaldo automático.
+    //  La restauración FUSIONA: no borra nada de lo que ya hay.
+    // ============================================================
+    static async restore() {
+        if (!this.isSupported()) {
+            Toast.warning('Este navegador no permite leer el respaldo automático. Use "Importar / Restaurar Copia de Seguridad".');
+            return { success: false };
+        }
+        try {
+            let handle = await this._loadHandle();
+            if (handle && await this._permission(handle, true) !== 'granted') handle = null;
+
+            if (!handle) {
+                Toast.info(`Seleccione el archivo "${this.FILE_NAME}"`, 5000);
+                const [picked] = await window.showOpenFilePicker({ ...this.pickerOptions, multiple: false });
+                if (await this._permission(picked, true) !== 'granted') {
+                    Toast.warning('Sin permiso para usar el archivo.');
+                    return { success: false };
+                }
+                handle = picked;
+                await this._dbOp('readwrite', s => s.put(handle, this.HANDLE_ID));
+                this._handle = handle;
+            }
+
+            const data = await this._readFile(handle);
+            if (!data) {
+                Toast.error('El archivo de respaldo está vacío o dañado.');
+                return { success: false };
+            }
+
+            const result = Backup.importData(data);
+            if (!result.success) {
+                Toast.error(result.error || 'No se pudo restaurar el respaldo');
+                return result;
+            }
+
+            this._blockedToastShown = false;
+            const when = data.autoBackup?.savedAt
+                ? ` (respaldo del ${new Date(data.autoBackup.savedAt).toLocaleString('es-MX')})`
+                : '';
+            Toast.success(`Información restaurada${when}. ${result.message} La página se recargará.`, 6000);
+            setTimeout(() => window.location.reload(), 3000);
+            return result;
+        } catch (err) {
+            if (err && err.name === 'AbortError') return { success: false };
+            Toast.error('Error al restaurar: ' + (err?.message || err));
+            return { success: false };
+        } finally {
+            this.renderStatus();
+        }
+    }
+
+    // Aviso cuando el respaldo tiene más información que el navegador
+    static notifyBlocked(missing) {
+        if (this._blockedToastShown || typeof Toast === 'undefined') return;
+        this._blockedToastShown = true;
+        const toast = Toast.show(
+            `El archivo de respaldo tiene ${missing} venta(s) que este equipo no tiene. Para no perderlas, el respaldo automático se pausó. <button type="button" class="btn btn-outline btn-sm auto-backup-restore-toast-btn">Restaurar ahora</button>`,
+            'warning',
+            0
+        );
+        toast.querySelector('.auto-backup-restore-toast-btn')?.addEventListener('click', () => {
+            Toast.hide(toast);
+            this.restore();
+        });
+        toast.querySelector('.toast-close')?.addEventListener('click', () => {
+            this._blockedToastShown = false;
+        });
+    }
+
+    // Aviso con botón para volver a dar permiso (el navegador lo pide tras reiniciar)
+    static notifyNeedsPermission() {
+        if (this._permToastShown || typeof Toast === 'undefined') return;
+        this._permToastShown = true;
+        const toast = Toast.show(
+            'El respaldo automático está en pausa. <button type="button" class="btn btn-outline btn-sm auto-backup-toast-btn">Reactivar</button>',
+            'warning',
+            0
+        );
+        toast.querySelector('.auto-backup-toast-btn')?.addEventListener('click', async () => {
+            const ok = await this.reauthorize();
+            if (ok) {
+                Toast.hide(toast);
+                this._permToastShown = false;
+            }
+        });
+        // Permitir que vuelva a mostrarse si se cierra sin reactivar
+        toast.querySelector('.toast-close')?.addEventListener('click', () => {
+            this._permToastShown = false;
+        });
+    }
+
+    // Al iniciar: si hay archivo configurado pero falta permiso, avisar
+    static async checkOnStartup() {
+        try {
+            const handle = await this._loadHandle();
+            if (handle && await this._permission(handle) !== 'granted') {
+                this.notifyNeedsPermission();
+            } else if (handle) {
+                // Detectar pérdida de información al abrir el programa
+                const existing = await this._readFile(handle);
+                const missing = existing ? this._countMissingSales(existing) : 0;
+                if (missing > 0) this.notifyBlocked(missing);
+            }
+        } catch { /* ignorar */ }
+        this.renderStatus();
+    }
+
+    static async renderStatus() {
+        const statusEl = document.getElementById('auto-backup-status');
+        const chooseBtn = document.getElementById('auto-backup-choose-btn');
+        const reauthBtn = document.getElementById('auto-backup-reauth-btn');
+        const disableBtn = document.getElementById('auto-backup-disable-btn');
+        if (!statusEl) return;
+
+        if (!this.isSupported()) {
+            statusEl.textContent = 'Este navegador no permite respaldo automático a archivo. Use Chrome o Edge en computadora, o exporte copias manualmente con frecuencia.';
+            if (chooseBtn) chooseBtn.disabled = true;
+            return;
+        }
+
+        const handle = await this._loadHandle();
+        const last = localStorage.getItem(this.lastSaveKey);
+        const lastText = last ? ` Último guardado: ${new Date(last).toLocaleString('es-MX')}.` : '';
+
+        if (!handle) {
+            statusEl.textContent = 'Respaldo automático DESACTIVADO.';
+            if (chooseBtn) chooseBtn.textContent = 'Elegir archivo de respaldo automático';
+            reauthBtn?.classList.add('hidden');
+            disableBtn?.classList.add('hidden');
+            return;
+        }
+
+        let perm = 'prompt';
+        try { perm = await this._permission(handle); } catch { /* archivo inaccesible */ }
+        if (chooseBtn) chooseBtn.textContent = 'Cambiar archivo';
+        disableBtn?.classList.remove('hidden');
+        if (perm === 'granted') {
+            statusEl.textContent = `Respaldo automático ACTIVO en "${handle.name}".${lastText}`;
+            reauthBtn?.classList.add('hidden');
+        } else {
+            statusEl.textContent = `Respaldo automático EN PAUSA ("${handle.name}"): presione "Reactivar".${lastText}`;
+            reauthBtn?.classList.remove('hidden');
+        }
+    }
+}
+
+window.AutoBackup = AutoBackup;

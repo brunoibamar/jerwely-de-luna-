@@ -30,23 +30,44 @@ class Checkout {
                 receivedBreakdown: paymentDetails.receivedBreakdown || {}
             },
             cashier: Auth.getCurrentUser()?.name || 'Desconocido',
-            status: 'active'
+            status: 'active',
+            vipCustomerId: paymentDetails.vipCustomerId || null,
+            vipCustomerName: paymentDetails.vipCustomerName || null
         };
 
+        // Guardar venta y descontar inventario como una sola operación:
+        // si el descuento de stock falla, se revierte la venta (incluyendo
+        // el historial maestro de ventas para mantener consistencia).
+        const previousSales = localStorage.getItem(SaleService.storageKey);
+        const previousHistorical = typeof SaleService.historicalKey !== 'undefined'
+            ? localStorage.getItem(SaleService.historicalKey)
+            : null;
         SaleService.saveSale(sale);
+        try {
+            Inventory.updateStock(sale.items.map(i => ({ barcode: i.barcode, quantity: i.quantity })));
+        } catch (err) {
+            if (previousSales === null) {
+                localStorage.removeItem(SaleService.storageKey);
+            } else {
+                localStorage.setItem(SaleService.storageKey, previousSales);
+            }
+            // Revertir también el historial maestro para mantener consistencia
+            if (previousHistorical === null) {
+                localStorage.removeItem(SaleService.historicalKey);
+            } else {
+                localStorage.setItem(SaleService.historicalKey, previousHistorical);
+            }
+            throw err;
+        }
         cart.clear();
 
         return { success: true, sale };
     }
 
-    // Generar folio de venta único basado en el número secuencial del día
+    // Generar folio de venta único: F-YYYYMMDD-DISP-NNNN
+    // (consecutivo del día por dispositivo, nunca se repite)
     static generateSaleId() {
-        const date = new Date();
-        const dateStr = date.getFullYear().toString() +
-            (date.getMonth() + 1).toString().padStart(2, '0') +
-            date.getDate().toString().padStart(2, '0');
-        const existing = SaleService.getAll().length;
-        return `F-${dateStr}-${(existing + 1).toString().padStart(4, '0')}`;
+        return Folio.next('F', SaleService.getAll(true));
     }
 
     // Preparar los datos para el ticket de impresión

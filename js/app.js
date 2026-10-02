@@ -4,19 +4,164 @@ class SaleService {
     static getAll(includeCanceled = false) {
         const stored = localStorage.getItem(this.storageKey);
         if (!stored) return [];
-        const all = JSON.parse(stored);
+        const all = SafeJSON.parse(stored, [], 'ventas');
+        if (!DataValidator.validateSales(all)) {
+            console.warn('[SaleService] Esquema de ventas inválido detectado; intentando migrar...');
+        }
+        if (!Array.isArray(all)) return [];
         if (includeCanceled) return all;
-        return all.filter(s => s.status !== 'canceled');
+        return all.filter(s => s && s.status !== 'canceled');
     }
 
     static save(sales) {
-        localStorage.setItem(this.storageKey, JSON.stringify(sales));
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(sales));
+    }
+
+    // ============================================================
+    //  Historial Maestro de Ventas (ventas_historico)
+    //  Arreglo maestro permanente donde cada venta se anexa
+    //  (append) de forma definitiva con su timestamp exacto.
+    //  El Corte de Caja NUNCA borra ni limpia este historial.
+    //  Los reportes (diario, semanal, mensual, anual) leen desde
+    //  aquí para garantizar datos completos e ininterrumpidos.
+    // ============================================================
+
+    static get historicalKey() { return Business.key('pos_sales_historical'); }
+
+    // Leer todo el historial maestro (incluye canceladas).
+    // Los registros inválidos se omiten INDIVIDUALMENTE: un registro dañado
+    // NUNCA invalida el historial completo (evita pérdida masiva de ventas
+    // acumuladas, p. ej. cuando un folio antiguo falla la validación).
+    static getHistoricalSales() {
+        const stored = localStorage.getItem(this.historicalKey);
+        if (!stored) return [];
+        const parsed = SafeJSON.parse(stored, [], 'ventas_historico');
+        if (!Array.isArray(parsed)) {
+            console.warn('[SaleService] Historial maestro no es un arreglo; se preserva el estado.');
+            return [];
+        }
+        const valid = parsed.filter(s => DataValidator.isValidSale(s));
+        const dropped = parsed.length - valid.length;
+        if (dropped > 0) {
+            console.warn('[SaleService] ' + dropped + ' registro(s) inválido(s) omitidos del historial maestro.');
+        }
+        return valid;
+    }
+
+    // Guardar el historial maestro completo (usado por migración y restauración)
+    static saveHistorical(sales) {
+        SafeStorage.setItem(this.historicalKey, SafeJSON.stringify(sales));
+    }
+
+    // Anexar una venta al historial maestro con timestamp exacto.
+    // Se invoca desde saveSale() y cancelSale() para garantizar
+    // persistencia permanente e ininterrumpida.
+    static appendToHistory(sale) {
+        if (!sale || typeof sale !== 'object') return;
+        try {
+            const history = this.getHistoricalSales();
+            const idx = history.findIndex(s => s && s.id === sale.id);
+            if (idx !== -1) {
+                history[idx] = { ...sale };
+            } else {
+                history.push({ ...sale });
+            }
+            this.saveHistorical(history);
+        } catch (err) {
+            if (SafeStorage.isQuotaError(err)) {
+                console.warn('[SaleService] Sin espacio en historial maestro; no se pudo anexar venta.');
+            } else {
+                console.error('[SaleService] Error al anexar al historial:', err?.message);
+            }
+        }
+    }
+
+    // Migrar ventas existentes al historial maestro (idempotente).
+    // Se ejecuta en cada inicio y FUSIONA (no reemplaza) las ventas que aún
+    // no están anexadas al historial maestro, identificadas por su id. Así,
+    // si el historial se redujo a un solo registro por un error previo, las
+    // ventas faltantes (p. ej. de los últimos 3 días) se recuperan de pos_sales.
+    static migrateToHistorical() {
+        try {
+            const history = this.getHistoricalSales();
+            const existingIds = new Set((history || []).map(s => s && s.id).filter(Boolean));
+            const current = this.getAll(true);
+            let migrated = 0;
+            const merged = history.slice();
+            current.forEach(sale => {
+                if (sale && sale.id && !existingIds.has(sale.id)) {
+                    merged.push({ ...sale });
+                    migrated++;
+                }
+            });
+            if (migrated > 0) this.saveHistorical(merged);
+            return {
+                migrated,
+                message: migrated > 0
+                    ? 'Migradas ' + migrated + ' ventas al historial maestro'
+                    : 'Historial maestro actualizado'
+            };
+        } catch (err) {
+            return { migrated: 0, error: err?.message || 'Error de migración' };
+        }
+    }
+
+    // Registrar un evento de historial maestro cuando el Corte de Caja
+    // cierra una sesión. NUNCA limpia las ventas acumuladas.
+    static logShiftClosure(session) {
+        if (!session || !session.id) return;
+        try {
+            const key = Business.key('pos_shift_closures');
+            const stored = localStorage.getItem(key);
+            const closures = stored ? SafeJSON.parse(stored, [], 'cierres_turnos') : [];
+            if (!Array.isArray(closures)) {
+                closures.length = 0;
+            }
+            closures.push({
+                sessionId: session.id,
+                closedAt: session.closedAt || new Date().toISOString(),
+                openedAt: session.openedAt,
+                initialAmount: session.initialAmount,
+                totalSales: session.report ? session.report.grandTotal || 0 : 0,
+                salesCount: session.report ? session.report.transactionCount : 0,
+                timestamp: new Date().toISOString()
+            });
+            SafeStorage.setItem(key, SafeJSON.stringify(closures));
+        } catch (err) {
+            console.warn('[SaleService] No se pudo registrar cierre de turno en historial:', err?.message);
+        }
+    }
+
+    // Repara folios duplicados generados por versiones anteriores
+    // (el folio se calculaba con el conteo de ventas y se repetía al
+    // anular). Conserva el primero y renombra los demás con sufijo -R2, -R3...
+    static repairDuplicateIds() {
+        const sales = this.getAll(true);
+        const seen = new Map();
+        let repaired = 0;
+        sales.forEach(sale => {
+            if (!sale || sale.id == null) return;
+            const count = (seen.get(sale.id) || 0) + 1;
+            seen.set(sale.id, count);
+            if (count > 1) {
+                let n = count;
+                let newId = `${sale.id}-R${n}`;
+                while (seen.has(newId)) newId = `${sale.id}-R${++n}`;
+                sale.originalId = sale.id;
+                sale.id = newId;
+                seen.set(newId, 1);
+                repaired++;
+            }
+        });
+        if (repaired > 0) this.save(sales);
+        return repaired;
     }
 
     static saveSale(sale) {
         const sales = this.getAll(true);
         sales.push(sale);
         this.save(sales);
+        this.appendToHistory(sale);
         return sale;
     }
 
@@ -25,14 +170,14 @@ class SaleService {
     }
 
     static getSalesByDate(date) {
-        return this.getAll().filter(s => s.date.startsWith(date));
+        return this.getAll().filter(s => DateUtil.isOnDate(s.date, date));
     }
 
-    static getDailySales(date = new Date().toISOString().split('T')[0]) {
-        return this.getSalesByDate(date);
+    static getDailySales(date = DateUtil.today()) {
+        return this.getHistoricalSales().filter(s => s.status !== 'canceled' && DateUtil.isOnDate(s.date, date));
     }
 
-    static getReportStats(date = new Date().toISOString().split('T')[0]) {
+    static getReportStats(date = DateUtil.today()) {
         const sales = this.getDailySales(date);
         const totalSales = sales.reduce((sum, s) => sum + s.total, 0);
         const itemCount = sales.reduce((sum, s) => sum + s.items.length, 0);
@@ -58,7 +203,9 @@ class SaleService {
         sale.status = 'canceled';
         sale.canceledAt = new Date().toISOString();
         sale.cancelReason = reason.trim();
+        sale.updatedAt = sale.canceledAt;
         this.save(sales);
+        this.appendToHistory(sale);
         return { success: true, sale };
     }
 
@@ -66,7 +213,7 @@ class SaleService {
     static getCanceledSales(date = null) {
         const all = this.getAll(true);
         return all.filter(s => s.status === 'canceled' && (
-            !date || s.date.startsWith(date)
+            !date || DateUtil.isOnDate(s.date, date)
         ));
     }
 }
@@ -176,12 +323,19 @@ class Settings {
             this.saveSettings(this.defaultSettings);
             return { ...this.defaultSettings };
         }
-        return { ...this.defaultSettings, ...JSON.parse(stored) };
+        const parsed = SafeJSON.parse(stored, null, 'settings');
+        if (parsed === null || !DataValidator.validateSettings(parsed)) {
+            if (typeof Toast !== 'undefined' && Toast.warning) {
+                Toast.warning('Configuración con formato inválido. Se usarán valores por defecto, preservando datos críticos.', 6000);
+            }
+            return { ...this.defaultSettings };
+        }
+        return { ...this.defaultSettings, ...parsed };
     }
 
     static saveSettings(settings) {
         const merged = { ...this.defaultSettings, ...settings };
-        localStorage.setItem(this.storageKey, JSON.stringify(merged));
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(merged));
         return merged;
     }
 
@@ -200,12 +354,40 @@ class App {
         this.isInitialized = false;
         this.receivedAmount = 0;
         this.paymentEventsBound = false;
+        this.currentVipCustomer = null;
+        this.pendingReward = null;
+        this.vipHighlightedIndex = -1;
+        this.vipPaymentHighlightedIndex = -1;
     }
 
-    init() {
+     init() {
         if (this.isInitialized) return;
 
-        Business.migrateExistingData();
+        const migrationResult = Business.migrateExistingData();
+        if (migrationResult.length > 0) {
+            console.info('[App] Migración de aislamiento por device_id completada:',
+                migrationResult.map(m => m.key + ' (' + m.from + ')').join(', '));
+        }
+
+        // Verificar integridad del localStorage antes de cargar datos.
+        // Preserva datos corruptos y reporta el estado sin borrar nada.
+        // También audita aislamiento por device_id: detecta claves que
+        // no están namespaced con el device_id actual.
+        const guardReport = StorageGuard.checkAll();
+        if (guardReport.corrupt > 0) {
+            console.warn('[App] Almacenamiento con datos corruptos o esquema inesperado:', guardReport);
+        }
+        if (guardReport.suspiciousKeys && guardReport.suspiciousKeys.length > 0) {
+            console.warn('[App] Claves detectadas sin aislamiento por device_id (se migrarán al reiniciar):', guardReport.suspiciousKeys);
+        }
+
+        // Instantánea de seguridad: si algo falla durante la reparación,
+        // los datos originales pueden ser restaurados vía StorageGuard.restoreSnapshot().
+        StorageGuard.createSnapshot();
+
+        SaleService.repairDuplicateIds();
+        // Migrar ventas existentes al historial maestro (idempotente)
+        SaleService.migrateToHistorical();
 
         Inventory.init();
         Auth.init();
@@ -226,7 +408,11 @@ class App {
         this.bindHeldSalesEvents();
         this.bindReturnsEvents();
         this.bindGuaranteeEvents();
+        this.bindWithdrawalEvents();
         this.bindPaymentEvents();
+        this.bindVIPEvents();
+        this.bindCrossTabSync();
+        this.bindBackupEvents();
 
         this.initApp();
 
@@ -238,13 +424,13 @@ class App {
     //  Verifica si existen las claves de almacenamiento y, en caso
     //  afirmativo, carga los datos existentes en la interfaz en lugar
     //  de reiniciar las variables a valores vacíos.
-    //  Claves verificadas (mononegocio, namespace fijo __biz_default):
+    //  Claves verificadas (aisladas por device_id):
     //    - jewelry_deluna_business_name (nombre del negocio)
-    //    - pos_inventory__biz_default   (inventario)
-    //    - pos_sales__biz_default       (ventas)
-    //    - pos_settings__biz_default    (configuración)
-    //    - pos_current_user__biz_default (usuario autenticado)
-    //    - pos_shift_session__biz_default (turno/cesa abierta)
+    //    - pos_inventory__biz_default__dev_<deviceId>  (inventario)
+    //    - pos_sales__biz_default__dev_<deviceId>      (ventas)
+    //    - pos_settings__biz_default__dev_<deviceId>   (configuración)
+    //    - pos_current_user__biz_default__dev_<deviceId> (usuario autenticado)
+    //    - pos_shift_session__biz_default__dev_<deviceId> (turno/caja abierta)
     // ============================================================
     loadFromStorage() {
         const storageStatus = {
@@ -284,9 +470,11 @@ class App {
         // --- Cargar datos existentes desde localStorage (onload) ---
         this.loadFromStorage();
 
-        // --- Mononegocio unificado: migrar datos legados ---
-        // El sistema opera con un único negocio fijo (Jewerly De Luna).
-        // Se migran datos antiguos a la estructura namespaced única.
+        // --- Migración de aislamiento por device_id (idempotente) ---
+        // Ya se ejecuta en el handler de DOMContentLoaded antes de loadFromStorage(),
+        // pero se vuelve a invocar aquí como salvaguarda para garantizar que
+        // datos legados del namespace anterior (__biz_default) se trasladen
+        // al namespace con device_id (__biz_default__dev_<deviceId>).
         Business.migrateExistingData();
 
         // Mononegocio unificado: mostrar la pantalla apropiada según el estado de autenticación.
@@ -300,6 +488,21 @@ class App {
         this.updateDailyReport();
         this.updateRoleVisibility();
         ReportService.startDayChangeWatcher();
+
+        // Sistema de respaldos de doble capa: iniciar temporizador programado (cada 1 hora)
+        try {
+            if (typeof Backup !== 'undefined' && typeof Backup.startIntervalBackup === 'function') {
+                Backup.startIntervalBackup();
+            }
+        } catch (err) {
+            console.warn('[App] Error al iniciar el respaldo programado:', err?.message);
+        }
+
+        try {
+            this.renderLocalRecoveryStatus();
+        } catch (err) {
+            console.warn('[App] Error al renderizar estado de respaldo:', err?.message);
+        }
 
         // Inicializar EmailJS (solo inicializa el SDK; no envía nada automáticamente)
         if (Backup.isEmailJSSet()) {
@@ -426,6 +629,165 @@ class App {
             });
     }
 
+    // ============================================================
+    //  SINCRONIZACIÓN ENTRE PESTAÑAS DEL MISMO DISPOSITIVO
+    //  localStorage es compartido entre pestañas; el evento
+    //  'storage' avisa a las demás cuando una de ellas guarda.
+    // ============================================================
+    bindCrossTabSync() {
+        window.addEventListener('storage', (e) => {
+            if (!e.key) return;
+
+            // Caja cerrada o sesión terminada en otra pestaña
+            if ((e.key === Cut.storageKey || e.key === Auth.current_userKey) && e.newValue === null) {
+                this.handleShiftClosedExternally();
+                return;
+            }
+
+            const dataKeys = [
+                SaleService.storageKey,
+                Inventory.storageKey,
+                Returns.storageKey,
+                CashAdjustment.storageKey,
+                GuaranteeExchange.storageKey,
+                HeldSales.storageKey,
+                VIPCustomer.storageKey,
+                VIPConfig.storageKey
+            ];
+            if (dataKeys.includes(e.key)) {
+                try {
+                    this.updateDailyReport();
+                    this.updateHeldSalesButton();
+                    if (this.activeSection === 'inventory') Inventory.renderCatalog();
+                    if (this.activeSection === 'vip') this.renderVIPTable();
+                } catch { /* UI aún no lista */ }
+            }
+        });
+    }
+
+    // ============================================================
+    //  Eventos de respaldo de doble capa (Configuración, solo admin)
+    // ============================================================
+    bindBackupEvents() {
+        const guard = () => {
+            if (!Auth.canAccessConfig()) {
+                Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+                return false;
+            }
+            return true;
+        };
+        document.getElementById('local-recovery-restore-btn')?.addEventListener('click', () => {
+            if (guard()) this.restoreFromAnyBackup();
+        });
+        document.getElementById('interval-backup-now-btn')?.addEventListener('click', async () => {
+            if (!guard()) return;
+            const intervalBackupNowBtn = document.getElementById('interval-backup-now-btn');
+            const original = intervalBackupNowBtn?.textContent;
+            if (intervalBackupNowBtn) {
+                intervalBackupNowBtn.disabled = true;
+                intervalBackupNowBtn.textContent = 'Guardando...';
+            }
+            try {
+                if (typeof Backup !== 'undefined' && typeof Backup.runScheduledBackup === 'function') {
+                    await Backup.runScheduledBackup();
+                }
+            } catch (err) {
+                console.warn('[App] Error en respaldo programado manual:', err?.message);
+            }
+            this.renderLocalRecoveryStatus();
+            if (intervalBackupNowBtn) {
+                intervalBackupNowBtn.disabled = false;
+                intervalBackupNowBtn.textContent = original;
+            }
+            Toast.success('Respaldo programado ejecutado correctamente');
+        });
+        // Disponible sin iniciar sesión: tras perder la información no hay turno
+        // abierto. Solo FUSIONA datos del respaldo, nunca borra.
+        document.getElementById('login-restore-btn')?.addEventListener('click', () => {
+            this.restoreFromAnyBackup();
+        });
+        this.renderLocalRecoveryStatus();
+    }
+
+    // Restaurar desde el snapshot local de recuperación (capa 1).
+    // Nunca borra datos locales: siempre fusiona por folio/ID.
+    restoreFromAnyBackup() {
+        const localInfo = (typeof Backup !== 'undefined' && typeof Backup.getLocalRecoveryInfo === 'function')
+            ? Backup.getLocalRecoveryInfo()
+            : null;
+        if (localInfo) {
+            const savedAt = new Date(localInfo.savedAt).toLocaleString('es-MX');
+            if (confirm(`¿Restaurar desde el respaldo local de recuperación?\nÚltimo guardado: ${savedAt} (${localInfo.reason || 'manual'}).\n\nSe fusionarán los datos sin borrar lo actual.`)) {
+                const result = (typeof Backup !== 'undefined' && typeof Backup.restoreLocalRecovery === 'function')
+                    ? Backup.restoreLocalRecovery()
+                    : { success: false, error: 'Módulo de respaldo no disponible' };
+                if (result.success) {
+                    Toast.success(result.message + ' Recargue la página para aplicar los cambios.');
+                } else {
+                    Toast.error(result.error);
+                }
+            }
+            return;
+        }
+
+        Toast.info('No hay respaldo disponible para restaurar.');
+    }
+
+    // Actualizar el estado visible del respaldo de doble capa en la
+    // interfaz de Configuración (capa local + programada).
+    renderLocalRecoveryStatus() {
+        const statusEl = document.getElementById('local-recovery-status');
+        if (!statusEl) return;
+
+        const localInfo = (typeof Backup !== 'undefined' && typeof Backup.getLocalRecoveryInfo === 'function')
+            ? Backup.getLocalRecoveryInfo()
+            : null;
+        const intervalInfo = (typeof Backup !== 'undefined' && typeof Backup.getIntervalBackupInfo === 'function')
+            ? Backup.getIntervalBackupInfo()
+            : null;
+
+        const localText = localInfo
+            ? `Último snapshot local: ${new Date(localInfo.savedAt).toLocaleString('es-MX')} (${localInfo.reason || 'manual'}).`
+            : 'No hay snapshot local de recuperación disponible.';
+
+        const intervalText = !intervalInfo || !intervalInfo.lastRun
+            ? 'Programado (cada 1 hora): pendiente de ejecución.'
+            : `Programado (cada 1 hora): último ${new Date(intervalInfo.lastRun).toLocaleString('es-MX')}, próximo ${new Date(intervalInfo.nextRun).toLocaleString('es-MX')}.`;
+
+        statusEl.textContent = `${localText} ${intervalText}`;
+    }
+
+    // Mostrar / ocultar la pista de recuperación local en la pantalla
+    // de login. Solo aparece cuando hay un snapshot de recuperación
+    // disponible (capa 1 del respaldo de doble capa).
+    renderLoginRecoveryHint() {
+        const hintEl = document.getElementById('login-local-recovery-hint');
+        if (!hintEl) return;
+        const localInfo = (typeof Backup !== 'undefined' && typeof Backup.getLocalRecoveryInfo === 'function')
+            ? Backup.getLocalRecoveryInfo()
+            : null;
+        if (localInfo) {
+            const savedAt = new Date(localInfo.savedAt).toLocaleString('es-MX');
+            hintEl.textContent = `Respaldo local disponible del ${savedAt} (${localInfo.reason || 'automático'}). Use "Restaurar respaldo".`;
+            hintEl.classList.remove('hidden');
+        } else {
+            hintEl.classList.add('hidden');
+        }
+    }
+
+    // La caja se cerró (o se cerró sesión) desde otra pestaña:
+    // regresar al login para no registrar ventas fuera de turno.
+    handleShiftClosedExternally() {
+        const posApp = document.getElementById('pos-app');
+        if (!posApp || posApp.classList.contains('hidden')) return;
+        const summaryOverlay = document.getElementById('cash-summary-overlay');
+        if (summaryOverlay && !summaryOverlay.classList.contains('hidden')) return;
+
+        this.hidePaymentModal();
+        Toast.warning('La caja se cerró en otra pestaña. Inicie sesión y abra un turno nuevo.', 6000);
+        this.showLogin();
+    }
+
     showLogin() {
         document.getElementById('login-screen')?.classList.remove('hidden');
         document.getElementById('pos-app')?.classList.add('hidden');
@@ -435,6 +797,7 @@ class App {
         if (formsWrapper) formsWrapper.classList.add('hidden');
         document.querySelectorAll('[data-login-form]').forEach(form => form.classList.add('hidden'));
         document.querySelectorAll('.login-error').forEach(el => { el.textContent = ''; });
+        this.renderLoginRecoveryHint();
     }
 
     showApp() {
@@ -699,8 +1062,21 @@ class App {
         const report = (session && session.report) ? session.report : Backup.generateDailyReport();
         this.currentReport = report;
 
+        // Generar y descargar el archivo JSON de respaldo (respaldo_pos_[FECHA].json)
+        // con el estado completo del sistema: historial maestro de ventas,
+        // cortes anteriores, catálogo e inventario, y movimientos de caja.
+        try {
+            const downloadResult = Backup.downloadCutBackup(report);
+            if (downloadResult.success) {
+                Toast.success(downloadResult.message, 5000);
+            }
+        } catch (err) {
+            console.warn('[App] No se pudo generar el respaldo JSON de corte:', err?.message);
+        }
+
         // Guardar copia en localStorage (historial interno)
         Backup.saveReportToHistory(report);
+        Backup.createLocalRecovery('corte');
 
         // Mostrar el resumen en pantalla
         this.showCashSummary(report);
@@ -708,9 +1084,37 @@ class App {
         // Limpiar el fondo inicial
         Auth.clearDrawerInitial();
 
-        // NOTA: El envío de reporte por correo NO es automático.
-        // Solo se activa al hacer clic en "Enviar Registro al Correo"
-        // dentro del modal de Cierre de Caja (bindSummaryEvents).
+        // Mostrar el reporte en pantalla y notificar al usuario.
+        // El envío de correo es EXCLUSIVAMENTE manual: el usuario debe
+        // presionar el botón "Enviar Registro al Correo" para que se
+        // envíe el reporte y respaldo. Nunca se envía automáticamente.
+        Toast.info('Corte de caja completado. Presione "Enviar Registro al Correo" para enviar el reporte y respaldo por email.', 6000);
+    }
+
+    // Enviar reporte de corte por correo (admin o invitado)
+    async sendCutReportEmail() {
+        if (!this.currentReport) return;
+        const sendEmailBtn = document.getElementById('send-email-btn');
+        if (sendEmailBtn) {
+            sendEmailBtn.disabled = true;
+            sendEmailBtn.textContent = 'Enviando...';
+        }
+        try {
+            let result;
+            if (Auth.isGuest()) {
+                result = await Backup.sendGuestSessionEmail(this.currentReport);
+            } else {
+                result = await Backup.sendReportEmail(this.currentReport);
+            }
+            Toast.info(result.message || 'Reporte enviado al correo del administrador.');
+        } catch (err) {
+            Toast.error('Error al enviar el correo: ' + (err?.message || err));
+        } finally {
+            if (sendEmailBtn) {
+                sendEmailBtn.disabled = false;
+                sendEmailBtn.textContent = 'Enviar Registro al Correo';
+            }
+        }
     }
 
     showCashSummary(report) {
@@ -764,12 +1168,12 @@ class App {
                          <span class="summary-label">Tarjeta</span>
                          <span class="summary-value">$${report.cardSales.toFixed(2)}</span>
                      </div>
-                     ${report.adjustmentCount > 0 ? `
-                     <div class="summary-row">
-                         <span class="summary-label">Devoluciones / Anulaciones</span>
-                         <span class="summary-value" style="color: var(--danger);">-${Math.abs(report.totalAdjustments).toFixed(2)}</span>
-                     </div>
-                     ` : ''}
+                      ${report.adjustmentCount > 0 ? `
+                      <div class="summary-row">
+                          <span class="summary-label">Devoluciones / Anulaciones / Retiros</span>
+                          <span class="summary-value" style="color: var(--danger);">-${Math.abs(report.totalAdjustments).toFixed(2)}</span>
+                      </div>
+                      ` : ''}
                      <div class="summary-row">
                          <span class="summary-label">Transacciones</span>
                          <span class="summary-value">${report.transactionCount}</span>
@@ -834,26 +1238,7 @@ class App {
         const sendEmailBtn = document.getElementById('send-email-btn');
         if (sendEmailBtn) {
             sendEmailBtn.addEventListener('click', async () => {
-                if (!this.currentReport) return;
-
-                const originalText = sendEmailBtn.textContent;
-                sendEmailBtn.disabled = true;
-                sendEmailBtn.textContent = 'Enviando...';
-
-                try {
-                    let result;
-                    if (Auth.isGuest()) {
-                        result = await Backup.sendGuestSessionEmail(this.currentReport);
-                    } else {
-                        result = await Backup.sendReportEmail(this.currentReport);
-                    }
-                    Toast.info(result.message || 'Reporte enviado al correo del administrador.');
-                } catch (err) {
-                    Toast.error('Error al enviar el correo: ' + (err?.message || err));
-                } finally {
-                    sendEmailBtn.disabled = false;
-                    sendEmailBtn.textContent = originalText;
-                }
+                await this.sendCutReportEmail();
             });
         }
 
@@ -865,8 +1250,9 @@ class App {
                         // Invitado: registro de sesión simplificado (solo piezas vendidas)
                         Backup.exportGuestSession(this.currentReport);
                     } else {
-                        // Administrador: reporte completo
+                        // Administrador: reporte completo + respaldo JSON (respaldo_pos_[FECHA].json)
                         Backup.exportReportFile(this.currentReport);
+                        Backup.downloadCutBackup(this.currentReport);
                     }
                 }
             });
@@ -922,7 +1308,7 @@ class App {
                      <tr><td>Tarjeta</td><td>$${report.cardSales.toFixed(2)}</td></tr>
                      <tr><td>Transacciones</td><td>${report.transactionCount}</td></tr>
                      ${report.salesInSession !== undefined ? `<tr><td>Ventas en Sesión</td><td>${report.salesInSession}</td></tr>` : ''}
-                     ${report.adjustmentCount > 0 ? `<tr><td>Devoluciones / Anulaciones</td><td style="color:#e74c3c;">-${Math.abs(report.totalAdjustments || 0).toFixed(2)}</td></tr>` : ''}
+                      ${report.adjustmentCount > 0 ? `<tr><td>Devoluciones / Anulaciones / Retiros</td><td style="color:#e74c3c;">-${Math.abs(report.totalAdjustments || 0).toFixed(2)}</td></tr>` : ''}
                      <tr class="total-row"><td>Caja Final</td><td>$${report.closingAmount.toFixed(2)}</td></tr>
                     ${report.profit !== undefined ? `<tr class="total-row"><td>Ganancia Neta</td><td>$${report.profit.toFixed(2)}</td></tr>` : ''}
                     ${report.margin !== undefined ? `<tr class="total-row"><td>Margen</td><td>${report.margin}%</td></tr>` : ''}
@@ -1017,8 +1403,14 @@ class App {
             this.renderDailyConsolidated();
             this.updateRoleVisibility();
         }
+        if (sectionId === 'vip') {
+            this.renderVIPTable();
+        }
         if (sectionId === 'sales') {
             BarcodeScanner.focusInput();
+        }
+        if (sectionId === 'settings') {
+            this.renderStoreSettings();
         }
     }
 
@@ -1033,24 +1425,6 @@ class App {
             });
         }
 
-        // --- Búsqueda manual por descripción ---
-        // La búsqueda se realiza mediante Enter en el input principal de búsqueda
-        const productSearch = document.getElementById('product-search');
-        if (productSearch) {
-            productSearch.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    const query = productSearch.value.trim();
-                    if (query) {
-                        this.handleBarcodeScan(query);
-                    }
-                }
-            });
-            productSearch.addEventListener('focus', () => {
-                productSearch.select();
-            });
-        }
-
         const addProductBtn = document.getElementById('add-product-btn');
         if (addProductBtn) {
             addProductBtn.addEventListener('click', () => {
@@ -1061,9 +1435,11 @@ class App {
         const clearCartBtn = document.getElementById('clear-cart-btn');
         if (clearCartBtn) {
             clearCartBtn.addEventListener('click', () => {
-                if (this.cart.isEmpty()) return;
+                if (this.cart.isEmpty() && !this.currentVipCustomer) return;
                 if (confirm('¿Estás seguro de limpiar la venta?')) {
                     this.cart.clear();
+                    this.clearVipSalesSelection();
+                    this.dismissRewardAlert();
                     BarcodeScanner.focusInput();
                 }
             });
@@ -1082,6 +1458,9 @@ class App {
                 this.reprintLastTicket();
             });
         }
+
+        // --- Buscador / picker de Cliente VIP en Caja ---
+        this.bindVipSalesEvents();
     }
 
     // --- Ingreso de productos dual ---
@@ -1161,6 +1540,42 @@ class App {
         if (mixedCardInput) mixedCardInput.value = '';
         this.validateMixedPayment();
 
+        // Ocultar dropdown de búsqueda VIP del modal de pago al abrir
+        this.hideVipPaymentDropdown();
+
+        // Limpiar selección de cliente VIP
+        // (preserva la selección hecha en pantalla de Caja si la hay)
+        const vipPhoneInput = document.getElementById('vip-phone-input');
+        const vipInfoEl = document.getElementById('vip-info');
+        if (this.currentVipCustomer) {
+            // Mostrar el cliente VIP elegido en Caja dentro del módulo de pago
+            const customer = VIPCustomer.findById(this.currentVipCustomer.id);
+            if (customer) {
+                this.currentVipCustomer = customer;
+                const status = VIPCustomer.getCurrentStatus(customer);
+                if (vipPhoneInput) vipPhoneInput.value = customer.phone;
+                if (vipInfoEl) {
+                    vipInfoEl.innerHTML = `
+                        <div class="vip-payment-info">
+                            <span class="vip-payment-name">${this.escapeHtml(customer.name)}</span>
+                            <span class="vip-payment-pieces">Piezas: ${customer.accumulatedPieces || 0}</span>
+                            <span class="status-badge ${status.className}">${status.text}</span>
+                        </div>
+                    `;
+                    vipInfoEl.classList.remove('hidden');
+                }
+            }
+        } else {
+            if (vipPhoneInput) vipPhoneInput.value = '';
+            if (vipInfoEl) {
+                vipInfoEl.classList.add('hidden');
+                vipInfoEl.innerHTML = '';
+            }
+        }
+
+        // Activar aviso de recompensa si el cliente VIP seleccionado es elegible
+        this.checkAndShowVipReward(this.currentVipCustomer);
+
         // Mostrar sección de efectivo por defecto
         this.showPaymentSection('cash');
 
@@ -1216,6 +1631,97 @@ class App {
         // Evitar duplicar listeners si el modal ya fue inicializado
         if (this.paymentEventsBound) return;
         this.paymentEventsBound = true;
+
+        // Búsqueda de Cliente VIP con autocompletado en el modal de pago
+        const vipPhoneInput = document.getElementById('vip-phone-input');
+        const vipDropdown = document.getElementById('vip-payment-dropdown');
+        if (vipPhoneInput) {
+            let searchTimeout = null;
+            vipPhoneInput.addEventListener('input', () => {
+                clearTimeout(searchTimeout);
+                const query = vipPhoneInput.value.trim();
+                if (query.length >= 1) {
+                    searchTimeout = setTimeout(() => this.renderVipPaymentDropdown(query), 200);
+                } else {
+                    this.hideVipPaymentDropdown();
+                }
+            });
+
+            vipPhoneInput.addEventListener('keydown', (e) => {
+                const items = vipDropdown ? vipDropdown.querySelectorAll('.vip-dropdown-item') : [];
+                if (items.length === 0) {
+                    if (e.key === 'Escape') this.hideVipPaymentDropdown();
+                    return;
+                }
+                switch (e.key) {
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        this.vipPaymentHighlightedIndex =
+                            (this.vipPaymentHighlightedIndex + 1) % items.length;
+                        this.scrollAndHighlightPaymentItem(items, this.vipPaymentHighlightedIndex);
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        this.vipPaymentHighlightedIndex =
+                            this.vipPaymentHighlightedIndex <= 0
+                                ? items.length - 1
+                                : this.vipPaymentHighlightedIndex - 1;
+                        this.scrollAndHighlightPaymentItem(items, this.vipPaymentHighlightedIndex);
+                        break;
+                    case 'Enter':
+                        e.preventDefault();
+                        if (this.vipPaymentHighlightedIndex >= 0 && this.vipPaymentHighlightedIndex < items.length) {
+                            const id = items[this.vipPaymentHighlightedIndex].dataset.id;
+                            const customer = VIPCustomer.findById(id);
+                            if (customer) this.selectVipInPayment(customer);
+                        } else {
+                            this.hideVipPaymentDropdown();
+                        }
+                        break;
+                    case 'Escape':
+                        e.preventDefault();
+                        this.hideVipPaymentDropdown();
+                        vipPhoneInput.value = '';
+                        break;
+                }
+            });
+
+            if (vipDropdown) {
+                vipDropdown.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                });
+                vipDropdown.addEventListener('mousemove', (e) => {
+                    const item = e.target.closest('.vip-dropdown-item');
+                    if (item) {
+                        const idx = Array.prototype.indexOf.call(
+                            vipDropdown.querySelectorAll('.vip-dropdown-item'),
+                            item
+                        );
+                        if (idx !== this.vipPaymentHighlightedIndex) {
+                            this.vipPaymentHighlightedIndex = idx;
+                            this.scrollAndHighlightPaymentItem(
+                                vipDropdown.querySelectorAll('.vip-dropdown-item'),
+                                idx
+                            );
+                        }
+                    }
+                });
+                vipDropdown.addEventListener('click', (e) => {
+                    const item = e.target.closest('.vip-dropdown-item');
+                    if (item) {
+                        const customer = VIPCustomer.findById(item.dataset.id);
+                        if (customer) this.selectVipInPayment(customer);
+                    }
+                });
+
+                document.addEventListener('click', (e) => {
+                    const phoneInput = document.getElementById('vip-phone-input');
+                    if (!vipDropdown.contains(e.target) && e.target !== phoneInput) {
+                        this.hideVipPaymentDropdown();
+                    }
+                });
+            }
+        }
 
         // Botones de selección de método de pago
         document.querySelectorAll('.payment-method-btn').forEach(btn => {
@@ -1400,18 +1906,563 @@ class App {
         if (overlay) overlay.classList.add('hidden');
     }
 
+    // --- Integración VIP en el módulo de pago ---
+
+    lookupVipCustomerByPhone(phone) {
+        const vipPhoneInput = document.getElementById('vip-phone-input');
+        const vipInfoEl = document.getElementById('vip-info');
+        if (!vipPhoneInput || !vipInfoEl) return;
+
+        const customer = VIPCustomer.findByPhone(phone);
+        if (customer) {
+            this.currentVipCustomer = customer;
+            const status = VIPCustomer.getCurrentStatus(customer);
+            vipInfoEl.innerHTML = `
+                <div class="vip-payment-info">
+                    <span class="vip-payment-name">${this.escapeHtml(customer.name)}</span>
+                    <span class="vip-payment-pieces">Piezas: ${customer.accumulatedPieces || 0}</span>
+                    <span class="status-badge ${status.className}">${status.text}</span>
+                </div>
+            `;
+            vipInfoEl.classList.remove('hidden');
+            this.updateVipSalesBadge();
+            this.checkAndShowVipReward(customer);
+        } else {
+            this.clearVipPaymentSelection();
+            if (vipPhoneInput) vipPhoneInput.value = '';
+            Toast.warning('No se encontró cliente VIP con ese teléfono');
+        }
+    }
+
+    clearVipPaymentSelection() {
+        const vipInfoEl = document.getElementById('vip-info');
+        if (vipInfoEl) {
+            vipInfoEl.classList.add('hidden');
+            vipInfoEl.innerHTML = '';
+        }
+        this.currentVipCustomer = null;
+        this.vipPaymentHighlightedIndex = -1;
+        this.updateVipSalesBadge();
+        this.checkAndShowVipReward(null);
+    }
+
+    renderVipPaymentDropdown(query) {
+        const dropdown = document.getElementById('vip-payment-dropdown');
+        if (!dropdown) return;
+
+        this.vipPaymentHighlightedIndex = -1;
+
+        const results = VIPCustomer.search(query);
+        dropdown.classList.remove('hidden');
+
+        if (results.length === 0) {
+            dropdown.innerHTML = '<div class="vip-dropdown empty-text">Sin coincidencias</div>';
+            return;
+        }
+
+        const lower = query.toLowerCase();
+        dropdown.innerHTML = results.slice(0, 10).map(c => {
+            const nameHtml = this.highlightMatch(c.name, lower);
+            const phoneHtml = this.highlightMatch(c.phone || '', lower);
+            const pieces = c.accumulatedPieces || 0;
+            return `
+                <div class="vip-dropdown-item" data-id="${c.id}">
+                    <span class="vip-dropdown-name">${nameHtml}</span>
+                    <span class="vip-dropdown-phone">${phoneHtml} · <span class="vip-dropdown-pieces">Piezas: ${pieces}</span></span>
+                </div>
+            `;
+        }).join('');
+    }
+
+    hideVipPaymentDropdown() {
+        const dropdown = document.getElementById('vip-payment-dropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+        this.vipPaymentHighlightedIndex = -1;
+    }
+
+    selectVipInPayment(customer) {
+        if (!customer) return;
+        this.currentVipCustomer = customer;
+        this.hideVipPaymentDropdown();
+
+        const vipPhoneInput = document.getElementById('vip-phone-input');
+        const vipInfoEl = document.getElementById('vip-info');
+        if (vipPhoneInput) vipPhoneInput.value = customer.phone || '';
+
+        const status = VIPCustomer.getCurrentStatus(customer);
+        if (vipInfoEl) {
+            vipInfoEl.innerHTML = `
+                <div class="vip-payment-info">
+                    <span class="vip-payment-name">${this.escapeHtml(customer.name)}</span>
+                    <span class="vip-payment-pieces">Piezas: ${customer.accumulatedPieces || 0}</span>
+                    <span class="status-badge ${status.className}">${status.text}</span>
+                </div>
+            `;
+            vipInfoEl.classList.remove('hidden');
+        }
+        this.updateVipSalesBadge();
+        this.checkAndShowVipReward(customer);
+    }
+
+    scrollAndHighlightPaymentItem(items, index) {
+        items.forEach((item, i) => {
+            item.classList.toggle('vip-dropdown-item-highlighted', i === index);
+        });
+        const activeItem = items[index];
+        if (activeItem && typeof activeItem.scrollIntoView === 'function') {
+            activeItem.scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    // Verificar elegibilidad a recompensa VIP e activar el aviso si corresponde.
+    // Si el cliente alcanza o supera la meta de piezas para Joya Gratis,
+    // muestra de inmediato el aviso resaltado en pantalla. Si no lo es,
+    // descarta cualquier aviso previo.
+    checkAndShowVipReward(customer, sale = null, delay = 0) {
+        if (customer) {
+            const threshold = VIPConfig.getPiecesForFreeJewel();
+            if ((customer.accumulatedPieces || 0) >= threshold) {
+                const pendingReward = {
+                    customer: customer,
+                    threshold: threshold,
+                    sale: sale
+                };
+                this.pendingReward = pendingReward;
+                if (delay > 0) {
+                    setTimeout(() => this.showRewardAlert(pendingReward), delay);
+                } else {
+                    this.showRewardAlert(pendingReward);
+                }
+                return;
+            }
+        }
+        this.dismissRewardAlert();
+    }
+
+    // Acumular piezas para el cliente VIP después de completar una venta
+    // y verificar si es elegible a canje de Joya Gratis
+    processVipAccumulation(sale) {
+        if (!this.currentVipCustomer || !sale || !sale.items) return;
+
+        const totalPieces = sale.items.reduce((sum, item) => sum + item.quantity, 0);
+        if (totalPieces === 0) return;
+
+        const result = VIPCustomer.addPieces(this.currentVipCustomer.id, totalPieces, `Venta ${sale.id}`);
+        if (!result.success) {
+            console.warn('[VIP] No se pudieron acumular piezas:', result.error);
+            return;
+        }
+
+        const customer = VIPCustomer.findById(this.currentVipCustomer.id);
+        if (!customer) return;
+
+        this.checkAndShowVipReward(customer, sale, 300);
+    }
+
+    // --- Alerta de Premio destacada ---
+    // Muestra un aviso resaltado en pantalla de caja cuando un cliente
+    // alcanza o supera la meta de piezas para Joya Gratis, con la
+    // opción de canjear la recompensa (reiniciando el contador a cero).
+    showRewardAlert(pendingReward) {
+        if (!pendingReward || !pendingReward.customer) return;
+        const { customer, threshold } = pendingReward;
+
+        const alertEl = document.getElementById('vip-reward-alert');
+        const customerEl = document.getElementById('reward-alert-customer');
+        const redeemBtn = document.getElementById('reward-redeem-btn');
+        const dismissBtn = document.getElementById('reward-dismiss-btn');
+
+        if (!alertEl || !customerEl || !redeemBtn || !dismissBtn) return;
+
+        customerEl.textContent = `${customer.name} | ${customer.accumulatedPieces || 0} piezas acumuladas (meta ${threshold})`;
+        alertEl.classList.remove('hidden');
+
+        const onRedeem = () => {
+            const result = VIPCustomer.redeemAndReset(customer.id, `Canje pos-venta ${customer.name}`);
+            if (result.success) {
+                Toast.success('¡Joya Gratis canjeada! Contador reiniciado para ' + customer.name);
+                if (typeof AutoBackup !== 'undefined' && AutoBackup.save) AutoBackup.save('canje_vip');
+                if (typeof Backup !== 'undefined' && Backup.createLocalRecovery) {
+                    Backup.createLocalRecovery('canje_vip');
+                }
+                this.renderVIPTable();
+            } else {
+                Toast.error(result.error);
+            }
+            this.dismissRewardAlert();
+        };
+
+        const onDismiss = () => {
+            this.dismissRewardAlert();
+            Toast.info('Recuerda canjear la Joya Gratis desde el módulo Clientes VIP cuando lo desees.', 5000);
+        };
+
+        redeemBtn.replaceWith(redeemBtn.cloneNode(true));
+        const redeemBtnRef = alertEl.querySelector('#reward-redeem-btn');
+        redeemBtnRef.addEventListener('click', onRedeem);
+
+        dismissBtn.replaceWith(dismissBtn.cloneNode(true));
+        const dismissBtnRef = alertEl.querySelector('#reward-dismiss-btn');
+        dismissBtnRef.addEventListener('click', onDismiss);
+
+        alertEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    dismissRewardAlert() {
+        const alertEl = document.getElementById('vip-reward-alert');
+        if (alertEl) {
+            alertEl.classList.add('hidden');
+        }
+        this.pendingReward = null;
+    }
+
+    // --- Picker de Cliente VIP en pantalla de Caja ---
+
+    bindVipSalesEvents() {
+        const vipInput = document.getElementById('vip-search-input');
+        const dropdown = document.getElementById('vip-search-dropdown');
+        const clearBtn = document.getElementById('vip-clear-sales-btn');
+        const addBtn = document.getElementById('add-vip-quick-btn');
+
+        if (vipInput) {
+            let searchTimer = null;
+            vipInput.addEventListener('input', () => {
+                clearTimeout(searchTimer);
+                const query = vipInput.value.trim();
+                this.vipHighlightedIndex = -1;
+                if (query.length >= 1) {
+                    searchTimer = setTimeout(() => this.renderVipDropdown(query), 200);
+                } else {
+                    this.renderVipDropdown('');
+                }
+            });
+
+            vipInput.addEventListener('keydown', (e) => {
+                const items = dropdown ? dropdown.querySelectorAll('.vip-dropdown-item') : [];
+                if (items.length === 0) {
+                    if (e.key === 'Escape') this.hideVipDropdown();
+                    return;
+                }
+
+                switch (e.key) {
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        this.vipHighlightedIndex =
+                            (this.vipHighlightedIndex + 1) % items.length;
+                        this.scrollAndHighlightItem(items, this.vipHighlightedIndex);
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        this.vipHighlightedIndex =
+                            this.vipHighlightedIndex <= 0
+                                ? items.length - 1
+                                : this.vipHighlightedIndex - 1;
+                        this.scrollAndHighlightItem(items, this.vipHighlightedIndex);
+                        break;
+                    case 'Enter':
+                        e.preventDefault();
+                        if (this.vipHighlightedIndex >= 0 && this.vipHighlightedIndex < items.length) {
+                            const id = items[this.vipHighlightedIndex].dataset.id;
+                            const customer = VIPCustomer.findById(id);
+                            if (customer) this.selectVipInSales(customer);
+                        } else {
+                            this.hideVipDropdown();
+                        }
+                        break;
+                    case 'Escape':
+                        e.preventDefault();
+                        this.hideVipDropdown();
+                        vipInput.value = '';
+                        break;
+                }
+            });
+
+            vipInput.addEventListener('focus', () => {
+                this.vipHighlightedIndex = -1;
+            });
+
+            document.addEventListener('click', (e) => {
+                if (dropdown && !dropdown.contains(e.target) && e.target !== vipInput) {
+                    this.hideVipDropdown();
+                }
+            });
+        }
+
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                this.clearVipSalesSelection();
+                this.dismissRewardAlert();
+            });
+        }
+
+        if (addBtn) {
+            addBtn.addEventListener('click', () => {
+                if (!Auth.canModifyInventory()) {
+                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    return;
+                }
+                this.showQuickAddVipModal();
+            });
+        }
+
+        if (dropdown) {
+            dropdown.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+            });
+            dropdown.addEventListener('mousemove', (e) => {
+                const item = e.target.closest('.vip-dropdown-item');
+                if (item) {
+                    const idx = Array.prototype.indexOf.call(
+                        dropdown.querySelectorAll('.vip-dropdown-item'),
+                        item
+                    );
+                    if (idx !== this.vipHighlightedIndex) {
+                        this.vipHighlightedIndex = idx;
+                        this.scrollAndHighlightItem(
+                            dropdown.querySelectorAll('.vip-dropdown-item'),
+                            idx
+                        );
+                    }
+                }
+            });
+            dropdown.addEventListener('click', (e) => {
+                const item = e.target.closest('.vip-dropdown-item');
+                if (item) {
+                    const id = item.dataset.id;
+                    const customer = VIPCustomer.findById(id);
+                    if (customer) {
+                        this.selectVipInSales(customer);
+                    }
+                }
+            });
+        }
+    }
+
+    scrollAndHighlightItem(items, index) {
+        items.forEach((item, i) => {
+            item.classList.toggle('vip-dropdown-item-highlighted', i === index);
+        });
+        const activeItem = items[index];
+        if (activeItem && typeof activeItem.scrollIntoView === 'function') {
+            activeItem.scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    // Renderizar el dropdown de autocompletado con búsqueda por Nombre o Teléfono
+    renderVipDropdown(query) {
+        const dropdown = document.getElementById('vip-search-dropdown');
+        if (!dropdown) return;
+
+        this.vipHighlightedIndex = -1;
+
+        const results = query ? VIPCustomer.search(query) : VIPCustomer.getAll().slice(0, 10);
+        dropdown.classList.remove('hidden');
+
+        if (results.length === 0) {
+            dropdown.innerHTML = '<div class="vip-dropdown empty-text">Sin coincidencias</div>';
+            return;
+        }
+
+        const lower = query.toLowerCase();
+        dropdown.innerHTML = results.slice(0, 10).map(c => {
+            const nameHtml = this.highlightMatch(c.name, lower);
+            const phoneHtml = this.highlightMatch(c.phone || '', lower);
+            const pieces = c.accumulatedPieces || 0;
+            return `
+                <div class="vip-dropdown-item" data-id="${c.id}">
+                    <span class="vip-dropdown-name">${nameHtml}</span>
+                    <span class="vip-dropdown-phone">${phoneHtml} · <span class="vip-dropdown-pieces">Piezas: ${pieces}</span></span>
+                </div>
+            `;
+        }).join('');
+    }
+
+    highlightMatch(text, term) {
+        if (!term) return this.escapeHtml(text || '');
+        const idx = String(text || '').toLowerCase().indexOf(term);
+        if (idx === -1) return this.escapeHtml(text || '');
+        const before = this.escapeHtml(text.substring(0, idx));
+        const match = this.escapeHtml(text.substring(idx, idx + term.length));
+        const after = this.escapeHtml(text.substring(idx + term.length));
+        return `${before}<span class="vip-dropdown-highlight">${match}</span>${after}`;
+    }
+
+    hideVipDropdown() {
+        const dropdown = document.getElementById('vip-search-dropdown');
+        if (dropdown) dropdown.classList.add('hidden');
+        this.vipHighlightedIndex = -1;
+    }
+
+    selectVipInSales(customer) {
+        if (!customer) return;
+        this.currentVipCustomer = customer;
+        this.hideVipDropdown();
+
+        const vipInput = document.getElementById('vip-search-input');
+        if (vipInput) {
+            vipInput.value = '';
+            vipInput.classList.add('hidden');
+        }
+
+        this.updateVipSalesBadge();
+        this.checkAndShowVipReward(customer);
+
+        if (typeof AutoBackup !== 'undefined') AutoBackup.save('seleccion_vip');
+    }
+
+    updateVipSalesBadge() {
+        const badge = document.getElementById('vip-selected-badge');
+        const nameEl = document.getElementById('vip-badge-name');
+        const piecesEl = document.getElementById('vip-badge-pieces');
+        const phoneEl = document.getElementById('vip-badge-phone');
+        const vipInput = document.getElementById('vip-search-input');
+        const rewardAlert = document.getElementById('vip-reward-alert');
+
+        if (!badge || !nameEl || !piecesEl) return;
+
+        if (this.currentVipCustomer) {
+            const c = this.currentVipCustomer;
+            nameEl.textContent = c.name;
+            piecesEl.textContent = `Piezas: ${c.accumulatedPieces || 0}`;
+            if (phoneEl) phoneEl.textContent = c.phone || '';
+            badge.classList.remove('hidden');
+            if (vipInput) {
+                vipInput.classList.add('hidden');
+                vipInput.value = '';
+            }
+            if (rewardAlert && !rewardAlert.classList.contains('hidden')) {
+                rewardAlert.classList.add('hidden');
+            }
+        } else {
+            badge.classList.add('hidden');
+            if (vipInput) vipInput.classList.remove('hidden');
+        }
+    }
+
+    clearVipSalesSelection() {
+        this.currentVipCustomer = null;
+        this.vipHighlightedIndex = -1;
+        const vipInput = document.getElementById('vip-search-input');
+        const badge = document.getElementById('vip-selected-badge');
+        if (vipInput) {
+            vipInput.classList.remove('hidden');
+            vipInput.value = '';
+        }
+        if (badge) badge.classList.add('hidden');
+        this.hideVipDropdown();
+    }
+
+    // Registro rápido de un nuevo cliente VIP desde la caja,
+    // sin salir ni limpiar la venta actual.
+    showQuickAddVipModal() {
+        const overlay = document.createElement('div');
+        overlay.className = 'payment-overlay';
+        overlay.innerHTML = `
+            <div class="payment-modal" style="max-width: 480px;">
+                <div class="payment-modal-header">
+                    <h3 class="payment-title">Nuevo Cliente VIP</h3>
+                </div>
+                <form id="vip-quick-form" class="vip-form">
+                    <div class="input-group">
+                        <input type="text" name="name" placeholder=" " required>
+                        <label>Nombre Completo</label>
+                    </div>
+                    <div class="input-group">
+                        <input type="tel" name="phone" placeholder=" " required>
+                        <label>Número de Teléfono</label>
+                    </div>
+                    <div class="input-group">
+                        <textarea name="notes" placeholder=" " rows="3" maxlength="500"></textarea>
+                        <label>Notas</label>
+                    </div>
+                    <div class="payment-actions" style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button type="button" class="btn btn-outline" id="vip-quick-cancel-btn">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Guardar y Usar</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        const cleanup = () => {
+            if (overlay.parentNode) document.body.removeChild(overlay);
+        };
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) cleanup();
+        });
+
+        overlay.querySelector('#vip-quick-cancel-btn')?.addEventListener('click', cleanup);
+
+        overlay.querySelector('#vip-quick-form')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const name = formData.get('name').trim();
+            const phone = formData.get('phone').trim();
+            const notes = formData.get('notes').trim();
+
+            if (!name || !phone) {
+                Toast.error('El nombre y teléfono son obligatorios');
+                return;
+            }
+
+            const result = VIPCustomer.add({ name, phone, notes });
+            if (result.success) {
+                Toast.success('Cliente VIP agregado');
+                this.selectVipInSales(result.customer);
+                this.renderVIPTable();
+                if (typeof AutoBackup !== 'undefined') AutoBackup.save('cliente_vip');
+                if (typeof Backup !== 'undefined' && Backup.createLocalRecovery) {
+                    Backup.createLocalRecovery('cliente_vip');
+                }
+            } else {
+                Toast.error(result.error);
+            }
+            cleanup();
+        });
+    }
+
     // Completar checkout con detalles de pago completos
+    // Agregar información del cliente VIP a los detalles de pago
+    buildVipPaymentDetails(baseDetails) {
+        const details = { ...baseDetails };
+        if (this.currentVipCustomer) {
+            details.vipCustomerId = this.currentVipCustomer.id;
+            details.vipCustomerName = this.currentVipCustomer.name;
+        }
+        return details;
+    }
+
     completeCheckout(paymentDetails = { method: 'cash' }) {
         try {
-            const result = Checkout.checkout(this.cart, paymentDetails);
+            // Si la caja se cerró en otra pestaña, no registrar ventas fuera de turno
+            if (!Cut.isShiftOpen()) {
+                Toast.error('La caja fue cerrada (posiblemente en otra pestaña). Abra un nuevo turno para seguir vendiendo.');
+                this.handleShiftClosedExternally();
+                return;
+            }
+
+            // Guarda la venta y descuenta el inventario de forma atómica
+            const result = Checkout.checkout(
+                this.cart,
+                this.buildVipPaymentDetails(paymentDetails)
+            );
 
             if (result.success) {
-                Inventory.updateStock(
-                    result.sale.items.map(i => ({ barcode: i.barcode, quantity: i.quantity }))
-                );
+                // Acumular piezas para cliente VIP si está seleccionado
+                this.processVipAccumulation(result.sale);
+
+                // Capa 1 (doble capa): snapshot silencioso en localStorage para recuperación local
+                Backup.createLocalRecovery('venta');
+
+                // Limpiar selección de cliente VIP (la venta ya fue procesada);
+                // el aviso de premio usa pendingReward, independiente de esta variable
+                this.clearVipSalesSelection();
 
                 // Guardar referencia a la venta recién completada para reimpresión rápida
-                this.saveLastPrintedSale(result.sale);
+                try {
+                    this.saveLastPrintedSale(result.sale);
+                } catch { /* no crítico */ }
 
                 setTimeout(() => {
                     Print.printReceipt(result.sale);
@@ -1438,13 +2489,13 @@ class App {
 
     // Guardar la última venta completada para reimpresión rápida
     saveLastPrintedSale(sale) {
-        localStorage.setItem(App.lastReceiptKey, JSON.stringify(sale));
+        localStorage.setItem(App.lastReceiptKey, SafeJSON.stringify(sale));
     }
 
     // Obtener la última venta imprimida desde localStorage
     getLastPrintedSale() {
         const stored = localStorage.getItem(App.lastReceiptKey);
-        return stored ? JSON.parse(stored) : null;
+        return stored ? SafeJSON.parse(stored, null, 'ultima_venta') : null;
     }
 
     // Reimprimir el último ticket generado
@@ -1501,9 +2552,81 @@ class App {
         }
 
         if (Auth.isAdmin()) {
+            this._updatePeriodReport('weekly-sales', 'weekly-transactions', 'weekly-profit', 'weekly-margin', ReportService.getWeeklySales());
+            this._updatePeriodReport('annual-sales', 'annual-transactions', 'annual-profit', 'annual-margin', ReportService.getYearlySales());
             this.renderDailySalesChart();
+            this.renderWeeklySalesChart();
             this.renderMonthlySalesChart();
+            this.renderAnnualSalesChart();
         }
+    }
+
+    // Poblar las tarjetas resumen de un período y calcular costo/beneficio.
+    _summarizeSales(sales) {
+        let totalCost = 0;
+        let totalRevenue = 0;
+        sales.forEach(sale => {
+            sale.items.forEach(item => {
+                const product = Inventory.findByBarcode(item.barcode);
+                if (product && product.cost) {
+                    totalCost += product.cost * item.quantity;
+                }
+                totalRevenue += item.amount;
+            });
+        });
+        const profit = totalRevenue - totalCost;
+        const margin = totalCost > 0 ? ((profit / totalCost) * 100).toFixed(1) : '0.0';
+        return { count: sales.length, revenue: totalRevenue, cost: totalCost, profit, margin };
+    }
+
+    _updatePeriodReport(salesId, countId, profitId, marginId, sales) {
+        const s = this._summarizeSales(sales);
+        const salesEl = document.getElementById(salesId);
+        const countEl = document.getElementById(countId);
+        const profitEl = document.getElementById(profitId);
+        const marginEl = document.getElementById(marginId);
+        if (salesEl) salesEl.textContent = '$' + s.revenue.toFixed(2);
+        if (countEl) countEl.textContent = s.count;
+        if (profitEl) profitEl.textContent = '$' + s.profit.toFixed(2);
+        if (marginEl) marginEl.textContent = s.margin + '%';
+    }
+
+    // --- Gráfica de ventas semanal (últimas 4 semanas) ---
+    renderWeeklySalesChart() {
+        const canvas = document.getElementById('weekly-sales-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const labels = [];
+        const data = [];
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        for (let i = 3; i >= 0; i--) {
+            const monday = new Date(today);
+            monday.setDate(today.getDate() - ((today.getDay() + 6) % 7) - i * 7);
+            const sunday = new Date(monday);
+            sunday.setDate(monday.getDate() + 6);
+            const sales = ReportService.getWeeklySales(monday.toISOString());
+            labels.push(monday.toLocaleDateString('es-MX') + ' – ' + sunday.toLocaleDateString('es-MX'));
+            data.push(sales.reduce((sum, s) => sum + s.total, 0));
+        }
+        this.drawBarChart(ctx, canvas, labels, data, '#7a5af0', 'Ventas Semanales (últimas 4 semanas)');
+    }
+
+    // --- Gráfica de ventas anual (meses del año en curso) ---
+    renderAnnualSalesChart() {
+        const canvas = document.getElementById('annual-sales-chart');
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const year = new Date().getFullYear();
+        const labels = [];
+        const data = [];
+        const monthNames = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+        for (let m = 1; m <= 12; m++) {
+            const sales = ReportService.getMonthlySales(m, year);
+            labels.push(monthNames[m - 1]);
+            data.push(sales.reduce((sum, s) => sum + s.total, 0));
+        }
+        this.drawBarChart(ctx, canvas, labels, data, '#0ea5a3', 'Ventas Mensuales del Año ' + year);
     }
 
     // --- Gráfica de ventas diarias (por hora) ---
@@ -1531,7 +2654,7 @@ class App {
         const canvas = document.getElementById('monthly-sales-chart');
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        const allSales = SaleService.getAll();
+        const allSales = SaleService.getHistoricalSales().filter(s => s.status !== 'canceled');
         const monthlyData = {};
 
         const now = new Date();
@@ -1680,7 +2803,7 @@ class App {
         const todayBtn = document.getElementById('report-today-btn');
         if (todayBtn) {
             todayBtn.addEventListener('click', () => {
-                const today = new Date().toISOString().split('T')[0];
+                const today = DateUtil.today();
                 if (dateSelect) dateSelect.value = today;
                 this.renderDailyConsolidated(today);
             });
@@ -1711,7 +2834,7 @@ class App {
             });
         }
 
-        const today = new Date().toISOString().split('T')[0];
+        const today = DateUtil.today();
         if (dateSelect) dateSelect.value = today;
     }
 
@@ -2299,13 +3422,14 @@ class App {
                   if (importBackupSettingBtn) {
                       importBackupSettingBtn.textContent = factoryRestoreCheckbox.checked
                           ? 'Restaurar (Fábrica)'
-                          : 'Importar / Restaurar Copia de Seguridad';
+                          : 'Importar / Cargar Base de Datos (.json)';
                   }
               });
           }
-        }
 
-    // Importar una copia de seguridad .json exportada por el sistema
+         }
+
+     // Importar una copia de seguridad .json exportada por el sistema
     async importBackupFile(file) {
         if (!file) return;
 
@@ -2341,65 +3465,16 @@ class App {
             const msg = 'Error al leer el archivo: ' + (err?.message || err);
             if (errorEl) errorEl.textContent = msg;
             Toast.error(msg);
-        }
-    }
+         }
+     }
 
-    // Renderizar campos de configuración de tienda
-    renderStoreSettings() {
-        const settings = Settings.getSettings();
-
-         const nameEl = document.getElementById('store-name-input');
-        if (nameEl) nameEl.value = Business.getStoreName();
-
-        const addressEl = document.getElementById('store-address-input');
-        if (addressEl) addressEl.value = settings.storeAddress || '';
-
-        const phoneEl = document.getElementById('store-phone-input');
-        if (phoneEl) phoneEl.value = settings.storePhone || '';
-
-        const rfcEl = document.getElementById('store-rfc-input');
-        if (rfcEl) rfcEl.value = settings.storeRfc || '';
-
-        const headerEl = document.getElementById('receipt-header-input');
-        if (headerEl) headerEl.value = settings.receiptHeader || 'Gracias por su compra';
-
-        const footerEl = document.getElementById('receipt-footer-input');
-        if (footerEl) footerEl.value = settings.receiptFooter || '¡Gracias por su compra!';
-
-        const stockEl = document.getElementById('low-stock-input');
-        if (stockEl) stockEl.value = settings.lowStockThreshold || 5;
-
-        const showCashierEl = document.getElementById('receipt-show-cashier');
-        if (showCashierEl) showCashierEl.checked = settings.receiptShowCashier !== false;
-
-        const showDateEl = document.getElementById('receipt-show-date');
-        if (showDateEl) showDateEl.checked = settings.receiptShowDate !== false;
-
-        const showPaymentMethodEl = document.getElementById('receipt-show-payment-method');
-        if (showPaymentMethodEl) showPaymentMethodEl.checked = settings.receiptShowPaymentMethod !== false;
-
-        const showPaymentDetailsEl = document.getElementById('receipt-show-payment-details');
-        if (showPaymentDetailsEl) showPaymentDetailsEl.checked = settings.receiptShowPaymentDetails !== false;
-
-        this.renderLogoPreview(settings.storeLogo);
-
-        // Renderizar configuración de EmailJS
-        const emailConfig = Backup.getEmailConfig();
-        const emailjsPubKey = document.getElementById('emailjs-public-key');
-        const emailjsServiceId = document.getElementById('emailjs-service-id');
-        const emailjsTemplateId = document.getElementById('emailjs-template-id');
-        const emailjsAutoSend = document.getElementById('emailjs-auto-send');
-        if (emailjsPubKey) emailjsPubKey.value = emailConfig?.publicKey || '';
-        if (emailjsServiceId) emailjsServiceId.value = emailConfig?.serviceId || '';
-        if (emailjsTemplateId) emailjsTemplateId.value = emailConfig?.templateId || '';
-        if (emailjsAutoSend) emailjsAutoSend.checked = emailConfig?.enabled !== false;
-    }
-
-    saveEmailJSConfig() {
+     saveEmailJSConfig() {
         const pubKey = document.getElementById('emailjs-public-key')?.value.trim() || '';
         const serviceId = document.getElementById('emailjs-service-id')?.value.trim() || '';
         const templateId = document.getElementById('emailjs-template-id')?.value.trim() || '';
-        const autoSend = document.getElementById('emailjs-auto-send')?.checked ?? true;
+        // El envío de correos es exclusivamente manual: configuración de EmailJS
+        // se guarda, pero NUNCA se dispara automáticamente en ningún flujo.
+        const autoSend = false;
 
         if (!pubKey && !serviceId && !templateId) {
             return false;
@@ -2465,7 +3540,11 @@ class App {
                 const reader = new FileReader();
                 reader.onload = (ev) => {
                     const logoData = ev.target.result;
-                    Settings.update('storeLogo', logoData);
+                    try {
+                        Settings.update('storeLogo', logoData);
+                    } catch {
+                        return; // SafeStorage ya mostró el aviso de espacio lleno
+                    }
                     this.renderLogoPreview(logoData);
                     Toast.success('Logotipo actualizado correctamente');
                 };
@@ -3113,6 +4192,8 @@ class App {
                 note: note
             });
 
+            Backup.createLocalRecovery('devolución');
+
             // Actualizar reportes y UI
             this.updateDailyReport();
             this.renderDailyConsolidated();
@@ -3290,6 +4371,8 @@ class App {
                 relatedSaleId: sale.id,
                 note: reason
             });
+
+            Backup.createLocalRecovery('anulación');
 
             // Actualizar reportes y UI
             this.updateDailyReport();
@@ -3811,6 +4894,8 @@ class App {
                 cashAdjustment: false
             });
 
+            Backup.createLocalRecovery('garantía');
+
             // Actualizar reportes y UI
             this.updateDailyReport();
             this.updateHeldSalesButton();
@@ -3820,6 +4905,131 @@ class App {
             this.hideGuaranteeModal();
         } catch (err) {
             Toast.error('Error al registrar el cambio por garantía: ' + (err?.message || err));
+        }
+    }
+
+    // ============================================================
+    //  MÓDULO DE RETIRO PARA DEPÓSITO
+    //  - Retiro de efectivo de la caja para depositar en banco
+    //    u otra fuente externa
+    //  - Registra un ajuste de caja (tipo 'expense') con la
+    //    nota explicativa proporcionada
+    //  - Impacto: resta del efectivo en efectivo del reporte de caja
+    //  Exclusivo del rol Administrador.
+    // ============================================================
+
+    bindWithdrawalEvents() {
+        const withdrawalBtn = document.getElementById('withdrawal-btn');
+        if (withdrawalBtn) {
+            withdrawalBtn.addEventListener('click', () => {
+                if (!Auth.canRegisterExpenses()) {
+                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    return;
+                }
+                this.showWithdrawalModal();
+            });
+        }
+
+        const confirmBtn = document.getElementById('withdrawal-confirm-btn');
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', () => {
+                this.processWithdrawal();
+            });
+        }
+
+        const cancelBtn = document.getElementById('withdrawal-cancel-btn');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => {
+                this.hideWithdrawalModal();
+            });
+        }
+
+        const overlay = document.getElementById('withdrawal-overlay');
+        if (overlay) {
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    this.hideWithdrawalModal();
+                }
+            });
+        }
+
+        const amountInput = document.getElementById('withdrawal-amount-input');
+        if (amountInput) {
+            amountInput.addEventListener('input', () => {
+                this.updateWithdrawalConfirmBtn();
+            });
+        }
+    }
+
+    showWithdrawalModal() {
+        const overlay = document.getElementById('withdrawal-overlay');
+        if (!overlay) return;
+        overlay.classList.remove('hidden');
+
+        const amountInput = document.getElementById('withdrawal-amount-input');
+        const noteInput = document.getElementById('withdrawal-note-input');
+        if (amountInput) {
+            amountInput.value = '';
+        }
+        if (noteInput) {
+            noteInput.value = '';
+        }
+        this.updateWithdrawalConfirmBtn();
+        setTimeout(() => {
+            if (amountInput) amountInput.focus();
+        }, 50);
+    }
+
+    hideWithdrawalModal() {
+        const overlay = document.getElementById('withdrawal-overlay');
+        if (overlay) overlay.classList.add('hidden');
+    }
+
+    updateWithdrawalConfirmBtn() {
+        const amountInput = document.getElementById('withdrawal-amount-input');
+        const confirmBtn = document.getElementById('withdrawal-confirm-btn');
+        if (!confirmBtn || !amountInput) return;
+
+        const amount = parseFloat(amountInput.value);
+        confirmBtn.disabled = isNaN(amount) || amount <= 0;
+    }
+
+    processWithdrawal() {
+        if (!Auth.canRegisterExpenses()) {
+            Toast.error('Permiso denegado: Esta acción requiere privilegios de administrador');
+            return;
+        }
+
+        const amountInput = document.getElementById('withdrawal-amount-input');
+        const noteInput = document.getElementById('withdrawal-note-input');
+
+        const amount = parseFloat(amountInput?.value || 0);
+        if (isNaN(amount) || amount <= 0) {
+            Toast.error('Ingresa un monto válido mayor a 0');
+            return;
+        }
+
+        const note = (noteInput?.value || '').trim();
+
+        try {
+            CashAdjustment.add({
+                type: 'expense',
+                amount: -amount,
+                description: 'Retiro para Depósito',
+                paymentMethod: 'cash',
+                relatedSaleId: null,
+                note: note
+            });
+
+            Backup.createLocalRecovery('retiro para depósito');
+
+            this.updateDailyReport();
+            this.renderDailyConsolidated();
+
+            Toast.success(`Retiro para depósito registrado - $${amount.toFixed(2)} | Nota: ${note}`);
+            this.hideWithdrawalModal();
+        } catch (err) {
+            Toast.error('Error al registrar el retiro: ' + (err?.message || err));
         }
     }
 
@@ -3957,7 +5167,467 @@ class App {
             });
         }
 
-        this.renderVolumePricingTiers();
+         this.renderVolumePricingTiers();
+    }
+
+    // ============================================================
+    //  MÓDULO VIP: CLIENTES VIP (PROGRAMA DE FIDELIZACIÓN)
+    //  Permite registrar y administrar clientes VIP con nombre,
+    //  teléfono (clave de búsqueda), notas, piezas acumuladas,
+    //  historial de recompensas y estado actual.
+    // ============================================================
+
+    bindVIPEvents() {
+        const vipSearch = document.getElementById('vip-search');
+        if (vipSearch) {
+            vipSearch.addEventListener('input', (e) => {
+                const query = e.target.value.trim();
+                this.renderVIPTable(query);
+            });
+        }
+
+        const addVipBtn = document.getElementById('add-vip-btn');
+        if (addVipBtn) {
+            addVipBtn.addEventListener('click', () => {
+                if (!Auth.canModifyInventory()) {
+                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    return;
+                }
+                this.showAddVIPModal();
+            });
+        }
+
+        const piecesInput = document.getElementById('vip-pieces-for-free-input');
+        if (piecesInput) {
+            piecesInput.addEventListener('change', () => {
+                if (!Auth.canAccessConfig()) return;
+                const value = parseInt(piecesInput.value);
+                if (!isNaN(value) && value >= 1) {
+                    VIPConfig.savePiecesForFreeJewel(value);
+                } else {
+                    piecesInput.value = VIPConfig.getPiecesForFreeJewel();
+                }
+            });
+        }
+
+        this.renderStoreSettings();
+    }
+
+    renderVIPTable(query = '') {
+        const tbody = document.getElementById('vip-table-body');
+        if (!tbody) return;
+
+        let customers = VIPCustomer.getAll();
+        if (query) {
+            customers = VIPCustomer.search(query);
+        }
+
+        const isAdmin = Auth.isAdmin();
+        tbody.innerHTML = '';
+
+        if (customers.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="6" class="empty-text">No se encontraron clientes VIP</td></tr>';
+            return;
+        }
+
+        customers.forEach(customer => {
+            const status = VIPCustomer.getCurrentStatus(customer);
+            const history = VIPCustomer.getRewardHistory(customer);
+            const rewardCount = history.filter(h => h.type === 'canje').length;
+            const row = document.createElement('tr');
+
+            let actionsHtml = '';
+            if (isAdmin) {
+                actionsHtml = `
+                    <td class="action-cell">
+                        <button class="btn btn-icon btn-sm" data-action="edit" data-id="${customer.id}" title="Editar cliente">
+                            ✎
+                        </button>
+                        <button class="btn btn-icon btn-sm" data-action="add-pieces" data-id="${customer.id}" title="Agregar piezas">
+                            +
+                        </button>
+                        <button class="btn btn-icon btn-sm ${customer.accumulatedPieces < VIPConfig.getPiecesForFreeJewel() ? 'hidden' : ''}" data-action="redeem" data-id="${customer.id}" title="Canjear joya gratis">
+                            🎁
+                        </button>
+                        <button class="btn btn-icon btn-sm" data-action="delete" data-id="${customer.id}" title="Eliminar cliente">
+                            ×
+                        </button>
+                    </td>
+                `;
+            } else {
+                actionsHtml = '<td></td>';
+            }
+
+            row.innerHTML = `
+                <td>${customer.name}</td>
+                <td>${customer.phone}</td>
+                <td>${customer.accumulatedPieces || 0}</td>
+                <td class="vip-history-cell">
+                    ${history.length > 0
+                        ? `<span class="vip-history-badge" data-id="${customer.id}">${history.length} registro(s)</span>`
+                        : '<span class="text-muted">Sin historial</span>'
+                    }
+                </td>
+                <td><span class="${status.className}">${status.text}</span></td>
+                ${actionsHtml}
+            `;
+            tbody.appendChild(row);
+        });
+
+        tbody.querySelectorAll('[data-action="edit"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = e.currentTarget.dataset.id;
+                this.showAddVIPModal(id);
+            });
+        });
+
+        tbody.querySelectorAll('[data-action="add-pieces"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = e.currentTarget.dataset.id;
+                this.showAddPiecesModal(id);
+            });
+        });
+
+        tbody.querySelectorAll('[data-action="redeem"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = e.currentTarget.dataset.id;
+                this.redeemVIPReward(id);
+            });
+        });
+
+        tbody.querySelectorAll('[data-action="delete"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = e.currentTarget.dataset.id;
+                this.deleteVIPCustomer(id);
+            });
+        });
+
+        tbody.querySelectorAll('.vip-history-badge').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = e.currentTarget.dataset.id;
+                this.showVIPHistoryModal(id);
+            });
+        });
+    }
+
+    showAddVIPModal(id = null) {
+        const customer = id ? VIPCustomer.findById(id) : null;
+        const isEdit = !!customer;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'payment-overlay';
+        overlay.innerHTML = `
+            <div class="payment-modal" style="max-width: 480px;">
+                <div class="payment-modal-header">
+                    <h3 class="payment-title">${isEdit ? 'Editar Cliente VIP' : 'Nuevo Cliente VIP'}</h3>
+                </div>
+                <form id="vip-form" class="vip-form">
+                    <div class="input-group">
+                        <input type="text" name="name" placeholder=" " required value="${customer ? this.escapeHtml(customer.name) : ''}">
+                        <label>Nombre Completo</label>
+                    </div>
+                    <div class="input-group">
+                        <input type="tel" name="phone" placeholder=" " required value="${customer ? this.escapeHtml(customer.phone) : ''}" ${isEdit ? 'readonly' : ''}>
+                        <label>Número de Teléfono</label>
+                    </div>
+                    <div class="input-group">
+                        <textarea name="notes" placeholder=" " rows="3" maxlength="500">${customer ? this.escapeHtml(customer.notes || '') : ''}</textarea>
+                        <label>Notas</label>
+                    </div>
+                    <div class="payment-actions" style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button type="button" class="btn btn-outline" id="vip-cancel-btn">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">${isEdit ? 'Guardar Cambios' : 'Guardar'}</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                document.body.removeChild(overlay);
+            }
+        });
+
+        overlay.querySelector('#vip-cancel-btn')?.addEventListener('click', () => {
+            document.body.removeChild(overlay);
+        });
+
+        overlay.querySelector('#vip-form')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const phone = formData.get('phone').trim();
+            const name = formData.get('name').trim();
+            const notes = formData.get('notes').trim();
+
+            if (!name || !phone) {
+                Toast.error('El nombre y teléfono son obligatorios');
+                return;
+            }
+
+            if (isEdit) {
+                const result = VIPCustomer.update(id, { name, phone, notes });
+                if (result.success) {
+                    Toast.success('Cliente VIP actualizado');
+                } else {
+                    Toast.error(result.error);
+                }
+            } else {
+                const result = VIPCustomer.add({ name, phone, notes });
+                if (result.success) {
+                    Toast.success('Cliente VIP agregado');
+                } else {
+                    Toast.error(result.error);
+                }
+            }
+
+            this.renderVIPTable();
+            if (typeof AutoBackup !== 'undefined') {
+                AutoBackup.save('cliente_vip');
+            }
+            if (typeof Backup !== 'undefined' && Backup.createLocalRecovery) {
+                Backup.createLocalRecovery('cliente_vip');
+            }
+            document.body.removeChild(overlay);
+        });
+    }
+
+    showAddPiecesModal(id) {
+        const customer = VIPCustomer.findById(id);
+        if (!customer) return;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'payment-overlay';
+        overlay.innerHTML = `
+            <div class="payment-modal" style="max-width: 420px;">
+                <div class="payment-modal-header">
+                    <h3 class="payment-title">Agregar Piezas - ${this.escapeHtml(customer.name)}</h3>
+                </div>
+                <div class="payment-info">
+                    <p>Piezas acumuladas actuales: <strong>${customer.accumulatedPieces || 0}</strong></p>
+                </div>
+                <form id="vip-pieces-form" class="vip-pieces-form">
+                    <div class="input-group">
+                        <input type="number" name="pieces" min="1" placeholder=" " required>
+                        <label>Número de Piezas a Agregar</label>
+                    </div>
+                    <div class="input-group">
+                        <textarea name="note" placeholder=" " rows="2" maxlength="200"></textarea>
+                        <label>Nota (opcional)</label>
+                    </div>
+                    <div class="payment-actions" style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button type="button" class="btn btn-outline" id="vip-pieces-cancel-btn">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Agregar</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                document.body.removeChild(overlay);
+            }
+        });
+
+        overlay.querySelector('#vip-pieces-cancel-btn')?.addEventListener('click', () => {
+            document.body.removeChild(overlay);
+        });
+
+        overlay.querySelector('#vip-pieces-form')?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const pieces = parseInt(formData.get('pieces'));
+            const note = formData.get('note').trim();
+
+            if (isNaN(pieces) || pieces <= 0) {
+                Toast.error('Ingresa un número válido de piezas');
+                return;
+            }
+
+            const result = VIPCustomer.addPieces(id, pieces, note);
+            if (result.success) {
+                Toast.success(`${pieces} pieza(s) agregadas al cliente ${customer.name}`);
+                this.renderVIPTable();
+            } else {
+                Toast.error(result.error);
+            }
+
+            if (typeof AutoBackup !== 'undefined') AutoBackup.save('piezas_vip');
+            if (typeof Backup !== 'undefined' && Backup.createLocalRecovery) {
+                Backup.createLocalRecovery('piezas_vip');
+            }
+            document.body.removeChild(overlay);
+        });
+    }
+
+    redeemVIPReward(id) {
+        const customer = VIPCustomer.findById(id);
+        if (!customer) return;
+
+        const threshold = VIPConfig.getPiecesForFreeJewel();
+        if (customer.accumulatedPieces < threshold) return;
+
+        if (!confirm(`¿Canjear Joya Gratis por ${customer.name}?\nSe descontarán ${threshold} piezas de ${customer.accumulatedPieces} acumuladas.`)) {
+            return;
+        }
+
+        const noteInput = prompt('Nota del canje (opcional):', '');
+        if (noteInput !== null) {
+            const result = VIPCustomer.redeemReward(id, noteInput || '');
+            if (result.success) {
+                Toast.success(`Joya Gratis canjeada - ${customer.name} | ${threshold} piezas descontadas`);
+                this.renderVIPTable();
+            } else {
+                Toast.error(result.error);
+            }
+
+            if (typeof AutoBackup !== 'undefined') AutoBackup.save('canje_vip');
+            if (typeof Backup !== 'undefined' && Backup.createLocalRecovery) {
+                Backup.createLocalRecovery('canje_vip');
+            }
+        }
+    }
+
+    deleteVIPCustomer(id) {
+        const customer = VIPCustomer.findById(id);
+        if (!customer) return;
+
+        if (!confirm(`¿Estás seguro de eliminar a ${customer.name}?\nSe perderán todos sus datos de fidelización.`)) {
+            return;
+        }
+
+        VIPCustomer.remove(id);
+        Toast.success('Cliente VIP eliminado');
+        this.renderVIPTable();
+
+        if (typeof AutoBackup !== 'undefined') AutoBackup.save('eliminacion_vip');
+        if (typeof Backup !== 'undefined' && Backup.createLocalRecovery) {
+            Backup.createLocalRecovery('eliminacion_vip');
+        }
+    }
+
+    showVIPHistoryModal(id) {
+        const customer = VIPCustomer.findById(id);
+        if (!customer) return;
+
+        const history = VIPCustomer.getRewardHistory(customer);
+
+        const overlay = document.createElement('div');
+        overlay.className = 'payment-overlay';
+        overlay.innerHTML = `
+            <div class="payment-modal" style="max-width: 560px;">
+                <div class="payment-modal-header">
+                    <h3 class="payment-title">Historial de Recompensas - ${this.escapeHtml(customer.name)}</h3>
+                </div>
+                <div class="payment-info">
+                    <p>Piezas acumuladas: <strong>${customer.accumulatedPieces || 0}</strong></p>
+                </div>
+                ${history.length === 0
+                    ? '<p class="empty-text">No hay historial de recompensas</p>'
+                    : `
+                    <table class="data-table" style="margin-top: 16px;">
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Tipo</th>
+                                <th>Piezas</th>
+                                <th>Detalle</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${history.map(h => `
+                                <tr>
+                                    <td>${new Date(h.date).toLocaleString('es-MX')}</td>
+                                    <td>${h.type === 'canje' ? 'Canje' : 'Acumulación'}</td>
+                                    <td style="${h.type === 'canje' ? 'color: var(--danger);' : 'color: var(--success);'}">${h.type === 'canje' ? `-${h.pieces}` : `+${h.pieces}`}</td>
+                                    <td>${this.escapeHtml(h.description)}${h.note ? ' • ' + this.escapeHtml(h.note) : ''}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    `
+                }
+                <div class="payment-actions" style="margin-top: 20px; display: flex; justify-content: flex-end;">
+                    <button type="button" class="btn btn-outline" id="vip-history-close-btn">Cerrar</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                document.body.removeChild(overlay);
+            }
+        });
+
+        overlay.querySelector('#vip-history-close-btn')?.addEventListener('click', () => {
+            document.body.removeChild(overlay);
+        });
+    }
+
+    escapeHtml(text) {
+        if (text == null) return '';
+        const div = document.createElement('div');
+        div.textContent = String(text);
+        return div.innerHTML;
+    }
+
+    // Renderizar la configuración VIP en el panel de admin
+    renderStoreSettings() {
+        const settings = Settings.getSettings();
+
+        const nameEl = document.getElementById('store-name-input');
+        if (nameEl) nameEl.value = Business.getStoreName();
+
+        const addressEl = document.getElementById('store-address-input');
+        if (addressEl) addressEl.value = settings.storeAddress || '';
+
+        const phoneEl = document.getElementById('store-phone-input');
+        if (phoneEl) phoneEl.value = settings.storePhone || '';
+
+        const rfcEl = document.getElementById('store-rfc-input');
+        if (rfcEl) rfcEl.value = settings.storeRfc || '';
+
+        const headerEl = document.getElementById('receipt-header-input');
+        if (headerEl) headerEl.value = settings.receiptHeader || 'Gracias por su compra';
+
+        const footerEl = document.getElementById('receipt-footer-input');
+        if (footerEl) footerEl.value = settings.receiptFooter || '¡Gracias por su compra!';
+
+        const stockEl = document.getElementById('low-stock-input');
+        if (stockEl) stockEl.value = settings.lowStockThreshold || 5;
+
+        const showCashierEl = document.getElementById('receipt-show-cashier');
+        if (showCashierEl) showCashierEl.checked = settings.receiptShowCashier !== false;
+
+        const showDateEl = document.getElementById('receipt-show-date');
+        if (showDateEl) showDateEl.checked = settings.receiptShowDate !== false;
+
+        const showPaymentMethodEl = document.getElementById('receipt-show-payment-method');
+        if (showPaymentMethodEl) showPaymentMethodEl.checked = settings.receiptShowPaymentMethod !== false;
+
+        const showPaymentDetailsEl = document.getElementById('receipt-show-payment-details');
+        if (showPaymentDetailsEl) showPaymentDetailsEl.checked = settings.receiptShowPaymentDetails !== false;
+
+        this.renderLogoPreview(settings.storeLogo);
+
+        // Renderizar configuración de EmailJS
+        const emailConfig = Backup.getEmailConfig();
+        const emailjsPubKey = document.getElementById('emailjs-public-key');
+        const emailjsServiceId = document.getElementById('emailjs-service-id');
+        const emailjsTemplateId = document.getElementById('emailjs-template-id');
+        const emailjsAutoSend = document.getElementById('emailjs-auto-send');
+        if (emailjsPubKey) emailjsPubKey.value = emailConfig?.publicKey || '';
+        if (emailjsServiceId) emailjsServiceId.value = emailConfig?.serviceId || '';
+        if (emailjsTemplateId) emailjsTemplateId.value = emailConfig?.templateId || '';
+        if (emailjsAutoSend) emailjsAutoSend.checked = true; // Envío es exclusivamente manual
+
+        // Renderizar configuración VIP
+        const vipPiecesInput = document.getElementById('vip-pieces-for-free-input');
+        if (vipPiecesInput) {
+            vipPiecesInput.value = VIPConfig.getPiecesForFreeJewel();
+        }
     }
 }
 
@@ -3965,6 +5635,11 @@ const app = new App();
 window.app = app;
 
 document.addEventListener('DOMContentLoaded', ErrorBoundary.wrap('app-init', () => {
+    // Migrar datos a la nueva namespace con device_id ANTES de cualquier
+    // acceso a localStorage. Si se llamara a loadFromStorage() antes,
+    // Inventory.init() / Settings.getSettings() crearían valores por
+    // defecto en la nueva clave, bloqueando la migración de datos existentes.
+    Business.migrateExistingData();
     app.loadFromStorage();
     app.init();
 }));

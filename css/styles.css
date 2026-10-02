@@ -156,6 +156,24 @@ body {
     box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.2);
 }
 
+.input-group textarea {
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--bg-input);
+    border: 1.5px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-size: 15px;
+    color: var(--text-primary);
+    transition: all 0.2s ease;
+    resize: vertical;
+}
+
+.input-group textarea:focus {
+    outline: none;
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.2);
+}
+
 .input-group label {
     position: absolute;
     left: 16px;
@@ -167,8 +185,15 @@ body {
     transition: all 0.2s ease;
 }
 
+.input-group textarea + label {
+    top: 12px;
+    transform: none;
+}
+
 .input-group input:focus + label,
-.input-group input:not(:placeholder-shown) + label {
+.input-group input:not(:placeholder-shown) + label,
+.input-group textarea:focus + label,
+.input-group textarea:not(:placeholder-shown) + label {
     top: -8px;
     font-size: 11px;
     font-weight: 600;
@@ -2310,6 +2335,381 @@ body {
 }
 
 /* ============================================================
+   CLIENTES VIP - Tabla de clientes fidelización
+   ============================================================ */
+
+.vip-toolbar {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.data-table-container {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    box-shadow: var(--shadow);
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.data-table th {
+    background: var(--bg-tertiary);
+    color: var(--gold);
+    padding: 14px 16px;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.2);
+}
+
+.data-table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.1);
+    font-size: 14px;
+    color: var(--text-primary);
+}
+
+.data-table tbody tr:hover {
+    background: rgba(212, 175, 55, 0.03);
+}
+
+.data-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.data-table td:first-child {
+    color: var(--text-primary);
+    font-weight: 500;
+}
+
+.action-header {
+    width: 120px;
+}
+
+/* Status Badge para VIP */
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.status-eligible {
+    color: var(--success);
+    background: rgba(39, 174, 96, 0.15);
+}
+
+.status-accumulating {
+    color: var(--text-secondary);
+    background: rgba(108, 117, 125, 0.15);
+}
+
+.vip-history-badge {
+    color: var(--gold-light);
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.vip-history-badge:hover {
+    text-decoration: underline;
+}
+
+/* VIP Payment Integration */
+.vip-payment-search {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(212, 175, 55, 0.03);
+}
+
+.vip-payment-search .input-group {
+    margin-bottom: 0;
+}
+
+.vip-info-badge {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(212, 175, 55, 0.08);
+}
+
+.vip-payment-info {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.vip-payment-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.vip-payment-pieces {
+    color: var(--gold-light);
+    font-size: 13px;
+}
+
+/* VIP History Modal */
+.vip-customer-summary {
+    margin-top: 12px;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+}
+
+.vip-summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 14px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.1);
+}
+
+.vip-summary-row:last-child {
+    border-bottom: none;
+}
+
+.vip-history-container {
+    margin-top: 16px;
+}
+
+.vip-history-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.1);
+    font-size: 13px;
+}
+
+.vip-history-row:last-child {
+    border-bottom: none;
+}
+
+.vip-history-date {
+    color: var(--text-secondary);
+    flex: 1;
+}
+
+.vip-history-desc {
+    color: var(--text-primary);
+    flex: 2;
+}
+
+.vip-history-pieces {
+    font-weight: 600;
+}
+
+/* ============================================================
+   VIP SALES PICKER — Campo autocompletable en pantalla de Caja
+   ============================================================ */
+
+.vip-sales-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 280px;
+    position: relative;
+}
+
+.vip-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.vip-sales-picker .vip-search-input {
+    flex: 1;
+    min-width: 160px;
+}
+
+.vip-search-input {
+    padding-right: 32px;
+}
+
+/* Dropdown de autocompletado */
+.vip-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    z-index: 1000;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow);
+    max-height: 240px;
+    overflow-y: auto;
+    margin-top: 4px;
+    display: none;
+}
+
+.vip-sales-picker .vip-dropdown {
+    max-width: calc(100% - 40px);
+}
+
+.payment-overlay .vip-dropdown {
+    max-width: calc(100% - 32px);
+}
+
+.vip-dropdown-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 10px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid rgba(212, 175, 55, 0.08);
+    transition: background 0.15s ease;
+}
+
+.vip-dropdown-item:hover {
+    background: rgba(212, 175, 55, 0.08);
+}
+
+.vip-dropdown-item.vip-dropdown-item-highlighted {
+    background: rgba(212, 175, 55, 0.15);
+    outline: 2px solid var(--gold);
+    outline-offset: -2px;
+}
+
+.vip-dropdown-item:last-child {
+    border-bottom: none;
+}
+
+.vip-dropdown-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 14px;
+}
+
+.vip-dropdown-phone {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.vip-dropdown-pieces {
+    color: var(--gold-light);
+    font-weight: 600;
+}
+
+.vip-dropdown-highlight {
+    background: rgba(212, 175, 55, 0.35);
+    border-radius: 2px;
+}
+
+.vip-dropdown .empty-text {
+    padding: 12px 14px;
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+/* Badge de cliente VIP seleccionado en caja */
+.vip-selected-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: rgba(212, 175, 55, 0.1);
+    border: 1px solid var(--gold);
+    border-radius: var(--radius-md);
+    font-size: 14px;
+}
+
+.vip-badge-name {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.vip-badge-phone {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.vip-badge-pieces {
+    color: var(--gold-light);
+    font-size: 13px;
+}
+
+/* Aviso destacado de recompensa (Alerta de Premio) */
+.reward-alert-highlight {
+    margin-top: 8px;
+    padding: 14px 18px;
+    background: linear-gradient(135deg, rgba(212, 175, 55, 0.2), rgba(212, 175, 55, 0.08));
+    border: 2px solid var(--gold);
+    border-radius: var(--radius-md);
+    box-shadow: 0 0 16px rgba(212, 175, 55, 0.4);
+    animation: pulse-gold 2s infinite;
+}
+
+@keyframes pulse-gold {
+    0%, 100% { box-shadow: 0 0 12px rgba(212, 175, 55, 0.35); }
+    50% { box-shadow: 0 0 24px rgba(212, 175, 55, 0.6); }
+}
+
+.reward-alert-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.reward-alert-icon {
+    font-size: 24px;
+    flex: 0 0 auto;
+}
+
+.reward-alert-text {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.reward-alert-text strong {
+    color: var(--gold);
+    font-size: 15px;
+}
+
+.reward-alert-text span {
+    color: var(--text-secondary);
+    font-size: 13px;
+}
+
+.reward-alert-actions {
+    display: flex;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+.btn-success {
+    background: var(--success);
+    color: var(--bg-primary);
+    border: 1px solid var(--success);
+}
+
+.btn-success:hover {
+    background: #32c869;
+    box-shadow: 0 0 8px rgba(39, 174, 96, 0.4);
+}
+
+.positive {
+    color: var(--success);
+}
+
+.negative {
+    color: var(--danger);
+}
+
+/* ============================================================
    TOAST NOTIFICATIONS
    Sustitución visual de window.alert() con notificaciones
    no bloqueantes que aparecen y desaparecen suavemente.
@@ -2920,3 +3320,10 @@ body {
     font-style: italic;
 }
 
+
+/* Botón de restauración en la pantalla de inicio de sesión */
+.login-restore {
+    display: flex;
+    justify-content: center;
+    margin-top: 1.25rem;
+}

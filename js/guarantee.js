@@ -12,22 +12,22 @@ class GuaranteeExchange {
 
     static getAll() {
         const stored = localStorage.getItem(this.storageKey);
-        return stored ? JSON.parse(stored) : [];
+        if (!stored) return [];
+        const parsed = SafeJSON.parse(stored, [], 'garantias');
+        if (!DataValidator.validateSimpleRecords(parsed) && !Array.isArray(parsed)) {
+            console.warn('[GuaranteeExchange] Formato inválido en garantías; se preserva el estado.');
+            return [];
+        }
+        return Array.isArray(parsed) ? parsed : [];
     }
 
     static save(exchanges) {
-        localStorage.setItem(this.storageKey, JSON.stringify(exchanges));
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(exchanges));
     }
 
     // --- Generar folio único de cambio por garantía ---
     static generateId() {
-        const date = new Date();
-        const dateStr = date.getFullYear().toString() +
-            (date.getMonth() + 1).toString().padStart(2, '0') +
-            date.getDate().toString().padStart(2, '0');
-        const all = this.getAll();
-        const seq = all.filter(r => r.id && r.id.startsWith(`GAR-${dateStr}-`)).length + 1;
-        return `GAR-${dateStr}-${seq.toString().padStart(4, '0')}`;
+        return Folio.next('GAR', this.getAll());
     }
 
     // Guardar un intercambio por garantía
@@ -49,8 +49,8 @@ class GuaranteeExchange {
     }
 
     // Obtener intercambios por fecha (día calendario)
-    static getByDate(date = new Date().toISOString().split('T')[0]) {
-        return this.getAll().filter(r => r.date.startsWith(date));
+    static getByDate(date = DateUtil.today()) {
+        return this.getAll().filter(r => DateUtil.isOnDate(r.date, date));
     }
 
     static getById(id) {

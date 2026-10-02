@@ -18,23 +18,22 @@ class Returns {
 
     static getAll() {
         const stored = localStorage.getItem(this.storageKey);
-        return stored ? JSON.parse(stored) : [];
+        if (!stored) return [];
+        const parsed = SafeJSON.parse(stored, [], 'devoluciones');
+        if (!DataValidator.validateSimpleRecords(parsed) && !Array.isArray(parsed)) {
+            console.warn('[Returns] Formato inválido en devoluciones; se preserva el estado.');
+            return [];
+        }
+        return Array.isArray(parsed) ? parsed : [];
     }
 
     static save(returns) {
-        localStorage.setItem(this.storageKey, JSON.stringify(returns));
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(returns));
     }
 
     // --- Generar folio de devolución único ---
     static generateReturnId() {
-        const date = new Date();
-        const dateStr = date.getFullYear().toString() +
-            (date.getMonth() + 1).toString().padStart(2, '0') +
-            date.getDate().toString().padStart(2, '0');
-        const all = this.getAll();
-        const seq = all.filter(r => r.id && r.id.startsWith(`RET-${dateStr}-`))
-            .length + 1;
-        return `RET-${dateStr}-${seq.toString().padStart(4, '0')}`;
+        return Folio.next('RET', this.getAll());
     }
 
     // Guardar una devolución
@@ -54,12 +53,12 @@ class Returns {
     }
 
     // Obtener devoluciones por fecha (día calendario)
-    static getByDate(date = new Date().toISOString().split('T')[0]) {
-        return this.getAll().filter(r => r.date.startsWith(date));
+    static getByDate(date = DateUtil.today()) {
+        return this.getAll().filter(r => DateUtil.isOnDate(r.date, date));
     }
 
     // Obtener el total devuelto para una fecha, separado por método de pago
-    static getAdjustmentByDate(date = new Date().toISOString().split('T')[0], paymentMethod = null) {
+    static getAdjustmentByDate(date = DateUtil.today(), paymentMethod = null) {
         const returns = this.getByDate(date);
         let cashTotal = 0;
         let cardTotal = 0;
@@ -105,20 +104,21 @@ class CashAdjustment {
 
     static getAll() {
         const stored = localStorage.getItem(this.storageKey);
-        return stored ? JSON.parse(stored) : [];
+        if (!stored) return [];
+        const parsed = SafeJSON.parse(stored, [], 'ajustes_caja');
+        if (!DataValidator.validateSimpleRecords(parsed) && !Array.isArray(parsed)) {
+            console.warn('[CashAdjustment] Formato inválido en ajustes; se preserva el estado.');
+            return [];
+        }
+        return Array.isArray(parsed) ? parsed : [];
     }
 
     static save(adjustments) {
-        localStorage.setItem(this.storageKey, JSON.stringify(adjustments));
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(adjustments));
     }
 
     static generateAdjustmentId() {
-        const date = new Date();
-        const dateStr = date.getFullYear().toString() +
-            (date.getMonth() + 1).toString().padStart(2, '0') +
-            date.getDate().toString().padStart(2, '0');
-        const count = this.getAll().filter(a => a.id && a.id.startsWith(`ADJ-${dateStr}-`)).length + 1;
-        return `ADJ-${dateStr}-${count.toString().padStart(4, '0')}`;
+        return Folio.next('ADJ', this.getAll());
     }
 
     // Agregar un ajuste de caja
@@ -143,12 +143,12 @@ class CashAdjustment {
     }
 
     // Obtener ajustes por fecha
-    static getByDate(date = new Date().toISOString().split('T')[0]) {
-        return this.getAll().filter(a => a.date.startsWith(date));
+    static getByDate(date = DateUtil.today()) {
+        return this.getAll().filter(a => DateUtil.isOnDate(a.date, date));
     }
 
     // Calcular total de ajustes para una fecha y método de pago
-    static getTotal(date = new Date().toISOString().split('T')[0], paymentMethod = null) {
+    static getTotal(date = DateUtil.today(), paymentMethod = null) {
         const adjustments = this.getByDate(date);
         const data = { cash: 0, card: 0, total: 0 };
 

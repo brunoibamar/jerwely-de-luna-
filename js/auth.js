@@ -90,8 +90,17 @@ class Auth {
     static init() {
         const stored = localStorage.getItem(this.current_userKey);
         if (stored) {
-            this.currentUser = JSON.parse(stored);
-            return true;
+            const parsed = SafeJSON.parse(stored, null, 'usuario_actual');
+            if (parsed && DataValidator.validateUser(parsed)) {
+                this.currentUser = parsed;
+                return true;
+            }
+            if (parsed !== null) {
+                localStorage.removeItem(this.current_userKey);
+                if (typeof Toast !== 'undefined' && Toast.warning) {
+                    Toast.warning('Sesión inválida. Inicie sesión nuevamente.', 5000);
+                }
+            }
         }
         return false;
     }
@@ -110,7 +119,7 @@ class Auth {
                 email: this.adminProfile.email,
                 securityQuestion: this.adminProfile.securityQuestion
             };
-            localStorage.setItem(this.current_userKey, JSON.stringify(this.currentUser));
+            localStorage.setItem(this.current_userKey, SafeJSON.stringify(this.currentUser));
             return { success: true, user: this.currentUser };
         }
         return { success: false, error: 'Credenciales incorrectas' };
@@ -126,7 +135,7 @@ class Auth {
             email: null,
             securityQuestion: null
         };
-        localStorage.setItem(this.current_userKey, JSON.stringify(this.currentUser));
+        localStorage.setItem(this.current_userKey, SafeJSON.stringify(this.currentUser));
         return { success: true, user: this.currentUser };
     }
 
@@ -206,7 +215,7 @@ class Auth {
                 email: user.email,
                 securityQuestion: user.securityQuestion
             };
-            localStorage.setItem(this.current_userKey, JSON.stringify(this.currentUser));
+            localStorage.setItem(this.current_userKey, SafeJSON.stringify(this.currentUser));
             return { success: true, user: this.currentUser };
         }
         return { success: false, error: 'Respuesta incorrecta' };
@@ -458,6 +467,7 @@ class License {
             store: Business.getStoreName(),
             businessName: Business.getBusinessName(),
             businessId: Business.getCurrentBusinessId(),
+            deviceId: Device.getId(),
             license: {
                 expiration: localStorage.getItem(this.storageKeys.expiration),
                 lastUsage: localStorage.getItem(this.storageKeys.lastUsage),
@@ -470,6 +480,10 @@ class License {
             },
             inventory: localStorage.getItem(Inventory.storageKey),
             sales: localStorage.getItem(SaleService.storageKey),
+            historicalSales: typeof SaleService.historicalKey !== 'undefined'
+                ? localStorage.getItem(SaleService.historicalKey)
+                : null,
+            shiftClosures: localStorage.getItem(Business.key('pos_shift_closures')),
             settings: localStorage.getItem(Settings.storageKey),
             shift: localStorage.getItem(Business.key('pos_shift_opened')),
             shiftSession: localStorage.getItem(Cut.storageKey),
@@ -477,6 +491,8 @@ class License {
                 heldSales: localStorage.getItem(HeldSales.storageKey),
                 returns: localStorage.getItem(Returns.storageKey),
                 cashAdjustments: localStorage.getItem(CashAdjustment.storageKey),
+                vipCustomers: localStorage.getItem(VIPCustomer.storageKey),
+                vipConfig: localStorage.getItem(VIPConfig.storageKey),
                 reportHistory: localStorage.getItem(Backup.reportHistoryKey),
             backup: localStorage.getItem(Backup.backupKey),
             emailConfig: localStorage.getItem(Backup.emailConfigKey),
@@ -487,7 +503,7 @@ class License {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `jewerly-de-luna-respalado-${new Date().toISOString().split('T')[0]}.json`;
+        a.download = `jewerly-de-luna-respalado-${DateUtil.today()}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
