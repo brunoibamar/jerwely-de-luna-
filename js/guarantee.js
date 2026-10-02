@@ -12,11 +12,17 @@ class GuaranteeExchange {
 
     static getAll() {
         const stored = localStorage.getItem(this.storageKey);
-        return stored ? JSON.parse(stored) : [];
+        if (!stored) return [];
+        const parsed = SafeJSON.parse(stored, [], 'garantias');
+        if (!DataValidator.validateSimpleRecords(parsed) && !Array.isArray(parsed)) {
+            console.warn('[GuaranteeExchange] Formato inválido en garantías; se preserva el estado.');
+            return [];
+        }
+        return Array.isArray(parsed) ? parsed : [];
     }
 
     static save(exchanges) {
-        SafeStorage.setItem(this.storageKey, JSON.stringify(exchanges));
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(exchanges));
     }
 
     // --- Generar folio único de cambio por garantía ---

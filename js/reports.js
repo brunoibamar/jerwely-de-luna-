@@ -29,8 +29,78 @@ class ReportService {
 
     static getDailySales(date = null) {
         const target = this.getDailyDate(date);
-        const allSales = SaleService.getAll();
-        return allSales.filter(s => DateUtil.isOnDate(s.date, target));
+        const allSales = this.getHistoricalSales();
+        return allSales.filter(s =>
+            DateUtil.isOnDate(s.date, target) && s.status !== 'canceled'
+        );
+    }
+
+    // ============================================================
+    //  LECTURA DESDE EL HISTORIAL MAESTRO (ventas_historico)
+    //  Garantiza datos ininterrumpidos para reportes diarios,
+    //  semanales, mensuales y anuales. El Corte de Caja nunca
+    //  borra este historial maestro.
+    // ============================================================
+
+    // Todas las ventas del historial maestro (incluye canceladas)
+    static getHistoricalSales() {
+        if (typeof SaleService !== 'undefined' && SaleService.getHistoricalSales) {
+            return SaleService.getHistoricalSales();
+        }
+        const stored = localStorage.getItem(Business.key('pos_sales_historical'));
+        if (!stored) return [];
+        const parsed = SafeJSON.parse(stored, [], 'ventas_historico');
+        return Array.isArray(parsed) ? parsed : [];
+    }
+
+    // Ventas del día desde el historial maestro (filtra canceladas)
+    static getHistoricalDailySales(date = null) {
+        const target = this.getDailyDate(date);
+        return this.getHistoricalSales().filter(s =>
+            DateUtil.isOnDate(s.date, target) && s.status !== 'canceled'
+        );
+    }
+
+    // Ventas de un rango de fechas desde el historial maestro
+    static getHistoricalSalesByRange(fromDate, toDate) {
+        const from = new Date(fromDate).getTime();
+        const to = new Date(toDate).getTime();
+        return this.getHistoricalSales().filter(s => {
+            const t = new Date(s.date).getTime();
+            return t >= from && t <= to && s.status !== 'canceled';
+        });
+    }
+
+    // Ventas de la semana (lunes → domingo) desde el historial maestro
+    static getWeeklySales(weekStart = null) {
+        const d = weekStart ? new Date(weekStart) : new Date();
+        const day = d.getDay();
+        const monday = new Date(d);
+        monday.setDate(d.getDate() - ((day + 6) % 7));
+        monday.setHours(0, 0, 0, 0);
+        const sunday = new Date(monday);
+        sunday.setDate(monday.getDate() + 6);
+        sunday.setHours(23, 59, 59, 999);
+        return this.getHistoricalSalesByRange(monday.toISOString(), sunday.toISOString());
+    }
+
+    // Ventas del mes desde el historial maestro
+    static getMonthlySales(month = null, year = null) {
+        const now = new Date();
+        const m = month || now.getMonth() + 1;
+        const y = year || now.getFullYear();
+        return this.getHistoricalSales().filter(s => {
+            const d = new Date(s.date);
+            return d.getMonth() === m - 1 && d.getFullYear() === y && s.status !== 'canceled';
+        });
+    }
+
+    // Ventas del año desde el historial maestro
+    static getYearlySales(year = new Date().getFullYear()) {
+        return this.getHistoricalSales().filter(s => {
+            const d = new Date(s.date);
+            return d.getFullYear() === year && s.status !== 'canceled';
+        });
     }
 
     // ============================================================
@@ -446,13 +516,14 @@ class ReportService {
             });
             const typeLabel = a.type === 'return' ? 'Devolución'
                 : a.type === 'cancel' ? 'Anulación'
+                : a.type === 'expense' ? 'Retiro para Depósito'
                 : 'Ajuste';
             const sign = a.amount < 0 ? '-' : '+';
             const absAmount = Math.abs(a.amount);
             const amountClass = a.amount < 0 ? 'color: var(--danger)' : 'color: var(--success)';
             html += `
                 <div class="adjustment-row">
-                    <span>${typeLabel} • ${time} • ${a.description}</span>
+                    <span>${typeLabel} • ${time} • ${a.note || 'Sin nota'}</span>
                     <span class="adjustment-value" style="${amountClass}">${sign}${fmt(absAmount)}</span>
                 </div>
             `;

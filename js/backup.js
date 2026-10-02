@@ -428,6 +428,78 @@ class Backup {
     }
 
     // ============================================================
+    //  RESPALDO DE RECUPERACIÓN LOCAL (capa 1)
+    //  Snapshot silencioso en localStorage para recuperación rápida
+    //  después de una caída. Contiene el estado crítico del POS.
+    // ============================================================
+
+    static get localRecoveryKey() { return Business.key('pos_local_recovery'); }
+
+    // Consultar el estado del snapshot de recuperación local en LocalStorage.
+    // Devuelve null si no existe o está corrupto.
+    static getLocalRecoveryInfo() {
+        const stored = localStorage.getItem(this.localRecoveryKey);
+        if (!stored) return null;
+        const data = SafeJSON.parse(stored, null, 'local_recovery');
+        if (!data || !data.savedAt) return null;
+        return {
+            savedAt: data.savedAt,
+            reason: data.reason || 'manual'
+        };
+    }
+
+    // Crear un snapshot de recuperación local con los datos críticos.
+    // No lanza excepciones: un fallo del respaldo no debe bloquear la caja.
+    static createLocalRecovery(reason = 'manual') {
+        try {
+            const data = {
+                savedAt: new Date().toISOString(),
+                reason: reason,
+                inventory: Inventory.getAll(),
+                sales: SaleService.getAll(true),
+                settings: Settings.getSettings(),
+                heldSales: HeldSales.getAll(),
+                returns: Returns.getAll(),
+                cashAdjustments: CashAdjustment.getAll(),
+                guaranteeExchanges: GuaranteeExchange.getAll(),
+                shiftSession: localStorage.getItem(Cut.storageKey),
+                shiftHistory: localStorage.getItem(Cut.shiftHistoryKey)
+            };
+            SafeStorage.setItem(this.localRecoveryKey, SafeJSON.stringify(data));
+            return { savedAt: data.savedAt, reason: data.reason };
+        } catch (err) {
+            console.warn('[Backup] No se pudo crear el snapshot de recuperación local:', err?.message);
+            return null;
+        }
+    }
+
+    // Restaurar datos desde el snapshot de recuperación local.
+    // Nunca borra datos: fusiona el estado guardado sobre el actual.
+    static restoreLocalRecovery() {
+        const stored = localStorage.getItem(this.localRecoveryKey);
+        if (!stored) return { success: false, error: 'No hay snapshot de recuperación local disponible' };
+
+        const data = SafeJSON.parse(stored, null, 'local_recovery');
+        if (!data) return { success: false, error: 'El snapshot de recuperación local está corrupto' };
+
+        try {
+            if (data.inventory) Inventory.saveProducts(data.inventory);
+            if (data.sales) SaleService.save(data.sales);
+            if (data.settings) Settings.saveSettings(data.settings);
+            if (data.heldSales) SafeStorage.setItem(HeldSales.storageKey, SafeJSON.stringify(data.heldSales));
+            if (data.returns) SafeStorage.setItem(Returns.storageKey, SafeJSON.stringify(data.returns));
+            if (data.cashAdjustments) SafeStorage.setItem(CashAdjustment.storageKey, SafeJSON.stringify(data.cashAdjustments));
+            if (data.guaranteeExchanges) SafeStorage.setItem(GuaranteeExchange.storageKey, SafeJSON.stringify(data.guaranteeExchanges));
+            if (data.shiftSession) localStorage.setItem(Cut.storageKey, data.shiftSession);
+            if (data.shiftHistory) localStorage.setItem(Cut.shiftHistoryKey, JSON.stringify(data.shiftHistory));
+
+            return { success: true, message: 'Datos restaurados desde el snapshot local de recuperación' };
+        } catch (err) {
+            return { success: false, error: 'Error al restaurar el snapshot: ' + (err?.message || err) };
+        }
+    }
+
+    // ============================================================
     //  REPORTES POR CORREO
     // ============================================================
 
@@ -895,8 +967,20 @@ class Backup {
             }
             if (report.adjustmentCount > 0) {
                 text += `\n--- Ajustes de Caja ---\n`;
-                text += `Devoluciones / Anulaciones: -$${fmt(Math.abs(report.cashAdjustments + report.cardAdjustments))}\n`;
+                text += `Total Ajustes: -$${fmt(Math.abs(report.totalAdjustments || 0))}\n`;
                 text += `Cantidad de Ajustes: ${report.adjustmentCount}\n`;
+                if (typeof CashAdjustment !== 'undefined' && report.date) {
+                    const adjustments = CashAdjustment.getByDate(report.date);
+                    adjustments.forEach(a => {
+                        const aTypeLabel = a.type === 'return' ? 'Devolución'
+                            : a.type === 'cancel' ? 'Anulación'
+                            : a.type === 'expense' ? 'Retiro para Depósito'
+                            : 'Ajuste';
+                        const aSign = a.amount < 0 ? '-' : '+';
+                        const aTime = new Date(a.date).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+                        text += `${aTypeLabel} • ${aTime} • ${a.note || 'Sin nota'} • ${aSign}$${fmt(Math.abs(a.amount))}\n`;
+                    });
+                }
             }
             if (report.items && report.items.length > 0) {
                 text += `\n--- Detalle de Transacciones ---\n`;
@@ -930,8 +1014,20 @@ class Backup {
             }
             if (report.adjustmentCount > 0) {
                 text += `\n--- Ajustes de Caja ---\n`;
-                text += `Devoluciones / Anulaciones: -$${fmt(Math.abs(report.cashAdjustments + report.cardAdjustments))}\n`;
+                text += `Total Ajustes: -$${fmt(Math.abs(report.totalAdjustments || 0))}\n`;
                 text += `Cantidad de Ajustes: ${report.adjustmentCount}\n`;
+                if (typeof CashAdjustment !== 'undefined' && report.date) {
+                    const adjustments = CashAdjustment.getByDate(report.date);
+                    adjustments.forEach(a => {
+                        const aTypeLabel = a.type === 'return' ? 'Devolución'
+                            : a.type === 'cancel' ? 'Anulación'
+                            : a.type === 'expense' ? 'Retiro para Depósito'
+                            : 'Ajuste';
+                        const aSign = a.amount < 0 ? '-' : '+';
+                        const aTime = new Date(a.date).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+                        text += `${aTypeLabel} • ${aTime} • ${a.note || 'Sin nota'} • ${aSign}$${fmt(Math.abs(a.amount))}\n`;
+                    });
+                }
             }
             if (report.items && report.items.length > 0) {
                 text += `\n--- Detalle de Transacciones ---\n`;
@@ -1124,6 +1220,89 @@ class Backup {
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
         return { success: true, message: 'Registro del turno guardado localmente' };
+    }
+
+    // ============================================================
+    //  RESPALDO PROGRAMADO (capa 2: intervalo cada 1 hora)
+    // ============================================================
+
+    static get intervalBackupKey() { return Business.key('pos_interval_backup_last'); }
+
+    // Consultar el estado del respaldo programado (última ejecución y próxima).
+    static getIntervalBackupInfo() {
+        const stored = localStorage.getItem(this.intervalBackupKey);
+        if (!stored) return null;
+        const data = SafeJSON.parse(stored, null, 'interval_backup');
+        if (!data || !data.lastRun) return null;
+        try {
+            const lastRun = new Date(data.lastRun);
+            const nextRun = new Date(lastRun.getTime() + 60 * 60 * 1000);
+            return {
+                lastRun: lastRun.toISOString(),
+                nextRun: nextRun.toISOString()
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    // Iniciar el temporizador de respaldo programado (cada 1 hora).
+    static startIntervalBackup() {
+        try {
+            if (typeof setInterval !== 'undefined') {
+                setInterval(() => {
+                    try { this.runScheduledBackup(); } catch (err) {
+                        console.warn('[Backup] Error en respaldo programado:', err?.message);
+                    }
+                }, 60 * 60 * 1000);
+            }
+        } catch (err) {
+            console.warn('[Backup] No se pudo iniciar el respaldo programado:', err?.message);
+        }
+    }
+
+    // Ejecutar un respaldo programado: exportar a localStorage + crear snapshot local.
+    static runScheduledBackup() {
+        try {
+            this.exportToLocalStorage();
+            const now = new Date().toISOString();
+            SafeStorage.setItem(this.intervalBackupKey, JSON.stringify({ lastRun: now }));
+            this.createLocalRecovery('programado');
+        } catch (err) {
+            console.warn('[Backup] Error al ejecutar respaldo programado:', err?.message);
+        }
+    }
+
+    // Descargar un respaldo JSON con el estado completo del sistema + reporte de corte.
+    static downloadCutBackup(report) {
+        try {
+            const data = {
+                version: '1.2',
+                type: 'cut_backup',
+                timestamp: new Date().toISOString(),
+                store: Business.getStoreName(),
+                businessName: Business.getBusinessName(),
+                businessId: Business.getCurrentBusinessId(),
+                inventory: Inventory.getAll(),
+                sales: SaleService.getAll(true),
+                report: report
+            };
+            const backupStr = JSON.stringify(data, null, 2);
+            const blob = new Blob([backupStr], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `respaldo_pos_${this.formatDateStamp()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            return { success: true, message: 'Respalado de corte descargado correctamente' };
+        } catch (err) {
+            return { success: false, error: 'Error al descargar el respaldo: ' + (err?.message || err) };
+        }
     }
 }
 

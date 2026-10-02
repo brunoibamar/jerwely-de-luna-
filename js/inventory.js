@@ -24,23 +24,33 @@ class Inventory {
     static getAll() {
         const stored = localStorage.getItem(this.storageKey);
         if (!stored) return [];
-        try {
-            const parsed = JSON.parse(stored);
-            if (!Array.isArray(parsed)) return [];
-            // Migrar flag legado volumePricing -> aplicaPromocion (BD previa)
-            return parsed.map(p => {
-                if (p && typeof p.aplicaPromocion === 'undefined' && typeof p.volumePricing !== 'undefined') {
-                    p.aplicaPromocion = p.volumePricing === true;
+        const parsed = SafeJSON.parse(stored, [], 'inventario');
+        if (!DataValidator.validateInventory(parsed)) {
+            console.warn('[Inventory] Esquema de inventario inválido detectado; preservando datos y migrando...');
+            if (Array.isArray(parsed)) {
+                const migrated = parsed.map(p => {
+                    if (p && typeof p.aplicaPromocion === 'undefined' && typeof p.volumePricing !== 'undefined') {
+                        p.aplicaPromocion = p.volumePricing === true;
+                    }
+                    return p;
+                }).filter(p => p && typeof p.barcode === 'string');
+                if (migrated.length > 0) {
+                    this.saveProducts(migrated);
+                    return migrated;
                 }
-                return p;
-            });
-        } catch {
+            }
             return [];
         }
+        return parsed.map(p => {
+            if (p && typeof p.aplicaPromocion === 'undefined' && typeof p.volumePricing !== 'undefined') {
+                p.aplicaPromocion = p.volumePricing === true;
+            }
+            return p;
+        });
     }
 
     static saveProducts(products) {
-        SafeStorage.setItem(this.storageKey, JSON.stringify(products));
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(products));
     }
 
     static findByBarcode(barcode) {

@@ -18,11 +18,17 @@ class Returns {
 
     static getAll() {
         const stored = localStorage.getItem(this.storageKey);
-        return stored ? JSON.parse(stored) : [];
+        if (!stored) return [];
+        const parsed = SafeJSON.parse(stored, [], 'devoluciones');
+        if (!DataValidator.validateSimpleRecords(parsed) && !Array.isArray(parsed)) {
+            console.warn('[Returns] Formato inválido en devoluciones; se preserva el estado.');
+            return [];
+        }
+        return Array.isArray(parsed) ? parsed : [];
     }
 
     static save(returns) {
-        SafeStorage.setItem(this.storageKey, JSON.stringify(returns));
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(returns));
     }
 
     // --- Generar folio de devolución único ---
@@ -98,11 +104,17 @@ class CashAdjustment {
 
     static getAll() {
         const stored = localStorage.getItem(this.storageKey);
-        return stored ? JSON.parse(stored) : [];
+        if (!stored) return [];
+        const parsed = SafeJSON.parse(stored, [], 'ajustes_caja');
+        if (!DataValidator.validateSimpleRecords(parsed) && !Array.isArray(parsed)) {
+            console.warn('[CashAdjustment] Formato inválido en ajustes; se preserva el estado.');
+            return [];
+        }
+        return Array.isArray(parsed) ? parsed : [];
     }
 
     static save(adjustments) {
-        SafeStorage.setItem(this.storageKey, JSON.stringify(adjustments));
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(adjustments));
     }
 
     static generateAdjustmentId() {

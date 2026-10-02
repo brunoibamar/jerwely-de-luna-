@@ -33,21 +33,16 @@ class VolumePricing {
             this.saveTiers(this.defaultTiers);
             return [...this.defaultTiers];
         }
-        try {
-            const parsed = JSON.parse(stored);
-            if (!Array.isArray(parsed) || parsed.length === 0) {
-                this.saveTiers(this.defaultTiers);
-                return [...this.defaultTiers];
-            }
-            return parsed;
-        } catch {
+        const parsed = SafeJSON.parse(stored, null, 'volumen_precios');
+        if (parsed === null || !DataValidator.validateVolumeTiers(parsed) || parsed.length === 0) {
             this.saveTiers(this.defaultTiers);
             return [...this.defaultTiers];
         }
+        return parsed;
     }
 
     static saveTiers(tiers) {
-        localStorage.setItem(this.storageKey, JSON.stringify(tiers));
+        localStorage.setItem(this.storageKey, SafeJSON.stringify(tiers));
     }
 
     // Obtener el precio unitario según la cantidad
@@ -118,11 +113,17 @@ class HeldSales {
 
     static getAll() {
         const stored = localStorage.getItem(this.storageKey);
-        return stored ? JSON.parse(stored) : [];
+        if (!stored) return [];
+        const parsed = SafeJSON.parse(stored, [], 'ventas_pausadas');
+        if (!DataValidator.validateHeldSales(parsed)) {
+            console.warn('[HeldSales] Formato inválido en ventas pausadas; se preserva el estado.');
+            return [];
+        }
+        return parsed;
     }
 
     static save(heldSales) {
-        SafeStorage.setItem(this.storageKey, JSON.stringify(heldSales));
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(heldSales));
     }
 
     // Guardar la venta actual como "en espera"
@@ -219,7 +220,7 @@ class BarcodeScanner {
             if (tag === 'input' && id === 'barcode-input') return;
 
             // No interceptar cuando se escribe en campos de búsqueda
-            if (tag === 'input' && ['product-search', 'inventory-search'].includes(id)) return;
+            if (tag === 'input' && ['inventory-search', 'vip-search-input'].includes(id)) return;
 
             // Acumular pulsaciones rápidas (características de un escáner HID)
             const now = Date.now();
@@ -269,12 +270,14 @@ class BarcodeScanner {
                 const salesSection = document.getElementById('sales-section');
                 if (salesSection && salesSection.classList.contains('active')) {
                     // No re-enfocar si el usuario está editando otro campo en la tabla
+                    // o usando el buscador de Clientes VIP
                     const activeEl = document.activeElement;
                     const isEditingCart = activeEl && (
                         activeEl.classList.contains('price-input') ||
                         activeEl.classList.contains('qty-input')
                     );
-                    if (!isEditingCart) {
+                    const isVipSearch = activeEl && activeEl.id === 'vip-search-input';
+                    if (!isEditingCart && !isVipSearch) {
                         barcodeInput.focus();
                     }
                 }

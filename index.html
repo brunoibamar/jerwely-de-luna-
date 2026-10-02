@@ -38,6 +38,7 @@
             </div>
             <div class="login-restore">
                 <button type="button" id="login-restore-btn" class="btn btn-outline btn-sm">¿Se perdió la información? Restaurar respaldo</button>
+                <p id="login-local-recovery-hint" class="volume-help-text-small hidden"></p>
             </div>
         </div>
 
@@ -228,7 +229,7 @@
                 <button id="returns-btn" class="btn btn-outline admin-only">Devoluciones</button>
                 <button id="cancel-sale-btn" class="btn btn-outline admin-only">Anular Venta</button>
                 <button id="guarantee-btn" class="btn btn-outline admin-only">Cambio por Garantía</button>
-                <button id="expenses-btn" class="btn btn-outline admin-only">Gastos</button>
+                <button id="withdrawal-btn" class="btn btn-outline admin-only">Retiro para Depósito</button>
                 <button id="logout-btn" class="btn btn-outline">Salir</button>
             </div>
         </header>
@@ -238,6 +239,7 @@
                 <nav class="nav-menu">
                     <a href="#" class="nav-item active" data-section="sales"> Ventas</a>
                     <a href="#" class="nav-item admin-only" data-section="inventory">Inventario</a>
+                    <a href="#" class="nav-item" data-section="vip">Clientes VIP</a>
                     <a href="#" class="nav-item guest-allowed" data-section="reports">Reportes</a>
                     <a href="#" class="nav-item admin-only" data-section="settings">Configuración</a>
                 </nav>
@@ -247,9 +249,39 @@
                 <section id="sales-section" class="section active">
                     <div class="sales-toolbar">
                         <div class="search-bar">
-                            <input type="text" id="barcode-input" placeholder="Escanea o busca producto..." class="search-input">
-                            <input type="text" id="product-search" placeholder="Buscar por descripción..." class="search-input">
+                             <input type="text" id="barcode-input" placeholder="Escanea o busca producto..." class="search-input">
                         </div>
+
+                        <!-- Buscador / Picker de Cliente VIP en Caja -->
+                        <div class="vip-sales-picker">
+                            <div class="vip-picker-row">
+                                <input type="text" id="vip-search-input" placeholder="Cliente VIP..." class="search-input vip-search-input" autocomplete="off">
+                                <button id="add-vip-quick-btn" class="btn btn-outline btn-sm admin-only" title="Registrar nuevo cliente VIP rápidamente">
+                                    + Nuevo VIP
+                                </button>
+                            </div>
+                            <div id="vip-search-dropdown" class="vip-dropdown hidden"></div>
+                            <div id="vip-selected-badge" class="vip-selected-badge hidden">
+                                <span class="vip-badge-name" id="vip-badge-name"></span>
+                                <span class="vip-badge-phone" id="vip-badge-phone"></span>
+                                <span class="vip-badge-pieces" id="vip-badge-pieces"></span>
+                                <button type="button" id="vip-clear-sales-btn" class="btn btn-icon btn-sm" title="Quitar cliente VIP">×</button>
+                            </div>
+                            <div id="vip-reward-alert" class="reward-alert-highlight hidden">
+                                <div class="reward-alert-content">
+                                    <span class="reward-alert-icon">🎁</span>
+                                    <div class="reward-alert-text">
+                                        <strong>¡Cliente elegible para Joya Gratis!</strong>
+                                        <span id="reward-alert-customer"></span>
+                                    </div>
+                                    <div class="reward-alert-actions">
+                                        <button type="button" id="reward-redeem-btn" class="btn btn-success btn-sm">Canjear</button>
+                                        <button type="button" id="reward-dismiss-btn" class="btn btn-sm btn-outline">Cerrar</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="toolbar-actions">
                             <button id="add-product-btn" class="btn btn-outline">Agregar</button>
                             <!-- Botones de pausa y recuperación de ventas -->
@@ -317,8 +349,18 @@
                             </div>
                         </div>
 
-                        <!-- Selector de método de pago -->
-                        <div class="payment-method-selector">
+                         <!-- Búsqueda de Cliente VIP -->
+                         <div class="vip-payment-search" style="position: relative;">
+                             <div class="input-group">
+                                 <input type="text" id="vip-phone-input" placeholder=" " autocomplete="off">
+                                 <label for="vip-phone-input">Buscar Cliente VIP (teléfono o nombre)</label>
+                             </div>
+                             <div id="vip-payment-dropdown" class="vip-dropdown hidden"></div>
+                             <div id="vip-info" class="vip-info-badge hidden"></div>
+                         </div>
+
+                         <!-- Selector de método de pago -->
+                         <div class="payment-method-selector">
                             <button type="button" class="payment-method-btn active" data-method="cash">
                                 <span class="method-icon">💵</span> Efectivo
                             </button>
@@ -588,12 +630,59 @@
                     </div>
                 </div>
 
+                <!-- Modal: Retiro para Depósito -->
+                <div id="withdrawal-overlay" class="modal-overlay hidden">
+                    <div class="modal" style="max-width: 480px;">
+                        <h3 class="modal-title">Retiro para Depósito</h3>
+                        <p class="returns-help-text">
+                            Retira efectivo de la caja para depositar en el banco u otra fuente.
+                            El monto se restará del reporte de caja del día.
+                        </p>
+                        <div class="input-group">
+                            <input type="number" id="withdrawal-amount-input" step="0.01" min="0.01" placeholder=" " autocomplete="off">
+                            <label for="withdrawal-amount-input">Monto a Retirar ($)</label>
+                        </div>
+                        <div class="input-group">
+                            <textarea id="withdrawal-note-input" placeholder=" " rows="3" maxlength="500" autocomplete="off"></textarea>
+                            <label for="withdrawal-note-input">Nota Explicativa</label>
+                        </div>
+                        <div class="modal-actions">
+                            <button type="button" id="withdrawal-cancel-btn" class="btn btn-outline">Cancelar</button>
+                            <button type="button" id="withdrawal-confirm-btn" class="btn btn-primary" disabled>Confirmar Retiro</button>
+                        </div>
+                    </div>
+                </div>
+
                 <section id="inventory-section" class="section">
                     <div class="inventory-toolbar">
                         <input type="text" id="inventory-search" placeholder="Buscar en inventario..." class="search-input">
                         <button id="add-inventory-btn" class="btn btn-primary admin-only">Nuevo Producto</button>
                     </div>
                     <div class="inventory-grid" id="inventory-grid">
+                    </div>
+                </section>
+
+                <section id="vip-section" class="section">
+                    <h2 class="section-title">Clientes VIP</h2>
+                    <div class="vip-toolbar">
+                        <input type="text" id="vip-search" placeholder="Buscar por nombre o teléfono..." class="search-input">
+                        <button id="add-vip-btn" class="btn btn-primary admin-only">Nuevo Cliente VIP</button>
+                    </div>
+                    <div class="data-table-container">
+                        <table class="data-table" id="vip-table">
+                            <thead>
+                                <tr>
+                                    <th>Nombre</th>
+                                    <th>Teléfono</th>
+                                    <th>Piezas Acumuladas</th>
+                                    <th>Historial de Recompensas</th>
+                                    <th>Estado Actual</th>
+                                    <th class="action-header admin-only">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody id="vip-table-body">
+                            </tbody>
+                        </table>
                     </div>
                 </section>
 
@@ -657,11 +746,63 @@
                         <div style="margin-top: 24px;">
                             <h3 class="section-title">Gráfica Mensual de Ventas</h3>
                             <div class="chart-container">
-                                <canvas id="monthly-sales-chart" width="600" height="300"></canvas>
-                            </div>
+                            <canvas id="monthly-sales-chart" width="600" height="300"></canvas>
                         </div>
                     </div>
-                </section>
+
+                    <!-- Reportes por Semana -->
+                    <div class="reports-container" style="margin-top: 24px;">
+                        <div class="report-card">
+                            <h3>Ventas de la Semana</h3>
+                            <p class="report-value" id="weekly-sales">$0.00</p>
+                        </div>
+                        <div class="report-card">
+                            <h3>Transacciones</h3>
+                            <p class="report-value" id="weekly-transactions">0</p>
+                        </div>
+                        <div class="report-card">
+                            <h3>Ganancia Neta</h3>
+                            <p class="report-value" id="weekly-profit">$0.00</p>
+                        </div>
+                        <div class="report-card">
+                            <h3>Margen Promedio</h3>
+                            <p class="report-value" id="weekly-margin">0%</p>
+                        </div>
+                    </div>
+                    <div class="admin-only" style="margin-top: 24px;">
+                        <h3 class="section-title">Gráfica de Ventas Semanal</h3>
+                        <div class="chart-container">
+                            <canvas id="weekly-sales-chart" width="600" height="300"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Reportes por Año -->
+                    <div class="reports-container" style="margin-top: 24px;">
+                        <div class="report-card">
+                            <h3>Ventas del Año</h3>
+                            <p class="report-value" id="annual-sales">$0.00</p>
+                        </div>
+                        <div class="report-card">
+                            <h3>Transacciones</h3>
+                            <p class="report-value" id="annual-transactions">0</p>
+                        </div>
+                        <div class="report-card">
+                            <h3>Ganancia Neta</h3>
+                            <p class="report-value" id="annual-profit">$0.00</p>
+                        </div>
+                        <div class="report-card">
+                            <h3>Margen Promedio</h3>
+                            <p class="report-value" id="annual-margin">0%</p>
+                        </div>
+                    </div>
+                    <div class="admin-only" style="margin-top: 24px;">
+                        <h3 class="section-title">Gráfica de Ventas Anual</h3>
+                        <div class="chart-container">
+                            <canvas id="annual-sales-chart" width="600" height="300"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </section>
 
             <section id="settings-section" class="section">
                 <h2 class="section-title">Configuración</h2>
@@ -770,12 +911,12 @@
                          <input type="text" id="emailjs-template-id" placeholder=" " autocomplete="off">
                          <label for="emailjs-template-id">Template ID de EmailJS</label>
                      </div>
-                     <div class="checkbox-group">
-                         <input type="checkbox" id="emailjs-auto-send" style="margin-right: 8px;">
-                         <label for="emailjs-auto-send" style="position: static; transform: none; background: none; padding: 0; display: inline;">
-                             Enviar reporte automáticamente al cerrar caja y al cierre de día
-                         </label>
-                     </div>
+                      <div class="checkbox-group">
+                          <input type="checkbox" id="emailjs-auto-send" style="margin-right: 8px;" disabled>
+                          <label for="emailjs-auto-send" style="position: static; transform: none; background: none; padding: 0; display: inline;">
+                              Envío manual de correos (requiere botón - nunca automático)
+                          </label>
+                      </div>
                      <button type="button" id="test-email-btn" class="btn btn-outline btn-sm">Probar Envío de Correo</button>
 
                      <div class="form-divider">
@@ -848,54 +989,72 @@
                             </div>
                         </div>
 
-                          <div class="form-divider admin-only">
-                              <h3 class="form-divider-title">Respaldo Automático en Archivo</h3>
-                          </div>
-                          <div class="admin-only" id="auto-backup-section">
-                              <p class="volume-help-text-small">
-                                  Elige un archivo en esta computadora (de preferencia en una carpeta sincronizada
-                                  como OneDrive o Google Drive). El sistema lo actualizará automáticamente
-                                  <strong>al terminar cada venta</strong>, anulación, devolución, cambio por garantía
-                                  y corte de caja. Si se borran los datos del navegador, la información sigue en ese archivo
-                                  y se recupera con "Importar / Restaurar".
-                                  Disponible en Chrome o Edge de computadora.
-                              </p>
-                              <div class="backup-actions">
-                                  <button type="button" id="auto-backup-restore-btn" class="btn btn-outline">Restaurar desde respaldo automático</button>
-                                  <button type="button" id="auto-backup-choose-btn" class="btn btn-outline">Elegir archivo de respaldo automático</button>
-                                  <button type="button" id="auto-backup-reauth-btn" class="btn btn-outline hidden">Reactivar respaldo automático</button>
-                                  <button type="button" id="auto-backup-disable-btn" class="btn btn-outline hidden">Desactivar</button>
-                              </div>
-                              <p id="auto-backup-status" class="volume-help-text-small"></p>
-                          </div>
+                        <div class="form-divider admin-only">
+                            <h3 class="form-divider-title">Programa de Fidelización - Clientes VIP</h3>
+                        </div>
+                        <div class="admin-only" id="vip-config-section">
+                            <div class="input-group">
+                                <input type="number" id="vip-pieces-for-free-input" min="1" placeholder=" " required>
+                                <label for="vip-pieces-for-free-input">Piezas requeridas para Joya Gratis (VIP)</label>
+                            </div>
+                            <p class="volume-help-text-small">
+                                Define la meta de piezas acumuladas que un cliente VIP debe alcanzar
+                                para canjear una Joya Gratis (ej. 10 piezas). Este valor es exclusivo
+                                de administrador.
+                            </p>
+                        </div>
 
-                          <div class="form-divider admin-only">
-                              <h3 class="form-divider-title">Importar / Restaurar Copia de Seguridad</h3>
-                          </div>
-                          <div class="admin-only" id="backup-restore-section">
-                              <p class="volume-help-text-small">
-                                  Exporta toda la base de datos local (inventario, historial completo de
-                                  ventas del día, piezas, cortes de caja, retiros/ajustes y configuraciones)
-                                  a un archivo <strong>.json</strong> estructurado con fecha y hora
-                                  <code>POS_Backup_YYYYMMDD_HHMMSS.json</code>. Permite la sincronización
-                                  remota y la recuperación ante actualizaciones o fallos.
-                              </p>
-                              <div class="backup-actions">
-                                  <button type="button" id="export-backup-setting-btn" class="btn btn-outline">Exportar Copia de Seguridad</button>
-                                  <button type="button" id="import-backup-setting-btn" class="btn btn-outline">Importar / Restaurar Copia de Seguridad</button>
-                                  <input type="file" id="import-backup-setting-file" accept="application/json,.json" style="display: none;">
-                              </div>
-                              <div class="checkbox-group">
-                                  <input type="checkbox" id="factory-restore-checkbox" style="margin-right: 8px;">
-                                  <label for="factory-restore-checkbox" style="position: static; transform: none; background: none; padding: 0; display: inline;">
-                                      Restauración de Fábrica (limpiar todo y reemplazar completo)
-                                  </label>
-                              </div>
-                              <div id="backup-setting-error" class="login-error"></div>
-                              <div id="backup-setting-success" class="success-message"></div>
-                          </div>
 
-                          <div id="settings-error" class="login-error"></div>
+
+                           <div class="form-divider">
+                               <h3 class="form-divider-title">Respaldo de Doble Capa (Automático)</h3>
+                           </div>
+                           <div class="admin-only" id="local-recovery-section">
+                               <p class="volume-help-text-small">
+                                   <strong>Capa 1 — Eventual (por venta):</strong> Genera un snapshot silencioso
+                                   en LocalStorage cada vez que se confirma una venta, anulación, devolución,
+                                   cambio por garantía o cierre de caja. Permite recuperar el estado si la página
+                                   se reinicia inesperadamente.
+                               </p>
+                               <p class="volume-help-text-small">
+                                   <strong>Capa 2 — Programado (cada 1 hora):</strong> Un temporizador de fondo
+                                   compila el estado actual del POS (ventas, productos, cortes) en formato JSON
+                                   y ejecuta el guardado automático correspondiente (capa local + archivo en disco).
+                               </p>
+                               <div class="backup-actions">
+                                   <button type="button" id="local-recovery-restore-btn" class="btn btn-outline">Restaurar respaldo local</button>
+                                   <button type="button" id="interval-backup-now-btn" class="btn btn-outline">Ejecutar ahora (1 hora)</button>
+                               </div>
+                               <p id="local-recovery-status" class="volume-help-text-small"></p>
+                           </div>
+
+                           <div class="form-divider admin-only">
+                                <h3 class="form-divider-title">Importar / Restaurar Copia de Seguridad</h3>
+                            </div>
+                           <div class="admin-only" id="backup-restore-section">
+                               <p class="volume-help-text-small">
+                                   Exporta toda la base de datos local (inventario, historial completo de
+                                   ventas del día, piezas, cortes de caja, retiros/ajustes y configuraciones)
+                                   a un archivo <strong>.json</strong> estructurado con fecha y hora
+                                   <code>POS_Backup_YYYYMMDD_HHMMSS.json</code>. Permite la sincronización
+                                   remota y la recuperación ante actualizaciones o fallos.
+                               </p>
+                               <div class="backup-actions">
+                                   <button type="button" id="export-backup-setting-btn" class="btn btn-outline">Exportar Copia de Seguridad</button>
+                                   <button type="button" id="import-backup-setting-btn" class="btn btn-outline">Importar / Cargar Base de Datos (.json)</button>
+                                   <input type="file" id="import-backup-setting-file" accept="application/json,.json" style="display: none;">
+                               </div>
+                               <div class="checkbox-group">
+                                   <input type="checkbox" id="factory-restore-checkbox" style="margin-right: 8px;">
+                                   <label for="factory-restore-checkbox" style="position: static; transform: none; background: none; padding: 0; display: inline;">
+                                       Restauración de Fábrica (limpiar todo y reemplazar completo)
+                                   </label>
+                               </div>
+                               <div id="backup-setting-error" class="login-error"></div>
+                               <div id="backup-setting-success" class="success-message"></div>
+                           </div>
+
+                           <div id="settings-error" class="login-error"></div>
                         <div id="settings-success" class="success-message"></div>
 
                          <button id="save-settings-btn" class="btn btn-primary">Guardar Configuración General</button>
@@ -907,7 +1066,8 @@
 
     <!-- EmailJS SDK v4 para envío directo de correos -->
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-    <!-- Mononegocio unificado: namespace fijo de localStorage -->
+    <!-- Aislamiento por device_id: cada navegador genera un device_id único
+         que namespacea todo el localStorage (pos_<clave>__biz_default__dev_<deviceId>) -->
     <script src="js/business.js"></script>
     <!-- Capturador global de errores (Error Boundary) -->
     <script src="js/errorBoundary.js"></script>
@@ -917,6 +1077,7 @@
     <script src="js/cart.js"></script>
     <script src="js/checkout.js"></script>
     <script src="js/inventory.js"></script>
+    <script src="js/vip.js"></script>
     <script src="js/cut.js"></script>
     <script src="js/reports.js"></script>
     <script src="js/print.js"></script>

@@ -286,7 +286,7 @@ class Print {
                 <h2>Ajustes de Caja (${report.adjustmentCount})</h2>
                 <table>
                     <tr><th>Concepto</th><th>Monto</th></tr>
-                    <tr style="color:#e74c3c;"><td>Devoluciones / Anulaciones</td><td>-$${fmt(Math.abs(report.cashAdjustments + report.cardAdjustments))}</td></tr>
+                    <tr style="color:#e74c3c;"><td>Devoluciones / Anulaciones / Retiros</td><td>-$${fmt(Math.abs(report.cashAdjustments + report.cardAdjustments))}</td></tr>
                 </table>
                 ` : ''}
                 <h2>Detalle de Cortes de Caja (${report.sessionCount})</h2>
@@ -349,7 +349,7 @@ class Print {
                      <tr><td>Tarjeta</td><td>$${report.cardSales.toFixed(2)}</td></tr>
                      <tr><td>Transacciones</td><td>${report.transactionCount}</td></tr>
                      ${report.salesInSession !== undefined ? `<tr><td>Ventas en Sesión</td><td>${report.salesInSession}</td></tr>` : ''}
-                     ${report.adjustmentCount > 0 ? `<tr><td>Devoluciones / Anulaciones</td><td style="color:#e74c3c;">-${Math.abs(report.totalAdjustments || 0).toFixed(2)}</td></tr>` : ''}
+                     ${report.adjustmentCount > 0 ? `<tr><td>Devoluciones / Anulaciones / Retiros</td><td style="color:#e74c3c;">-${Math.abs(report.totalAdjustments || 0).toFixed(2)}</td></tr>` : ''}
                      <tr class="total-row"><td>Caja Final</td><td>$${report.closingAmount.toFixed(2)}</td></tr>
                     ${report.profit !== undefined ? `<tr class="total-row"><td>Ganancia Neta</td><td>$${report.profit.toFixed(2)}</td></tr>` : ''}
                     ${report.margin !== undefined ? `<tr class="total-row"><td>Margen</td><td>${report.margin}%</td></tr>` : ''}

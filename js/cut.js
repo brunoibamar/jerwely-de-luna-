@@ -15,21 +15,34 @@ class Cut {
     // ============================================================
 
     // Ventas del día calendario (usado por reportes globales)
+    // Lee desde el historial maestro (ventas_historico) para garantizar
+    // datos completos e ininterrumpidos. El Corte de Caja nunca borra
+    // este historial, por lo que las ventas de días anteriores se conservan.
     static getDailySales(date = DateUtil.today()) {
-        const allSales = SaleService.getAll();
-        return allSales.filter(s => DateUtil.isOnDate(s.date, date));
+        const historical = (typeof SaleService !== 'undefined' && SaleService.getHistoricalSales)
+            ? SaleService.getHistoricalSales()
+            : SaleService.getAll(true);
+        return historical.filter(s =>
+            DateUtil.isOnDate(s.date, date) && s.status !== 'canceled'
+        );
     }
 
     // Ventas dentro de la ventana de tiempo de una sesión:
     // desde openedAt hasta closedAt (o ahora, si aún está abierta)
+    // Lee desde el historial maestro (ventas_historico) para garantizar
+    // que ninguna venta se pierda, incluso si el localStorage principal
+    // se corrompe o es restaurado parcialmente.
     static getSessionSales(openedAt, closedAt = null) {
-        const allSales = SaleService.getAll();
+        const allSales = SaleService.getAll(true);
+        const historical = (typeof SaleService !== 'undefined' && SaleService.getHistoricalSales)
+            ? SaleService.getHistoricalSales()
+            : allSales;
         const from = new Date(openedAt).getTime();
         const to = closedAt ? new Date(closedAt).getTime() : Date.now();
 
-        return allSales.filter(s => {
+        return historical.filter(s => {
             const saleTime = new Date(s.date).getTime();
-            return saleTime >= from && saleTime <= to;
+            return saleTime >= from && saleTime <= to && s.status !== 'canceled';
         });
     }
 
@@ -130,7 +143,7 @@ class Cut {
             role: (user && user.role) || Auth.getRole(),
             summary: null
         };
-        SafeStorage.setItem(this.storageKey, JSON.stringify(session));
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(session));
         return session;
     }
 
@@ -222,8 +235,16 @@ class Cut {
         // Guardar en historial
         const history = this.getSessionHistory();
         history.push(session);
-        SafeStorage.setItem(this.shiftHistoryKey, JSON.stringify(history));
+        SafeStorage.setItem(this.shiftHistoryKey, SafeJSON.stringify(history));
 
+        // Registrar cierre de turno en el historial maestro de ventas
+        // (NUNCA borra ni limpia las ventas acumuladas del historial).
+        if (typeof SaleService !== 'undefined' && SaleService.logShiftClosure) {
+            SaleService.logShiftClosure(session);
+        }
+
+        // Cierre de sesión: se elimina SOLO la sesión activa.
+        // Las ventas, el historial maestro y los cortes anteriores se conservan.
         localStorage.removeItem(this.storageKey);
         return session;
     }
@@ -231,7 +252,14 @@ class Cut {
     // Obtener la sesión activa
     static getActiveSession() {
         const stored = localStorage.getItem(this.storageKey);
-        return stored ? JSON.parse(stored) : null;
+        if (!stored) return null;
+        const parsed = SafeJSON.parse(stored, null, 'sesion_activa');
+        if (parsed && !DataValidator.validateSession(parsed)) {
+            console.warn('[Cut] Esquema de sesión inválido; se ignora y se requiere nueva apertura.');
+            localStorage.removeItem(this.storageKey);
+            return null;
+        }
+        return parsed;
     }
 
     // Verificar si hay una sesión abierta
@@ -242,7 +270,13 @@ class Cut {
     // Obtener el historial de sesiones
     static getSessionHistory() {
         const stored = localStorage.getItem(this.shiftHistoryKey);
-        return stored ? JSON.parse(stored) : [];
+        if (!stored) return [];
+        const parsed = SafeJSON.parse(stored, [], 'historial_turnos');
+        if (!Array.isArray(parsed) || !DataValidator.validateSessionHistory(parsed)) {
+            console.warn('[Cut] Historial de sesiones inválido; se preserva el historial existente.');
+            return [];
+        }
+        return parsed;
     }
 
     // Alias para compatibilidad con código anterior
