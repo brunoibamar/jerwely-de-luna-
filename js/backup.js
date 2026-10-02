@@ -1228,21 +1228,55 @@ class Backup {
 
     static get intervalBackupKey() { return Business.key('pos_interval_backup_last'); }
 
+    static get intervalBackupMs() { return 60 * 60 * 1000; }
+
     // Consultar el estado del respaldo programado (última ejecución y próxima).
+    // Lectura segura: parsea con JSON.parse local en lugar de SafeJSON.parse para
+    // evitar disparar la notificación roja de "localStorage corrompido". Si la
+    // clave es nueva, contiene un valor numérico/texto por defecto (ej. 3600000)
+    // o es un objeto { lastRun } válido, simplemente se informa el estado sin
+    // avisos. Solo si el contenido es inútil o no parsea se sobrescribe al
+    // valor por defecto (intervalo configurado) de forma silenciosa.
     static getIntervalBackupInfo() {
-        const stored = localStorage.getItem(this.intervalBackupKey);
+        const key = this.intervalBackupKey;
+        const stored = localStorage.getItem(key);
         if (!stored) return null;
-        const data = SafeJSON.parse(stored, null, 'interval_backup');
-        if (!data || !data.lastRun) return null;
+
+        let data;
         try {
-            const lastRun = new Date(data.lastRun);
-            const nextRun = new Date(lastRun.getTime() + 60 * 60 * 1000);
-            return {
-                lastRun: lastRun.toISOString(),
-                nextRun: nextRun.toISOString()
-            };
+            data = JSON.parse(stored);
         } catch {
+            this.resetIntervalBackup(key);
             return null;
+        }
+
+        if (typeof data === 'number' || typeof data === 'string') {
+            return null;
+        }
+
+        if (data && typeof data === 'object' && data.lastRun) {
+            try {
+                const lastRun = new Date(data.lastRun);
+                const nextRun = new Date(lastRun.getTime() + this.intervalBackupMs);
+                return {
+                    lastRun: lastRun.toISOString(),
+                    nextRun: nextRun.toISOString()
+                };
+            } catch {
+                return null;
+            }
+        }
+
+        this.resetIntervalBackup(key);
+        return null;
+    }
+
+    // Sobrescribir interval_backup con su valor por defecto (intervalo en ms).
+    static resetIntervalBackup(key) {
+        try {
+            localStorage.setItem(key, String(this.intervalBackupMs));
+        } catch (err) {
+            console.warn('[Backup] No se pudo restablecer interval_backup:', err.message);
         }
     }
 
@@ -1254,7 +1288,7 @@ class Backup {
                     try { this.runScheduledBackup(); } catch (err) {
                         console.warn('[Backup] Error en respaldo programado:', err?.message);
                     }
-                }, 60 * 60 * 1000);
+                }, this.intervalBackupMs);
             }
         } catch (err) {
             console.warn('[Backup] No se pudo iniciar el respaldo programado:', err?.message);
