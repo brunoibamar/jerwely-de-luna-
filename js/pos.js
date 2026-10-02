@@ -122,7 +122,7 @@ class HeldSales {
     }
 
     static save(heldSales) {
-        localStorage.setItem(this.storageKey, JSON.stringify(heldSales));
+        SafeStorage.setItem(this.storageKey, JSON.stringify(heldSales));
     }
 
     // Guardar la venta actual como "en espera"

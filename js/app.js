@@ -10,7 +10,32 @@ class SaleService {
     }
 
     static save(sales) {
-        localStorage.setItem(this.storageKey, JSON.stringify(sales));
+        SafeStorage.setItem(this.storageKey, JSON.stringify(sales));
+    }
+
+    // Repara folios duplicados generados por versiones anteriores
+    // (el folio se calculaba con el conteo de ventas y se repetía al
+    // anular). Conserva el primero y renombra los demás con sufijo -R2, -R3...
+    static repairDuplicateIds() {
+        const sales = this.getAll(true);
+        const seen = new Map();
+        let repaired = 0;
+        sales.forEach(sale => {
+            if (!sale || sale.id == null) return;
+            const count = (seen.get(sale.id) || 0) + 1;
+            seen.set(sale.id, count);
+            if (count > 1) {
+                let n = count;
+                let newId = `${sale.id}-R${n}`;
+                while (seen.has(newId)) newId = `${sale.id}-R${++n}`;
+                sale.originalId = sale.id;
+                sale.id = newId;
+                seen.set(newId, 1);
+                repaired++;
+            }
+        });
+        if (repaired > 0) this.save(sales);
+        return repaired;
     }
 
     static saveSale(sale) {
@@ -25,14 +50,14 @@ class SaleService {
     }
 
     static getSalesByDate(date) {
-        return this.getAll().filter(s => s.date.startsWith(date));
+        return this.getAll().filter(s => DateUtil.isOnDate(s.date, date));
     }
 
-    static getDailySales(date = new Date().toISOString().split('T')[0]) {
+    static getDailySales(date = DateUtil.today()) {
         return this.getSalesByDate(date);
     }
 
-    static getReportStats(date = new Date().toISOString().split('T')[0]) {
+    static getReportStats(date = DateUtil.today()) {
         const sales = this.getDailySales(date);
         const totalSales = sales.reduce((sum, s) => sum + s.total, 0);
         const itemCount = sales.reduce((sum, s) => sum + s.items.length, 0);
@@ -58,6 +83,7 @@ class SaleService {
         sale.status = 'canceled';
         sale.canceledAt = new Date().toISOString();
         sale.cancelReason = reason.trim();
+        sale.updatedAt = sale.canceledAt;
         this.save(sales);
         return { success: true, sale };
     }
@@ -66,7 +92,7 @@ class SaleService {
     static getCanceledSales(date = null) {
         const all = this.getAll(true);
         return all.filter(s => s.status === 'canceled' && (
-            !date || s.date.startsWith(date)
+            !date || DateUtil.isOnDate(s.date, date)
         ));
     }
 }
@@ -181,7 +207,7 @@ class Settings {
 
     static saveSettings(settings) {
         const merged = { ...this.defaultSettings, ...settings };
-        localStorage.setItem(this.storageKey, JSON.stringify(merged));
+        SafeStorage.setItem(this.storageKey, JSON.stringify(merged));
         return merged;
     }
 
@@ -206,6 +232,7 @@ class App {
         if (this.isInitialized) return;
 
         Business.migrateExistingData();
+        SaleService.repairDuplicateIds();
 
         Inventory.init();
         Auth.init();
@@ -227,6 +254,8 @@ class App {
         this.bindReturnsEvents();
         this.bindGuaranteeEvents();
         this.bindPaymentEvents();
+        this.bindCrossTabSync();
+        this.bindAutoBackupEvents();
 
         this.initApp();
 
@@ -300,6 +329,9 @@ class App {
         this.updateDailyReport();
         this.updateRoleVisibility();
         ReportService.startDayChangeWatcher();
+
+        // Respaldo automático: avisar si el navegador pide reactivar el permiso
+        AutoBackup.checkOnStartup();
 
         // Inicializar EmailJS (solo inicializa el SDK; no envía nada automáticamente)
         if (Backup.isEmailJSSet()) {
@@ -424,6 +456,82 @@ class App {
             .catch(err => {
                 Toast.error(err.error || 'Error al leer el archivo: ' + err.message);
             });
+    }
+
+    // ============================================================
+    //  SINCRONIZACIÓN ENTRE PESTAÑAS DEL MISMO DISPOSITIVO
+    //  localStorage es compartido entre pestañas; el evento
+    //  'storage' avisa a las demás cuando una de ellas guarda.
+    // ============================================================
+    bindCrossTabSync() {
+        window.addEventListener('storage', (e) => {
+            if (!e.key) return;
+
+            // Caja cerrada o sesión terminada en otra pestaña
+            if ((e.key === Cut.storageKey || e.key === Auth.current_userKey) && e.newValue === null) {
+                this.handleShiftClosedExternally();
+                return;
+            }
+
+            const dataKeys = [
+                SaleService.storageKey,
+                Inventory.storageKey,
+                Returns.storageKey,
+                CashAdjustment.storageKey,
+                GuaranteeExchange.storageKey,
+                HeldSales.storageKey
+            ];
+            if (dataKeys.includes(e.key)) {
+                try {
+                    this.updateDailyReport();
+                    this.updateHeldSalesButton();
+                    if (this.activeSection === 'inventory') Inventory.renderCatalog();
+                } catch { /* UI aún no lista */ }
+            }
+        });
+    }
+
+    // ============================================================
+    //  RESPALDO AUTOMÁTICO EN ARCHIVO (Configuración, solo admin)
+    // ============================================================
+    bindAutoBackupEvents() {
+        const guard = () => {
+            if (!Auth.canAccessConfig()) {
+                Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+                return false;
+            }
+            return true;
+        };
+        document.getElementById('auto-backup-choose-btn')?.addEventListener('click', () => {
+            if (guard()) AutoBackup.chooseFile();
+        });
+        document.getElementById('auto-backup-reauth-btn')?.addEventListener('click', () => {
+            if (guard()) AutoBackup.reauthorize();
+        });
+        document.getElementById('auto-backup-disable-btn')?.addEventListener('click', () => {
+            if (guard()) AutoBackup.disable();
+        });
+        document.getElementById('auto-backup-restore-btn')?.addEventListener('click', () => {
+            if (guard()) AutoBackup.restore();
+        });
+        // Disponible sin iniciar sesión: tras perder la información no hay turno
+        // abierto. Solo FUSIONA datos del respaldo, nunca borra.
+        document.getElementById('login-restore-btn')?.addEventListener('click', () => {
+            AutoBackup.restore();
+        });
+    }
+
+    // La caja se cerró (o se cerró sesión) desde otra pestaña:
+    // regresar al login para no registrar ventas fuera de turno.
+    handleShiftClosedExternally() {
+        const posApp = document.getElementById('pos-app');
+        if (!posApp || posApp.classList.contains('hidden')) return;
+        const summaryOverlay = document.getElementById('cash-summary-overlay');
+        if (summaryOverlay && !summaryOverlay.classList.contains('hidden')) return;
+
+        this.hidePaymentModal();
+        Toast.warning('La caja se cerró en otra pestaña. Inicie sesión y abra un turno nuevo.', 6000);
+        this.showLogin();
     }
 
     showLogin() {
@@ -701,6 +809,7 @@ class App {
 
         // Guardar copia en localStorage (historial interno)
         Backup.saveReportToHistory(report);
+        AutoBackup.save('corte');
 
         // Mostrar el resumen en pantalla
         this.showCashSummary(report);
@@ -1403,15 +1512,24 @@ class App {
     // Completar checkout con detalles de pago completos
     completeCheckout(paymentDetails = { method: 'cash' }) {
         try {
+            // Si la caja se cerró en otra pestaña, no registrar ventas fuera de turno
+            if (!Cut.isShiftOpen()) {
+                Toast.error('La caja fue cerrada (posiblemente en otra pestaña). Abra un nuevo turno para seguir vendiendo.');
+                this.handleShiftClosedExternally();
+                return;
+            }
+
+            // Guarda la venta y descuenta el inventario de forma atómica
             const result = Checkout.checkout(this.cart, paymentDetails);
 
             if (result.success) {
-                Inventory.updateStock(
-                    result.sale.items.map(i => ({ barcode: i.barcode, quantity: i.quantity }))
-                );
+                // Respaldo automático al archivo en disco tras cada venta
+                AutoBackup.save('venta');
 
                 // Guardar referencia a la venta recién completada para reimpresión rápida
-                this.saveLastPrintedSale(result.sale);
+                try {
+                    this.saveLastPrintedSale(result.sale);
+                } catch { /* no crítico */ }
 
                 setTimeout(() => {
                     Print.printReceipt(result.sale);
@@ -1680,7 +1798,7 @@ class App {
         const todayBtn = document.getElementById('report-today-btn');
         if (todayBtn) {
             todayBtn.addEventListener('click', () => {
-                const today = new Date().toISOString().split('T')[0];
+                const today = DateUtil.today();
                 if (dateSelect) dateSelect.value = today;
                 this.renderDailyConsolidated(today);
             });
@@ -1711,7 +1829,7 @@ class App {
             });
         }
 
-        const today = new Date().toISOString().split('T')[0];
+        const today = DateUtil.today();
         if (dateSelect) dateSelect.value = today;
     }
 
@@ -2465,7 +2583,11 @@ class App {
                 const reader = new FileReader();
                 reader.onload = (ev) => {
                     const logoData = ev.target.result;
-                    Settings.update('storeLogo', logoData);
+                    try {
+                        Settings.update('storeLogo', logoData);
+                    } catch {
+                        return; // SafeStorage ya mostró el aviso de espacio lleno
+                    }
                     this.renderLogoPreview(logoData);
                     Toast.success('Logotipo actualizado correctamente');
                 };
@@ -3113,6 +3235,8 @@ class App {
                 note: note
             });
 
+            AutoBackup.save('devolución');
+
             // Actualizar reportes y UI
             this.updateDailyReport();
             this.renderDailyConsolidated();
@@ -3290,6 +3414,8 @@ class App {
                 relatedSaleId: sale.id,
                 note: reason
             });
+
+            AutoBackup.save('anulación');
 
             // Actualizar reportes y UI
             this.updateDailyReport();
@@ -3810,6 +3936,8 @@ class App {
                 amount: 0,
                 cashAdjustment: false
             });
+
+            AutoBackup.save('garantía');
 
             // Actualizar reportes y UI
             this.updateDailyReport();

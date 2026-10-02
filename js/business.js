@@ -110,3 +110,112 @@ class Business {
 }
 
 window.Business = Business;
+
+// ============================================================
+//  DateUtil: fechas en hora LOCAL del dispositivo.
+//  Nunca usar toISOString().split('T')[0] para obtener "el día",
+//  porque devuelve la fecha en UTC (en México, después de las
+//  18:00 ya es "mañana" en UTC).
+// ============================================================
+class DateUtil {
+    // 'YYYY-MM-DD' en hora local para una fecha (Date o ISO string)
+    static toLocalDate(value = new Date()) {
+        const d = value instanceof Date ? value : new Date(value);
+        if (isNaN(d.getTime())) return '';
+        const pad = (n) => n.toString().padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    }
+
+    // Fecha local de hoy 'YYYY-MM-DD'
+    static today() {
+        return this.toLocalDate(new Date());
+    }
+
+    // 'YYYYMMDD' en hora local (para folios y nombres de archivo)
+    static compact(value = new Date()) {
+        return this.toLocalDate(value).replace(/-/g, '');
+    }
+
+    // ¿El registro con fecha ISO cae en el día local indicado?
+    static isOnDate(isoDate, localDate) {
+        if (!isoDate || !localDate) return false;
+        return this.toLocalDate(isoDate) === localDate;
+    }
+}
+
+window.DateUtil = DateUtil;
+
+// ============================================================
+//  Device: identificador corto y permanente de este dispositivo.
+//  Se incluye en los folios para que dos dispositivos nunca
+//  generen el mismo folio (evita pérdidas al fusionar respaldos).
+// ============================================================
+class Device {
+    static STORAGE_KEY = 'jewelry_deluna_device_id';
+
+    static getId() {
+        let id = localStorage.getItem(this.STORAGE_KEY);
+        if (!id) {
+            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+            id = '';
+            for (let i = 0; i < 4; i++) {
+                id += chars[Math.floor(Math.random() * chars.length)];
+            }
+            try { localStorage.setItem(this.STORAGE_KEY, id); } catch { /* sin espacio: se regenera */ }
+        }
+        return id;
+    }
+}
+
+window.Device = Device;
+
+// ============================================================
+//  Folio: generador de folios únicos PREFIJO-YYYYMMDD-DISP-NNNN
+//  El consecutivo se calcula con el MAYOR folio existente del
+//  día y dispositivo (incluyendo anulados), por lo que nunca se
+//  repite aunque se anulen o borren registros.
+// ============================================================
+class Folio {
+    static next(prefix, existingRecords = []) {
+        const base = `${prefix}-${DateUtil.compact()}-${Device.getId()}-`;
+        let max = 0;
+        existingRecords.forEach(r => {
+            if (r && typeof r.id === 'string' && r.id.startsWith(base)) {
+                const n = parseInt(r.id.slice(base.length), 10);
+                if (!isNaN(n) && n > max) max = n;
+            }
+        });
+        return `${base}${(max + 1).toString().padStart(4, '0')}`;
+    }
+}
+
+window.Folio = Folio;
+
+// ============================================================
+//  SafeStorage: escritura en localStorage con error claro cuando
+//  el almacenamiento del navegador está lleno.
+// ============================================================
+class SafeStorage {
+    static isQuotaError(err) {
+        return err && (
+            err.name === 'QuotaExceededError' ||
+            err.name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+            err.code === 22 || err.code === 1014
+        );
+    }
+
+    static setItem(key, value) {
+        try {
+            localStorage.setItem(key, value);
+        } catch (err) {
+            if (this.isQuotaError(err)) {
+                const msg = 'El almacenamiento del navegador está lleno. Exporte un respaldo y libere espacio (por ejemplo, quite el logo de la tienda).';
+                if (typeof Toast !== 'undefined') Toast.error(msg, 8000);
+                throw new Error(msg);
+            }
+            throw err;
+        }
+    }
+}
+
+window.SafeStorage = SafeStorage;

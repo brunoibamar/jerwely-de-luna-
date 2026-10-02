@@ -36,6 +36,9 @@
                     <span class="role-label">Invitado</span>
                 </button>
             </div>
+            <div class="login-restore">
+                <button type="button" id="login-restore-btn" class="btn btn-outline btn-sm">¿Se perdió la información? Restaurar respaldo</button>
+            </div>
         </div>
 
         <!-- Formularios (revelados tras seleccionar un rol) -->
@@ -844,6 +847,27 @@
                                 <button id="reset-volume-pricing-btn" class="btn btn-outline">Restablecer por Defecto</button>
                             </div>
                         </div>
+
+                          <div class="form-divider admin-only">
+                              <h3 class="form-divider-title">Respaldo Automático en Archivo</h3>
+                          </div>
+                          <div class="admin-only" id="auto-backup-section">
+                              <p class="volume-help-text-small">
+                                  Elige un archivo en esta computadora (de preferencia en una carpeta sincronizada
+                                  como OneDrive o Google Drive). El sistema lo actualizará automáticamente
+                                  <strong>al terminar cada venta</strong>, anulación, devolución, cambio por garantía
+                                  y corte de caja. Si se borran los datos del navegador, la información sigue en ese archivo
+                                  y se recupera con "Importar / Restaurar".
+                                  Disponible en Chrome o Edge de computadora.
+                              </p>
+                              <div class="backup-actions">
+                                  <button type="button" id="auto-backup-restore-btn" class="btn btn-outline">Restaurar desde respaldo automático</button>
+                                  <button type="button" id="auto-backup-choose-btn" class="btn btn-outline">Elegir archivo de respaldo automático</button>
+                                  <button type="button" id="auto-backup-reauth-btn" class="btn btn-outline hidden">Reactivar respaldo automático</button>
+                                  <button type="button" id="auto-backup-disable-btn" class="btn btn-outline hidden">Desactivar</button>
+                              </div>
+                              <p id="auto-backup-status" class="volume-help-text-small"></p>
+                          </div>
 
                           <div class="form-divider admin-only">
                               <h3 class="form-divider-title">Importar / Restaurar Copia de Seguridad</h3>

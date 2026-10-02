@@ -2920,3 +2920,10 @@ body {
     font-style: italic;
 }
 
+
+/* Botón de restauración en la pantalla de inicio de sesión */
+.login-restore {
+    display: flex;
+    justify-content: center;
+    margin-top: 1.25rem;
+}

@@ -15,9 +15,9 @@ class Cut {
     // ============================================================
 
     // Ventas del día calendario (usado por reportes globales)
-    static getDailySales(date = new Date().toISOString().split('T')[0]) {
+    static getDailySales(date = DateUtil.today()) {
         const allSales = SaleService.getAll();
-        return allSales.filter(s => s.date.startsWith(date));
+        return allSales.filter(s => DateUtil.isOnDate(s.date, date));
     }
 
     // Ventas dentro de la ventana de tiempo de una sesión:
@@ -61,7 +61,7 @@ class Cut {
         const cardCount = sales.filter(s => s.paymentMethod === 'card' || s.paymentMethod === 'mixed').length;
 
         return {
-            date: new Date().toISOString().split('T')[0],
+            date: DateUtil.today(),
             totalSales: sales.length,
             cashSales: cashCount,
             cardSales: cardCount,
@@ -77,7 +77,7 @@ class Cut {
 
     // Resumen de caja para el día calendario (usado por reportes globales)
     static getCashDrawerSummary(date = null) {
-        const today = date || new Date().toISOString().split('T')[0];
+        const today = date || DateUtil.today();
         const sales = this.getDailySales(today);
         return this.calculateSummary(sales);
     }
@@ -130,7 +130,7 @@ class Cut {
             role: (user && user.role) || Auth.getRole(),
             summary: null
         };
-        localStorage.setItem(this.storageKey, JSON.stringify(session));
+        SafeStorage.setItem(this.storageKey, JSON.stringify(session));
         return session;
     }
 
@@ -176,7 +176,7 @@ class Cut {
         session.report = {
             type: 'session',
             sessionId: session.id,
-            date: now.toISOString().split('T')[0],
+            date: DateUtil.toLocalDate(now),
            store: (typeof Settings !== 'undefined' && Settings.getSettings ? Settings.getSettings().storeName : null) || Business.getStoreName(),
             cashier: session.openedBy,
             closedBy: session.openedBy,
@@ -204,16 +204,16 @@ class Cut {
             })),
             // Ajustes de caja (devoluciones y anulaciones) del día
             totalAdjustments: (CashAdjustment && CashAdjustment.getTotal)
-                ? CashAdjustment.getTotal(now.toISOString().split('T')[0]).total
+                ? CashAdjustment.getTotal(DateUtil.toLocalDate(now)).total
                 : 0,
             cashAdjustments: (CashAdjustment && CashAdjustment.getTotal)
-                ? CashAdjustment.getTotal(now.toISOString().split('T')[0]).cash
+                ? CashAdjustment.getTotal(DateUtil.toLocalDate(now)).cash
                 : 0,
             cardAdjustments: (CashAdjustment && CashAdjustment.getTotal)
-                ? CashAdjustment.getTotal(now.toISOString().split('T')[0]).card
+                ? CashAdjustment.getTotal(DateUtil.toLocalDate(now)).card
                 : 0,
             adjustmentCount: (CashAdjustment && CashAdjustment.getByDate)
-                ? CashAdjustment.getByDate(now.toISOString().split('T')[0]).length
+                ? CashAdjustment.getByDate(DateUtil.toLocalDate(now)).length
                 : 0,
             profit: profit,
             margin: margin
@@ -222,7 +222,7 @@ class Cut {
         // Guardar en historial
         const history = this.getSessionHistory();
         history.push(session);
-        localStorage.setItem(this.shiftHistoryKey, JSON.stringify(history));
+        SafeStorage.setItem(this.shiftHistoryKey, JSON.stringify(history));
 
         localStorage.removeItem(this.storageKey);
         return session;

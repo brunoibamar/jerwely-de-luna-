@@ -40,7 +40,7 @@ class Inventory {
     }
 
     static saveProducts(products) {
-        localStorage.setItem(this.storageKey, JSON.stringify(products));
+        SafeStorage.setItem(this.storageKey, JSON.stringify(products));
     }
 
     static findByBarcode(barcode) {

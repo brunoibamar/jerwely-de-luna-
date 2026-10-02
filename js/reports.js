@@ -24,13 +24,13 @@ class ReportService {
 
     static getDailyDate(date = null) {
         if (date) return date;
-        return new Date().toISOString().split('T')[0];
+        return DateUtil.today();
     }
 
     static getDailySales(date = null) {
         const target = this.getDailyDate(date);
         const allSales = SaleService.getAll();
-        return allSales.filter(s => s.date.startsWith(target));
+        return allSales.filter(s => DateUtil.isOnDate(s.date, target));
     }
 
     // ============================================================
@@ -44,13 +44,13 @@ class ReportService {
         const allSessions = Cut.getSessionHistory();
 
         const closedSessions = allSessions.filter(s => {
-            const sessionDate = new Date(s.openedAt).toISOString().split('T')[0];
+            const sessionDate = DateUtil.toLocalDate(s.openedAt);
             return sessionDate === target;
         });
 
         const active = Cut.getActiveSession();
         if (active) {
-            const activeDate = new Date(active.openedAt).toISOString().split('T')[0];
+            const activeDate = DateUtil.toLocalDate(active.openedAt);
             if (activeDate === target) {
                 closedSessions.push(active);
             }
@@ -98,7 +98,7 @@ class ReportService {
             return {
                 type: 'session',
                 sessionId: session.id,
-                date: new Date().toISOString().split('T')[0],
+                date: DateUtil.today(),
                 cashier: session.openedBy,
                 role: session.role,
                 openedBy: session.openedBy,
@@ -124,7 +124,7 @@ class ReportService {
         return {
             type: 'session',
             sessionId: session.id,
-            date: new Date(session.openedAt).toISOString().split('T')[0],
+            date: DateUtil.toLocalDate(session.openedAt),
             cashier: session.openedBy,
             role: session.role,
             sessionStartTime: session.openedAt,

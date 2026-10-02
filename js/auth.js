@@ -487,7 +487,7 @@ class License {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `jewerly-de-luna-respalado-${new Date().toISOString().split('T')[0]}.json`;
+        a.download = `jewerly-de-luna-respalado-${DateUtil.today()}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
