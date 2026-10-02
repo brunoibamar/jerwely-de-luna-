@@ -101,6 +101,60 @@ class Cut {
         return this.calculateSummary(sales, session.initialAmount);
     }
 
+    // ============================================================
+    //  VENTAS DEL DASHBOARD (día de hoy / fecha objetivo)
+    //  Fuente canónical de las tarjetas métricas del encabezado.
+    //  Combina las ventas asociadas a la sesión de caja activa del día
+    //  con los cortes de caja (sesiones) cerrados en la misma fecha:
+    //  - Si hay sesión activa abierta en la fecha: toma las ventas de su
+    //    ventana de tiempo (apertura → ahora) y de los cortes cerrados ese
+    //    día, filtrando siempre por fecha local exacta (YYYY-MM-DD) para
+    //    evitar tomar registros de días o turnos anteriores.
+    //  - Si no hay sesión activa para la fecha: filtra estrictamente por la
+    //    fecha local exacta, equivalente a un "corte por fecha".
+    //  Es PURAMENTE de lectura: no escribe ni altera las ventas en localStorage.
+    // ============================================================
+
+    // Sesiones (cortes) cerradas cuya fecha de cierre coincide con la fecha objetivo
+    static getClosedShiftsForDate(date = DateUtil.today()) {
+        const target = date || DateUtil.today();
+        return this.getSessionHistory().filter(s =>
+            s && s.closedAt != null && DateUtil.isOnDate(s.closedAt, target)
+        );
+    }
+
+    // Ventas que alimentan las tarjetas del dashboard para una fecha
+    static getDashboardSales(date = DateUtil.today()) {
+        const target = date || DateUtil.today();
+        const active = this.getActiveSession();
+
+        if (active && DateUtil.isOnDate(active.openedAt, target)) {
+            const seen = new Set();
+            const result = [];
+            const merge = (sale) => {
+                if (!sale || sale.id == null || seen.has(sale.id)) return;
+                // Sólo la parte de la transacción que cae en el día objetivo:
+                // descarta registros de turnos/cortes anteriores.
+                if (!DateUtil.isOnDate(sale.date, target)) return;
+                seen.add(sale.id);
+                result.push(sale);
+            };
+
+            // Ventas de la sesión activa (apertura → ahora)
+            this.getSessionSales(active.openedAt, null).forEach(merge);
+
+            // Ventas de los cortes cerrados en el día objetivo
+            this.getClosedShiftsForDate(target).forEach(s => {
+                this.getSessionSales(s.openedAt, s.closedAt).forEach(merge);
+            });
+
+            return result.sort((a, b) => new Date(a.date) - new Date(b.date));
+        }
+
+        // Sin sesión activa para la fecha: filtrado estricto por día local
+        return SaleService.getDailySales(target);
+    }
+
     static generateCutReport(date = null) {
         return this.getCashDrawerSummary(date);
     }
@@ -178,7 +232,8 @@ class Cut {
             });
         });
 
-        const profit = totalRevenue - totalCost;
+        const returnsTotal = (typeof Returns !== 'undefined') ? Returns.getTotalBySales(sessionSales) : 0;
+        const profit = totalRevenue - totalCost - returnsTotal;
         const margin = totalCost > 0 ? ((profit / totalCost) * 100).toFixed(1) : '0.0';
 
         // Resumen completo basado en la ventana de tiempo de la sesión
@@ -228,6 +283,7 @@ class Cut {
             adjustmentCount: (CashAdjustment && CashAdjustment.getByDate)
                 ? CashAdjustment.getByDate(DateUtil.toLocalDate(now)).length
                 : 0,
+            returnsTotal: returnsTotal,
             profit: profit,
             margin: margin
         };

@@ -628,6 +628,22 @@ body {
     color: var(--gold);
 }
 
+.chart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.chart-header .section-title {
+    margin-bottom: 0;
+    flex: 1;
+}
+
+.chart-header .btn-icon {
+    flex-shrink: 0;
+}
+
 .sales-toolbar {
     display: flex;
     align-items: center;
@@ -801,11 +817,27 @@ body {
     box-shadow: var(--shadow);
     transition: all 0.2s ease;
     position: relative;
+    /* Stock 0 no bloquea la tarjeta: siempre clicable para editar/reabastecer.
+       El stock 0 sólo impide agregar al carrito de ventas. */
+    cursor: pointer;
+    pointer-events: auto;
 }
 
 .inventory-card:hover {
     border-color: var(--gold);
     transform: translateY(-2px);
+}
+
+.inventory-card.low-stock {
+    border-color: var(--danger);
+}
+
+.inventory-card.low-stock:hover {
+    border-color: var(--danger);
+}
+
+.inventory-card.low-stock .product-stock {
+    color: var(--danger);
 }
 
 .inventory-card .product-name {

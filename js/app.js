@@ -1,14 +1,29 @@
 class SaleService {
     static get storageKey() { return Business.key('pos_sales'); }
 
+    // Banderillas para emitir diagnósticos temporales una sola vez por carga.
+    static _diagLogged = false;
+    static _migrateWarned = false;
+
     static getAll(includeCanceled = false) {
         const stored = localStorage.getItem(this.storageKey);
         if (!stored) return [];
         const all = SafeJSON.parse(stored, [], 'ventas');
-        if (!DataValidator.validateSales(all)) {
-            console.warn('[SaleService] Esquema de ventas inválido detectado; intentando migrar...');
-        }
         if (!Array.isArray(all)) return [];
+        // Normalizar en memoria los registros legados que no cumplen el esquema
+        // canónico (asigna valores por defecto a los campos faltantes) para que
+        // no se descarte ninguna venta. No se modifica el localStorage.
+        if (all.length && !DataValidator.validateSales(all)) {
+            if (!SaleService._migrateWarned) {
+                console.warn('[SaleService] Esquema de ventas inválido detectado; intentando migrar...');
+                SaleService._migrateWarned = true;
+            }
+            for (let i = 0; i < all.length; i++) {
+                if (all[i] != null && !DataValidator.isValidSale(all[i])) {
+                    all[i] = this.normalizeSale(all[i]);
+                }
+            }
+        }
         if (includeCanceled) return all;
         return all.filter(s => s && s.status !== 'canceled');
     }
@@ -29,9 +44,10 @@ class SaleService {
     static get historicalKey() { return Business.key('pos_sales_historical'); }
 
     // Leer todo el historial maestro (incluye canceladas).
-    // Los registros inválidos se omiten INDIVIDUALMENTE: un registro dañado
-    // NUNCA invalida el historial completo (evita pérdida masiva de ventas
-    // acumuladas, p. ej. cuando un folio antiguo falla la validación).
+    // Los registros inválidos se NORMALIZAN en memoria (no se descartan) para
+    // que NINGUNA venta se pierda: se les asignan valores por defecto a los
+    // campos faltantes y se mapean nombres legados (fecha/timestamp→date).
+    // El localStorage se preserva intacto; sólo se transforma la lectura.
     static getHistoricalSales() {
         const stored = localStorage.getItem(this.historicalKey);
         if (!stored) return [];
@@ -40,12 +56,109 @@ class SaleService {
             console.warn('[SaleService] Historial maestro no es un arreglo; se preserva el estado.');
             return [];
         }
-        const valid = parsed.filter(s => DataValidator.isValidSale(s));
-        const dropped = parsed.length - valid.length;
-        if (dropped > 0) {
-            console.warn('[SaleService] ' + dropped + ' registro(s) inválido(s) omitidos del historial maestro.');
+        const result = [];
+        parsed.forEach(s => {
+            if (s == null || typeof s !== 'object') return;
+            if (DataValidator.isValidSale(s)) {
+                result.push(s);
+                return;
+            }
+            // --- DIAGNÓSTICO TEMPORAL: registrar el primer registro inválido ---
+            if (!SaleService._diagLogged) {
+                console.log('[SaleService][DIAG] Registro de venta inválido normalizado (inspeccione pos_sales_historical en localStorage):', JSON.parse(JSON.stringify(s)));
+                SaleService._diagLogged = true;
+            }
+            const norm = SaleService.normalizeSale(s);
+            if (norm != null) result.push(norm);
+        });
+        return result;
+    }
+
+    // Normaliza un registro de venta legado en memoria: asigna valores por
+    // defecto a los campos faltantes o con nombre obsoleto (fecha/timestamp/
+    // createdAt→date, items, total, status, paymentMethod, ...). No escribe en
+    // localStorage; conserva los datos originales y evita pérdidas de ventas.
+    static normalizeSale(sale) {
+        if (sale === null || typeof sale !== 'object') return null;
+        const s = { ...sale };
+
+        // --- Campo de fecha: mapear nombres legados al canónico 'date' ---
+        const legacyDate = s.fecha || s.timestamp || s.createdAt;
+        if ((!s.date || typeof s.date !== 'string' || s.date.length === 0) && legacyDate) {
+            s.date = String(legacyDate);
         }
-        return valid;
+        if (!s.date || typeof s.date !== 'string' || s.date.length === 0) {
+            s.date = new Date().toISOString();
+        }
+        if (!s.timestamp || typeof s.timestamp !== 'string') {
+            s.timestamp = s.date;
+        }
+
+        // --- id (valor por defecto estable/determinista si falta) ---
+        if (typeof s.id !== 'string' || s.id.length === 0) {
+            if (s.id != null && s.id !== '') {
+                s.id = String(s.id);
+            } else {
+                s.id = this._hashSale(s);
+            }
+        }
+
+        // --- items ---
+        if (!Array.isArray(s.items)) {
+            s.items = [];
+        }
+
+        // --- piezas (cantidad total de artículos vendidos) ---
+        if (typeof s.piezas !== 'number') {
+            s.piezas = Array.isArray(s.items)
+                ? s.items.reduce((sum, i) => sum + (typeof i.quantity === 'number' ? i.quantity : 1), 0)
+                : 0;
+        }
+
+        // --- total ---
+        if (typeof s.total !== 'number' || !isFinite(s.total) || s.total < 0) {
+            const fallback = (typeof s.subtotal === 'number' && isFinite(s.subtotal) && s.subtotal >= 0)
+                ? s.subtotal
+                : 0;
+            s.total = fallback;
+        }
+
+        // --- status ---
+        if (typeof s.status !== 'string' || s.status.length === 0) {
+            s.status = 'active';
+        }
+
+        // --- paymentMethod ---
+        if (typeof s.paymentMethod !== 'string' || s.paymentMethod.length === 0) {
+            s.paymentMethod = 'cash';
+        }
+
+        // --- cajaId / version ---
+        if (s.cajaId == null) {
+            s.cajaId = null;
+        }
+        if (!s.version) {
+            s.version = '1.0';
+        }
+
+        return s;
+    }
+
+    // Hash determinista sobre el contenido del registro; genera un id estable
+    // cuando un registro legado no lo posee.
+    static _hashSale(sale) {
+        let str;
+        try {
+            str = JSON.stringify(sale);
+        } catch (e) {
+            str = String(sale);
+        }
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) {
+            const c = str.charCodeAt(i);
+            hash = ((hash << 5) - hash + c) | 0;
+        }
+        return 'migrated_' + (hash >>> 0).toString(36);
     }
 
     // Guardar el historial maestro completo (usado por migración y restauración)
@@ -1490,7 +1603,13 @@ class App {
             // Si no se encuentra por barcode, buscar por descripción
             const found = Inventory.search(barcode);
             if (found.length === 1) {
-                this.cart.addItem(found[0]);
+                const p = found[0];
+                // El stock 0 sólo impide agregar al carrito de ventas.
+                if (this.cart.canAddItem(p.barcode)) {
+                    this.cart.addItem(p);
+                } else {
+                    Toast.warning('No hay suficiente stock disponible');
+                }
             } else if (found.length > 1) {
                 // Múltiples resultados: sugerir usar el código de barras exacto
                 Toast.warning(`Se encontraron ${found.length} productos. Usa el código de barras para seleccionar.`);
@@ -2521,35 +2640,48 @@ class App {
     }
 
     updateDailyReport() {
-        const stats = SaleService.getReportStats();
+        const hoy = DateUtil.today();
+
+        // Fuente alineada a la jornada/caja de hoy: combina las ventas de la
+        // sesión activa con los cortes cerrados hoy; si no hay sesión activa,
+        // filtra estrictamente por la fecha local exacta. No altera localStorage.
+        const ventasHoy = Cut.getDashboardSales(hoy);
+
+        const totalRevenue = ventasHoy.reduce((sum, s) => sum + (s.total || 0), 0);
+        const transactionCount = ventasHoy.length;
+
+        let totalCost = 0;
+        let revenueFromItems = 0;
+        let piecesSold = 0;
+
+        ventasHoy.forEach(sale => {
+            (sale.items || []).forEach(item => {
+                const product = Inventory.findByBarcode(item.barcode);
+                if (product && product.cost) {
+                    totalCost += product.cost * item.quantity;
+                }
+                revenueFromItems += item.amount || 0;
+                piecesSold += item.quantity || 0;
+            });
+        });
+
+        const profit = revenueFromItems - totalCost - ((typeof Returns !== 'undefined') ? Returns.getTotalBySales(ventasHoy) : 0);
+        const margin = totalCost > 0 ? ((profit / totalCost) * 100).toFixed(1) : '0.0';
+
         const salesEl = document.getElementById('daily-sales');
         const countEl = document.getElementById('daily-transactions');
         const profitEl = document.getElementById('daily-profit');
         const marginEl = document.getElementById('avg-margin');
 
-        if (salesEl) salesEl.textContent = `$${stats.totalRevenue.toFixed(2)}`;
-        if (countEl) countEl.textContent = stats.transactionCount;
+        if (salesEl) salesEl.textContent = `$${totalRevenue.toFixed(2)}`;
+        if (countEl) countEl.textContent = transactionCount;
 
         if (Auth.isAdmin()) {
-            let totalCost = 0;
-            let totalRevenue = 0;
-
-            SaleService.getDailySales().forEach(sale => {
-                sale.items.forEach(item => {
-                    const product = Inventory.findByBarcode(item.barcode);
-                    if (product && product.cost) {
-                        totalCost += product.cost * item.quantity;
-                    }
-                    totalRevenue += item.amount;
-                });
-            });
-
-            const profit = totalRevenue - totalCost;
-            const margin = totalCost > 0 ? ((profit / totalCost) * 100).toFixed(1) : '0.0';
-
             if (profitEl) profitEl.textContent = `$${profit.toFixed(2)}`;
             if (marginEl) marginEl.textContent = `${margin}%`;
         }
+
+        this.renderDailyConsolidated(hoy);
 
         if (Auth.isAdmin()) {
             this._updatePeriodReport('weekly-sales', 'weekly-transactions', 'weekly-profit', 'weekly-margin', ReportService.getWeeklySales());
@@ -2574,9 +2706,10 @@ class App {
                 totalRevenue += item.amount;
             });
         });
-        const profit = totalRevenue - totalCost;
+        const returnsTotal = (typeof Returns !== 'undefined') ? Returns.getTotalBySales(sales) : 0;
+        const profit = totalRevenue - totalCost - returnsTotal;
         const margin = totalCost > 0 ? ((profit / totalCost) * 100).toFixed(1) : '0.0';
-        return { count: sales.length, revenue: totalRevenue, cost: totalCost, profit, margin };
+        return { count: sales.length, revenue: totalRevenue, cost: totalCost, profit, margin, returns: returnsTotal };
     }
 
     _updatePeriodReport(salesId, countId, profitId, marginId, sales) {
@@ -2634,17 +2767,34 @@ class App {
         const canvas = document.getElementById('daily-sales-chart');
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
-        const sales = SaleService.getDailySales();
 
+        // Fecha del día de hoy en hora local del dispositivo (YYYY-MM-DD)
+        const today = DateUtil.today();
+
+        // Resetear la lista de horas a cero antes de renderizar,
+        // destruyendo así cualquier dato residual de días anteriores.
         const hourlyData = {};
         for (let h = 0; h < 24; h++) hourlyData[h] = 0;
+
+        // Agrupar las transacciones del día en curso (jornada/caja de hoy),
+        // combinando las ventas de la sesión activa con los cortes cerrados
+        // hoy. Se filtra por fecha local exacta para no incluir días anteriores.
+        const sales = Cut.getDashboardSales(today);
+
         sales.forEach(s => {
-            const hour = new Date(s.date).getHours();
-            hourlyData[hour] += s.total;
+            const saleDate = new Date(s.date);
+            const hour = saleDate.getHours();
+            if (hour >= 0 && hour < 24) {
+                hourlyData[hour] += s.total;
+            }
         });
 
         const labels = Object.keys(hourlyData).map(h => `${h}:00`);
         const data = Object.values(hourlyData);
+
+        // Limpiar el canvas antes de dibujar para evitar que conserve
+        // barras o valores de días pasados en memoria
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
 
         this.drawBarChart(ctx, canvas, labels, data, '#d4af37', 'Ventas por Hora');
     }
@@ -2834,8 +2984,35 @@ class App {
             });
         }
 
+        const refreshDailyChartBtn = document.getElementById('refresh-daily-chart');
+        if (refreshDailyChartBtn) {
+            refreshDailyChartBtn.addEventListener('click', () => {
+                this.renderDailySalesChart();
+            });
+        }
+
+        const refreshDashboardBtn = document.getElementById('refresh-dashboard-btn');
+        if (refreshDashboardBtn) {
+            refreshDashboardBtn.addEventListener('click', () => {
+                this.refreshDashboard();
+            });
+        }
+
         const today = DateUtil.today();
         if (dateSelect) dateSelect.value = today;
+    }
+
+    refreshDashboard() {
+        const today = DateUtil.today();
+        const dateSelect = document.getElementById('report-date-select');
+        if (dateSelect) dateSelect.value = today;
+
+        // Recalcular todas las tarjetas superiores (del día) de la jornada
+        this.updateDailyReport();
+        // Renderizar la gráfica por horas SIN recargar la página
+        this.renderDailySalesChart();
+
+        Toast.success('Dashboard actualizado para el día de hoy');
     }
 
     // ============================================================
@@ -3148,6 +3325,10 @@ class App {
             `;
             grid.appendChild(card);
 
+            card.addEventListener('click', () => {
+                this.showEditProductModal(product.barcode);
+            });
+
             if (canDelete && card.querySelector('.delete-product-btn')) {
                 card.querySelector('.delete-product-btn').addEventListener('click', (e) => {
                     e.stopPropagation();
@@ -3255,6 +3436,130 @@ class App {
                 document.body.removeChild(overlay);
             } else {
                 Toast.error(result.error || 'Error al agregar el producto');
+            }
+        });
+    }
+
+    showEditProductModal(barcode) {
+        const product = Inventory.findByBarcode(barcode);
+        if (!product) {
+            Toast.error('Producto no encontrado');
+            return;
+        }
+
+        const overlay = document.createElement('div');
+        overlay.className = 'payment-overlay';
+        overlay.innerHTML = `
+            <div class="payment-modal" style="max-width: 500px;">
+                <div class="payment-modal-header">
+                    <h3 class="payment-title">Editar Producto</h3>
+                </div>
+                <form id="edit-product-form" class="add-product-form">
+                    <div class="input-group">
+                        <input type="text" name="barcode" placeholder=" " required value="${this.escapeHtml(product.barcode)}" readonly>
+                        <label>Código de Barras</label>
+                    </div>
+                    <div class="input-group">
+                        <input type="text" name="description" placeholder=" " required value="${this.escapeHtml(product.description)}">
+                        <label>Descripción del Producto</label>
+                    </div>
+                    <div class="input-group">
+                        <input type="number" name="price" step="0.01" min="0" placeholder=" " required value="${product.price.toFixed(2)}">
+                        <label>Precio Venta</label>
+                    </div>
+                    <div class="input-group">
+                        <input type="number" name="stock" min="0" placeholder=" " required value="${product.stock}">
+                        <label>Existencia</label>
+                    </div>
+                    <div class="input-group" style="display: flex; gap: 8px; align-items: flex-end;">
+                        <div style="flex: 1;">
+                            <input type="number" name="reestock" min="1" placeholder=" " style="width: 100%;">
+                            <label style="position: static; transform: none; top: auto; left: auto; background: none; padding: 0; font-size: 12px; color: var(--text-secondary);">Cantidad a reponer</label>
+                        </div>
+                        <button type="button" class="btn btn-outline btn-sm" id="edit-restock-btn" title="Reponer stock" style="height: 40px; padding: 0 14px;">+</button>
+                    </div>
+                    <div class="input-group">
+                        <input type="text" name="category" placeholder=" " value="${this.escapeHtml(product.category || 'General')}">
+                        <label>Categoría</label>
+                    </div>
+                    <div class="input-group admin-only-field">
+                        <input type="number" name="cost" step="0.01" min="0" placeholder=" " value="${product.cost ? product.cost.toFixed(2) : ''}">
+                        <label>Costo de Adquisición</label>
+                    </div>
+                    <div class="input-group">
+                        <div class="checkbox-group" style="margin-top: 12px;">
+                            <input type="checkbox" id="edit-product-volume-pricing" name="aplicaPromocion" value="1" style="margin-right: 8px;" ${product.aplicaPromocion ? 'checked' : ''}>
+                            <label for="edit-product-volume-pricing" style="position: static; transform: none; background: none; padding: 0; display: inline;">
+                                Precio Mayoreo por Volumen
+                            </label>
+                        </div>
+                        <p class="volume-help-text-small">
+                            Aplica precios automáticos según la cantidad agregada
+                            (configurable en Configuración &gt; Precios por Volumen).
+                        </p>
+                    </div>
+                    <div class="payment-actions" style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button type="button" class="btn btn-outline" id="cancel-edit">Cancelar</button>
+                        <button type="submit" class="btn btn-primary">Guardar Cambios</button>
+                    </div>
+                </form>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                document.body.removeChild(overlay);
+            }
+        });
+
+        overlay.querySelector('#cancel-edit')?.addEventListener('click', () => {
+            document.body.removeChild(overlay);
+        });
+
+        overlay.querySelector('#edit-restock-btn')?.addEventListener('click', () => {
+            const stockInput = overlay.querySelector('input[name="stock"]');
+            const reestockInput = overlay.querySelector('input[name="reestock"]');
+            const currentStock = parseInt(stockInput.value) || 0;
+            const reestockQty = parseInt(reestockInput.value) || 0;
+            if (reestockQty > 0) {
+                stockInput.value = currentStock + reestockQty;
+                reestockInput.value = '';
+            } else {
+                Toast.warning('Ingresa una cantidad válida para reponer');
+            }
+        });
+
+        const form = overlay.querySelector('#edit-product-form');
+        form?.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const product = Inventory.findByBarcode(barcode);
+            if (!product) {
+                Toast.error('Producto no encontrado');
+                document.body.removeChild(overlay);
+                return;
+            }
+
+            const stock = parseInt(formData.get('stock'));
+            const updatedProduct = {
+                description: formData.get('description').trim(),
+                price: parseFloat(formData.get('price')) || 0,
+                stock: isNaN(stock) ? 0 : stock,
+                cost: formData.get('cost') ? parseFloat(formData.get('cost')) : 0,
+                category: formData.get('category') ? formData.get('category').trim() : 'General',
+                aplicaPromocion: form.aplicaPromocion.checked
+            };
+
+            const result = Inventory.update(barcode, updatedProduct);
+            if (result.success) {
+                Toast.success('Producto actualizado correctamente');
+                this.renderInventoryResults(Inventory.search(''));
+                this.updateLowStockIndicator();
+                document.body.removeChild(overlay);
+            } else {
+                Toast.error(result.error || 'Error al actualizar el producto');
             }
         });
     }

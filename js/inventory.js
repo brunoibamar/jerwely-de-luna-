@@ -181,6 +181,10 @@ class Inventory {
             `;
             grid.appendChild(card);
 
+            card.addEventListener('click', () => {
+                if (window.app) window.app.showEditProductModal(product.barcode);
+            });
+
             if (canDelete && card.querySelector('.delete-product-btn')) {
                 card.querySelector('.delete-product-btn').addEventListener('click', (e) => {
                     e.stopPropagation();
