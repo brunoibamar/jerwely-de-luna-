@@ -691,17 +691,18 @@
 
                     <!-- Reportes por Día -->
                     <div class="day-report-module" id="day-report-module">
-                        <div class="day-report-toolbar">
+                    <div class="day-report-toolbar">
                             <div class="day-report-date-picker">
                                 <label for="report-date-select">Fecha:</label>
                                 <input type="date" id="report-date-select">
                                 <button id="report-today-btn" class="btn btn-outline btn-sm">Hoy</button>
+                                <button id="refresh-dashboard-btn" class="btn btn-outline btn-sm">Refrescar</button>
                             </div>
                             <div class="day-report-actions admin-only">
                                 <button id="print-daily-report-btn" class="btn btn-outline btn-sm">Imprimir Consolidado</button>
                                 <button id="export-daily-report-btn" class="btn btn-outline btn-sm">Exportar Consolidado</button>
                             </div>
-                        </div>
+                    </div>
 
                         <div class="daily-consolidated-container" id="daily-consolidated-container">
                         </div>
@@ -726,7 +727,12 @@
                         </div>
                     </div>
                     <div class="admin-only" style="margin-top: 24px;">
-                        <h3 class="section-title">Gráfica de Ventas Diarias</h3>
+                        <div class="chart-header">
+                            <h3 class="section-title">Gráfica de Ventas Diarias</h3>
+                            <button type="button" id="refresh-daily-chart" class="btn-icon btn-sm" title="Refrescar">
+                                <span aria-hidden="true">&#x21bb;</span>
+                            </button>
+                        </div>
                         <div class="chart-container">
                             <canvas id="daily-sales-chart" width="600" height="300"></canvas>
                         </div>

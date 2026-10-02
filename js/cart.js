@@ -95,10 +95,14 @@ class Cart {
     }
 
     canAddItem(barcode) {
-        const item = this.items.find(i => i.barcode === barcode);
-        if (!item) return true;
+        // El stock 0 impide agregar al carrito de ventas (sólo ese caso se
+        // bloquea). La edición/reabastecimiento desde el Inventario sigue
+        // permitido para cualquier producto sin importar su existencia.
         const product = Inventory.findByBarcode(barcode);
         if (!product) return true;
+        if (product.stock <= 0) return false;
+        const item = this.items.find(i => i.barcode === barcode);
+        if (!item) return true;
         return item.quantity < product.stock;
     }
 

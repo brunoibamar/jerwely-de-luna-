@@ -572,7 +572,9 @@ class Backup {
                     totalRevenue += item.amount;
                 });
             });
-            report.profit = totalRevenue - totalCost;
+            const returnsTotal = (typeof Returns !== 'undefined') ? Returns.getTotalBySales(sales) : 0;
+            report.profit = totalRevenue - totalCost - returnsTotal;
+            report.returnsTotal = returnsTotal;
             report.margin = totalCost > 0 ? ((report.profit / totalCost) * 100).toFixed(1) : '0.0';
 
             if (typeof CashAdjustment !== 'undefined') {
@@ -618,7 +620,8 @@ class Backup {
             });
         });
 
-        const profit = totalRevenue - totalCost;
+        const returnsTotal = (typeof Returns !== 'undefined') ? Returns.getTotalBySales(monthSales) : 0;
+        const profit = totalRevenue - totalCost - returnsTotal;
         const margin = totalCost > 0 ? ((profit / totalCost) * 100).toFixed(1) : '0.0';
 
         return {
@@ -629,6 +632,7 @@ class Backup {
             store: Business.getStoreName(),
             totalRevenue,
             totalCost,
+            returnsTotal: returnsTotal,
             profit,
             margin,
             transactionCount,
@@ -659,18 +663,21 @@ class Backup {
                     }
                 });
             });
+            const monthReturns = (typeof Returns !== 'undefined') ? Returns.getTotalBySales(monthSales) : 0;
             monthlyData.push({
                 month: m,
                 revenue,
                 cost,
-                profit: revenue - cost,
+                returnsTotal: monthReturns,
+                profit: revenue - cost - monthReturns,
                 transactions: monthSales.length
             });
         }
 
+        const returnsTotal = (typeof Returns !== 'undefined') ? Returns.getTotalBySales(yearSales) : 0;
         const totalRevenue = monthlyData.reduce((sum, m) => sum + m.revenue, 0);
         const totalCost = monthlyData.reduce((sum, m) => sum + m.cost, 0);
-        const profit = totalRevenue - totalCost;
+        const profit = totalRevenue - totalCost - returnsTotal;
         const margin = totalCost > 0 ? ((profit / totalCost) * 100).toFixed(1) : '0.0';
 
         return {
@@ -679,6 +686,7 @@ class Backup {
             store: Business.getStoreName(),
             totalRevenue,
             totalCost,
+            returnsTotal: returnsTotal,
             profit,
             margin,
             totalTransactions: yearSales.length,

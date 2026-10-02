@@ -160,7 +160,8 @@ class ReportService {
                 });
             });
 
-            const profit = totalRevenue - totalCost;
+            const returnsTotal = (typeof Returns !== 'undefined') ? Returns.getTotalBySales(sales) : 0;
+            const profit = totalRevenue - totalCost - returnsTotal;
             const margin = totalCost > 0
                 ? ((profit / totalCost) * 100).toFixed(1)
                 : '0.0';
@@ -183,6 +184,7 @@ class ReportService {
                 transactionCount: summary.transactionCount,
                 salesInSession: sales.length,
                 cashInDrawer: (summary.cashTotal || 0) + session.initialAmount,
+                returnsTotal: returnsTotal,
                 profit: profit,
                 margin: margin,
                 isOpen: true
@@ -191,6 +193,21 @@ class ReportService {
 
         const sales = Cut.getSessionSales(session.openedAt, session.closedAt);
         const summary = Cut.calculateSummary(sales, session.initialAmount);
+
+        let totalCost = 0;
+        let totalRevenue = 0;
+        sales.forEach(sale => {
+            sale.items.forEach(item => {
+                const product = Inventory.findByBarcode(item.barcode);
+                if (product && product.cost) {
+                    totalCost += product.cost * item.quantity;
+                }
+                totalRevenue += item.amount;
+            });
+        });
+        const returnsTotal = (typeof Returns !== 'undefined') ? Returns.getTotalBySales(sales) : 0;
+        const profit = totalRevenue - totalCost - returnsTotal;
+        const margin = totalCost > 0 ? ((profit / totalCost) * 100).toFixed(1) : '0.0';
         return {
             type: 'session',
             sessionId: session.id,
@@ -208,8 +225,9 @@ class ReportService {
             transactionCount: summary.transactionCount,
             salesInSession: sales.length,
             cashInDrawer: (summary.cashTotal || 0) + session.initialAmount,
-            profit: 0,
-            margin: '0.0',
+            returnsTotal: returnsTotal,
+            profit: profit,
+            margin: margin,
             isOpen: false
         };
     }
@@ -225,7 +243,10 @@ class ReportService {
         const sessions = this.getDailySessions(target);
         const reportSessions = sessions.map(s => this.getSessionCutReport(s));
 
-        const allSales = this.getDailySales(target);
+        // Fuente alineada a la jornada/caja del día: combina las ventas de la
+        // sesión activa con los cortes cerrados hoy. Si no hay sesión activa,
+        // filtra estrictamente por la fecha local (evita cortes históricos).
+        const allSales = Cut.getDashboardSales(target);
         let sessionAssignedSales = 0;
         sessions.forEach(s => {
             const cut = this.getSessionCutReport(s);
@@ -246,11 +267,11 @@ class ReportService {
             });
         });
 
-        const profit = totalRevenue - totalCost;
+        const returnsTotal = (typeof Returns !== 'undefined') ? Returns.getTotalBySales(allSales) : 0;
+        const profit = totalRevenue - totalCost - returnsTotal;
         const margin = totalCost > 0
             ? ((profit / totalCost) * 100).toFixed(1)
             : '0.0';
-
         const cashSales = allSales.filter(s => s.paymentMethod === 'cash').length;
         const cardSales = allSales.filter(s => s.paymentMethod === 'card').length;
         const mixedSales = allSales.filter(s => s.paymentMethod === 'mixed').length;
@@ -293,6 +314,7 @@ class ReportService {
             cashAdjustments: adjustmentCash,
             cardAdjustments: adjustmentCard,
             adjustmentCount: adjustmentsRaw.length,
+            returnsTotal: returnsTotal,
             profit: profit,
             margin: margin,
             sessions: reportSessions,

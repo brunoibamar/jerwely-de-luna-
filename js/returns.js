@@ -57,6 +57,20 @@ class Returns {
         return this.getAll().filter(r => DateUtil.isOnDate(r.date, date));
     }
 
+    // Total reembolsado por devoluciones para un conjunto de ventas.
+    // Sólo contabiliza devoluciones (no anulaciones ni retiros de caja), por
+    // lo que puede descontarse directamente de la Ganancia Neta: las devoluciones
+    // reducen las Ventas Totales y la Ganancia Neta, mientras que los retiros de
+    // caja sólo impactan el Efectivo en Caja final.
+    static getTotalBySales(sales = []) {
+        const list = sales || [];
+        const saleIds = new Set(list.map(s => s.id));
+        if (!saleIds.size) return 0;
+        return this.getAll()
+            .filter(r => r.saleId != null && saleIds.has(r.saleId))
+            .reduce((sum, r) => sum + (r.refundAmount || 0), 0);
+    }
+
     // Obtener el total devuelto para una fecha, separado por método de pago
     static getAdjustmentByDate(date = DateUtil.today(), paymentMethod = null) {
         const returns = this.getByDate(date);
