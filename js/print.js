@@ -205,6 +205,7 @@ class Print {
                         <tr><td style="padding:4px 8px;">Tarjeta</td><td>$${fmt(s.cardSales)}</td></tr>
                         <tr><td style="padding:4px 8px;">Transacciones</td><td>${s.transactionCount}</td></tr>
                         <tr><td style="padding:4px 8px;">Ventas en Sesión</td><td>${s.salesInSession}</td></tr>
+                        <tr><td style="padding:4px 8px;">PIEZAS VENDIDAS</td><td>${s.piecesSold || 0}</td></tr>
                         <tr><td style="padding:4px 8px;">Caja Final</td><td>$${fmt(s.closingAmount)}</td></tr>
                         ${s.profit !== undefined ? `<tr><td style="padding:4px 8px;">Ganancia</td><td>$${fmt(s.profit)}</td></tr>` : ''}
                     </table>
@@ -348,8 +349,9 @@ class Print {
                      <tr><td>Efectivo</td><td>$${report.cashSales.toFixed(2)}</td></tr>
                      <tr><td>Tarjeta</td><td>$${report.cardSales.toFixed(2)}</td></tr>
                      <tr><td>Transacciones</td><td>${report.transactionCount}</td></tr>
-                     ${report.salesInSession !== undefined ? `<tr><td>Ventas en Sesión</td><td>${report.salesInSession}</td></tr>` : ''}
-                     ${report.adjustmentCount > 0 ? `<tr><td>Devoluciones / Anulaciones / Retiros</td><td style="color:#e74c3c;">-${Math.abs(report.totalAdjustments || 0).toFixed(2)}</td></tr>` : ''}
+                      ${report.salesInSession !== undefined ? `<tr><td>Ventas en Sesión</td><td>${report.salesInSession}</td></tr>` : ''}
+                      <tr><td>PIEZAS VENDIDAS</td><td>${report.piecesSold || 0}</td></tr>
+                      ${report.adjustmentCount > 0 ? `<tr><td>Devoluciones / Anulaciones / Retiros</td><td style="color:#e74c3c;">-${Math.abs(report.totalAdjustments || 0).toFixed(2)}</td></tr>` : ''}
                      <tr class="total-row"><td>Caja Final</td><td>$${report.closingAmount.toFixed(2)}</td></tr>
                     ${report.profit !== undefined ? `<tr class="total-row"><td>Ganancia Neta</td><td>$${report.profit.toFixed(2)}</td></tr>` : ''}
                     ${report.margin !== undefined ? `<tr class="total-row"><td>Margen</td><td>${report.margin}%</td></tr>` : ''}
