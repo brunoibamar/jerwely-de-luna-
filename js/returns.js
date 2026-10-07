@@ -71,6 +71,46 @@ class Returns {
             .reduce((sum, r) => sum + (r.refundAmount || 0), 0);
     }
 
+    // Total de piezas devueltas para un conjunto de ventas.
+    // Suma la cantidad de cada ítem devuelto en todas las devoluciones
+    // asociadas a las ventas indicadas.
+    static getReturnedItemsBySales(sales = []) {
+        const list = sales || [];
+        const saleIds = new Set(list.map(s => s.id));
+        if (!saleIds.size) return 0;
+        return this.getAll()
+            .filter(r => r.saleId != null && saleIds.has(r.saleId))
+            .reduce((sum, r) => {
+                const items = Array.isArray(r.items) ? r.items : [];
+                return sum + items.reduce((acc, i) => acc + (i.quantity || 0), 0);
+            }, 0);
+    }
+
+    // Devoluciones por rango de fechas (fecha local 'YYYY-MM-DD' o ISO)
+    // Permite agrupar devoluciones por día calendario dentro de un período.
+    static getByDateRange(isoFrom, isoTo) {
+        const from = new Date(isoFrom).getTime();
+        const to = new Date(isoTo).getTime();
+        return this.getAll().filter(r => {
+            const t = new Date(r.date).getTime();
+            return t >= from && t <= to;
+        });
+    }
+
+    // Total reembolsado y piezas devueltas para un rango de fechas.
+    // Se usa para reportes por semana/mes/año.
+    static getReturnsByDateRange(isoFrom, isoTo) {
+        const returns = this.getByDateRange(isoFrom, isoTo);
+        let refundTotal = 0;
+        let piecesReturned = 0;
+        returns.forEach(r => {
+            refundTotal += r.refundAmount || 0;
+            const items = Array.isArray(r.items) ? r.items : [];
+            piecesReturned += items.reduce((sum, i) => sum + (i.quantity || 0), 0);
+        });
+        return { refundTotal, piecesReturned, records: returns };
+    }
+
     // Obtener el total devuelto para una fecha, separado por método de pago
     static getAdjustmentByDate(date = DateUtil.today(), paymentMethod = null) {
         const returns = this.getByDate(date);

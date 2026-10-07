@@ -471,6 +471,7 @@ class App {
         this.pendingReward = null;
         this.vipHighlightedIndex = -1;
         this.vipPaymentHighlightedIndex = -1;
+        this.dailySalesChartInstance = null;
     }
 
      init() {
@@ -505,11 +506,14 @@ class App {
         Inventory.init();
         Auth.init();
 
+        this._initChartDefaults();
+
         this.bindLoginEvents();
         this.bindNavigationEvents();
         this.bindSalesEvents();
         this.bindInventoryEvents();
         this.bindReportsEvents();
+        this.populateYearSelector();
         this.bindReportsAccessModal();
         this.bindSettingsEvents();
         this.bindRecoveryEvents();
@@ -1476,16 +1480,6 @@ class App {
             });
         });
 
-        const menuToggle = document.getElementById('menu-toggle');
-        const sidebar = document.getElementById('sidebar');
-        const posApp = document.getElementById('pos-app');
-        if (menuToggle && sidebar) {
-            menuToggle.addEventListener('click', () => {
-                sidebar.classList.toggle('collapsed');
-                posApp.classList.toggle('sidebar-collapsed');
-            });
-        }
-
         const backupBtn = document.getElementById('backup-btn');
         if (backupBtn) {
             backupBtn.addEventListener('click', () => {
@@ -1671,17 +1665,15 @@ class App {
             const customer = VIPCustomer.findById(this.currentVipCustomer.id);
             if (customer) {
                 this.currentVipCustomer = customer;
-                const status = VIPCustomer.getCurrentStatus(customer);
                 if (vipPhoneInput) vipPhoneInput.value = customer.phone;
+                this.renderVipPaymentInfo(customer);
+            } else {
+                // El cliente fue eliminado entre la selección y el pago: limpiar selección
+                this.currentVipCustomer = null;
+                if (vipPhoneInput) vipPhoneInput.value = '';
                 if (vipInfoEl) {
-                    vipInfoEl.innerHTML = `
-                        <div class="vip-payment-info">
-                            <span class="vip-payment-name">${this.escapeHtml(customer.name)}</span>
-                            <span class="vip-payment-pieces">Piezas: ${customer.accumulatedPieces || 0}</span>
-                            <span class="status-badge ${status.className}">${status.text}</span>
-                        </div>
-                    `;
-                    vipInfoEl.classList.remove('hidden');
+                    vipInfoEl.classList.add('hidden');
+                    vipInfoEl.innerHTML = '';
                 }
             }
         } else {
@@ -1769,7 +1761,15 @@ class App {
             vipPhoneInput.addEventListener('keydown', (e) => {
                 const items = vipDropdown ? vipDropdown.querySelectorAll('.vip-dropdown-item') : [];
                 if (items.length === 0) {
-                    if (e.key === 'Escape') this.hideVipPaymentDropdown();
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        this.hideVipPaymentDropdown();
+                        vipPhoneInput.value = '';
+                    }
+                    if (e.key === 'Enter' && vipPhoneInput.value.trim()) {
+                        e.preventDefault();
+                        this.lookupVipCustomerByPhone(vipPhoneInput.value.trim());
+                    }
                     return;
                 }
                 switch (e.key) {
@@ -1793,6 +1793,9 @@ class App {
                             const id = items[this.vipPaymentHighlightedIndex].dataset.id;
                             const customer = VIPCustomer.findById(id);
                             if (customer) this.selectVipInPayment(customer);
+                        } else if (vipPhoneInput && vipPhoneInput.value.trim()) {
+                            this.hideVipPaymentDropdown();
+                            this.lookupVipCustomerByPhone(vipPhoneInput.value.trim());
                         } else {
                             this.hideVipPaymentDropdown();
                         }
@@ -1840,6 +1843,18 @@ class App {
                     }
                 });
             }
+        }
+
+        // Desvincular cliente VIP desde el módulo de pago
+        const vipInfoEl = document.getElementById('vip-info');
+        if (vipInfoEl) {
+            vipInfoEl.addEventListener('click', (e) => {
+                const unlinkBtn = e.target.closest('.vip-payment-unlink-btn');
+                if (unlinkBtn) {
+                    this.clearVipPaymentSelection();
+                    Toast.info('Cliente VIP desvinculado de la venta');
+                }
+            });
         }
 
         // Botones de selección de método de pago
@@ -2027,42 +2042,68 @@ class App {
 
     // --- Integración VIP en el módulo de pago ---
 
-    lookupVipCustomerByPhone(phone) {
-        const vipPhoneInput = document.getElementById('vip-phone-input');
-        const vipInfoEl = document.getElementById('vip-info');
-        if (!vipPhoneInput || !vipInfoEl) return;
+    // Resolver un cliente VIP a partir de una consulta (nombre o teléfono).
+    // 1. Intenta coincidencia exacta de teléfono (escenario común: escribir el teléfono completo).
+    // 2. Si falla, intenta búsqueda difusa por nombre o teléfono; si hay exactamente
+    //    un resultado, lo devuelve para vinculación automática.
+    resolveVipCustomer(query) {
+        if (!query) return null;
+        let customer = VIPCustomer.findByPhone(query);
+        if (!customer) {
+            const results = VIPCustomer.search(query);
+            if (results.length === 1) {
+                customer = results[0];
+            }
+        }
+        return customer;
+    }
 
-        const customer = VIPCustomer.findByPhone(phone);
+    lookupVipCustomerByPhone(query) {
+        const customer = this.resolveVipCustomer(query);
         if (customer) {
-            this.currentVipCustomer = customer;
-            const status = VIPCustomer.getCurrentStatus(customer);
-            vipInfoEl.innerHTML = `
-                <div class="vip-payment-info">
-                    <span class="vip-payment-name">${this.escapeHtml(customer.name)}</span>
-                    <span class="vip-payment-pieces">Piezas: ${customer.accumulatedPieces || 0}</span>
-                    <span class="status-badge ${status.className}">${status.text}</span>
-                </div>
-            `;
-            vipInfoEl.classList.remove('hidden');
-            this.updateVipSalesBadge();
-            this.checkAndShowVipReward(customer);
+            this.selectVipInPayment(customer);
         } else {
-            this.clearVipPaymentSelection();
-            if (vipPhoneInput) vipPhoneInput.value = '';
-            Toast.warning('No se encontró cliente VIP con ese teléfono');
+            this.hideVipPaymentDropdown();
+            Toast.warning('No se encontró cliente VIP');
         }
     }
 
     clearVipPaymentSelection() {
         const vipInfoEl = document.getElementById('vip-info');
+        const vipPhoneInput = document.getElementById('vip-phone-input');
         if (vipInfoEl) {
             vipInfoEl.classList.add('hidden');
             vipInfoEl.innerHTML = '';
         }
+        if (vipPhoneInput) vipPhoneInput.value = '';
         this.currentVipCustomer = null;
         this.vipPaymentHighlightedIndex = -1;
         this.updateVipSalesBadge();
         this.checkAndShowVipReward(null);
+    }
+
+    // Renderizar la tarjeta de información del cliente VIP seleccionado
+    // en el módulo de pago, mostrando: Nombre, Teléfono, Piezas Acumuladas
+    // y un botón para Desvincular / cambiar de cliente.
+    renderVipPaymentInfo(customer) {
+        const vipInfoEl = document.getElementById('vip-info');
+        if (!vipInfoEl || !customer) return false;
+
+        const status = VIPCustomer.getCurrentStatus(customer);
+        const phone = customer.phone || '';
+        const pieces = customer.accumulatedPieces || 0;
+
+        vipInfoEl.innerHTML = `
+            <div class="vip-payment-info">
+                <span class="vip-payment-name">${this.escapeHtml(customer.name)}</span>
+                <span class="vip-payment-phone">${this.escapeHtml(phone)}</span>
+                <span class="vip-payment-pieces">Piezas: ${pieces}</span>
+                <span class="status-badge ${status.className}">${status.text}</span>
+                <button type="button" class="vip-payment-unlink-btn" title="Desvincular cliente VIP">Desvincular</button>
+            </div>
+        `;
+        vipInfoEl.classList.remove('hidden');
+        return true;
     }
 
     renderVipPaymentDropdown(query) {
@@ -2105,20 +2146,9 @@ class App {
         this.hideVipPaymentDropdown();
 
         const vipPhoneInput = document.getElementById('vip-phone-input');
-        const vipInfoEl = document.getElementById('vip-info');
         if (vipPhoneInput) vipPhoneInput.value = customer.phone || '';
 
-        const status = VIPCustomer.getCurrentStatus(customer);
-        if (vipInfoEl) {
-            vipInfoEl.innerHTML = `
-                <div class="vip-payment-info">
-                    <span class="vip-payment-name">${this.escapeHtml(customer.name)}</span>
-                    <span class="vip-payment-pieces">Piezas: ${customer.accumulatedPieces || 0}</span>
-                    <span class="status-badge ${status.className}">${status.text}</span>
-                </div>
-            `;
-            vipInfoEl.classList.remove('hidden');
-        }
+        this.renderVipPaymentInfo(customer);
         this.updateVipSalesBadge();
         this.checkAndShowVipReward(customer);
     }
@@ -2158,19 +2188,26 @@ class App {
         this.dismissRewardAlert();
     }
 
-    // Acumular piezas para el cliente VIP después de completar una venta
-    // y verificar si es elegible a canje de Joya Gratis
+    // Acumular piezas y monto para el cliente VIP después de completar una venta.
+    // Registra la compra completa (piezas + monto + historial individual) en la
+    // base de datos 'Clientes VIP' y verifica elegibilidad a Joya Gratis.
     processVipAccumulation(sale) {
         if (!this.currentVipCustomer || !sale || !sale.items) return;
 
         const totalPieces = sale.items.reduce((sum, item) => sum + item.quantity, 0);
         if (totalPieces === 0) return;
 
-        const result = VIPCustomer.addPieces(this.currentVipCustomer.id, totalPieces, `Venta ${sale.id}`);
+        const totalAmount = sale.items.reduce((sum, item) => sum + (item.amount || 0), 0);
+
+        // addPurchase acumula piezas, registra el monto y guarda el detalle
+        // individual en el historial de compras y en rewardHistory (tipo 'venta').
+        const result = VIPCustomer.addPurchase(this.currentVipCustomer.id, sale, `Venta ${sale.id}`);
         if (!result.success) {
-            console.warn('[VIP] No se pudieron acumular piezas:', result.error);
+            console.warn('[VIP] No se pudieron registrar piezas y monto:', result.error);
             return;
         }
+
+        Toast.success(`Se acumularon ${totalPieces} pieza(s) - $${totalAmount.toFixed(2)} al cliente ${this.currentVipCustomer.name}`);
 
         const customer = VIPCustomer.findById(this.currentVipCustomer.id);
         if (!customer) return;
@@ -2259,7 +2296,21 @@ class App {
             vipInput.addEventListener('keydown', (e) => {
                 const items = dropdown ? dropdown.querySelectorAll('.vip-dropdown-item') : [];
                 if (items.length === 0) {
-                    if (e.key === 'Escape') this.hideVipDropdown();
+                    if (e.key === 'Escape') {
+                        e.preventDefault();
+                        this.hideVipDropdown();
+                        vipInput.value = '';
+                    }
+                    if (e.key === 'Enter' && vipInput.value.trim()) {
+                        e.preventDefault();
+                        const customer = this.resolveVipCustomer(vipInput.value.trim());
+                        if (customer) {
+                            this.selectVipInSales(customer);
+                        } else {
+                            this.hideVipDropdown();
+                            Toast.warning('No se encontró cliente VIP');
+                        }
+                    }
                     return;
                 }
 
@@ -2285,7 +2336,18 @@ class App {
                             const customer = VIPCustomer.findById(id);
                             if (customer) this.selectVipInSales(customer);
                         } else {
-                            this.hideVipDropdown();
+                            const query = vipInput.value.trim();
+                            if (query) {
+                                const customer = this.resolveVipCustomer(query);
+                                if (customer) {
+                                    this.selectVipInSales(customer);
+                                } else {
+                                    this.hideVipDropdown();
+                                    Toast.warning('No se encontró cliente VIP');
+                                }
+                            } else {
+                                this.hideVipDropdown();
+                            }
                         }
                         break;
                     case 'Escape':
@@ -2311,6 +2373,16 @@ class App {
             clearBtn.addEventListener('click', () => {
                 this.clearVipSalesSelection();
                 this.dismissRewardAlert();
+            });
+        }
+
+        // Botón "Desvincular": cambiar o quitar al cliente VIP asociado en caja
+        const unlinkBtn = document.getElementById('vip-unlink-sales-btn');
+        if (unlinkBtn) {
+            unlinkBtn.addEventListener('click', () => {
+                this.clearVipSalesSelection();
+                this.dismissRewardAlert();
+                Toast.info('Cliente VIP desvinculado de la venta');
             });
         }
 
@@ -2425,6 +2497,7 @@ class App {
 
         this.updateVipSalesBadge();
         this.checkAndShowVipReward(customer);
+        BarcodeScanner.focusInput();
 
         if (typeof AutoBackup !== 'undefined') AutoBackup.save('seleccion_vip');
     }
@@ -2670,11 +2743,13 @@ class App {
 
         const salesEl = document.getElementById('daily-sales');
         const countEl = document.getElementById('daily-transactions');
+        const piecesEl = document.getElementById('daily-pieces');
         const profitEl = document.getElementById('daily-profit');
         const marginEl = document.getElementById('avg-margin');
 
         if (salesEl) salesEl.textContent = `$${totalRevenue.toFixed(2)}`;
         if (countEl) countEl.textContent = transactionCount;
+        if (piecesEl) piecesEl.textContent = piecesSold;
 
         if (Auth.isAdmin()) {
             if (profitEl) profitEl.textContent = `$${profit.toFixed(2)}`;
@@ -2684,203 +2759,682 @@ class App {
         this.renderDailyConsolidated(hoy);
 
         if (Auth.isAdmin()) {
-            this._updatePeriodReport('weekly-sales', 'weekly-transactions', 'weekly-profit', 'weekly-margin', ReportService.getWeeklySales());
-            this._updatePeriodReport('annual-sales', 'annual-transactions', 'annual-profit', 'annual-margin', ReportService.getYearlySales());
+            try {
+            this.renderDailyFinancialChart();
+            this.renderDailyVolumeChart();
             this.renderDailySalesChart();
-            this.renderWeeklySalesChart();
-            this.renderMonthlySalesChart();
-            this.renderAnnualSalesChart();
-        }
-    }
-
-    // Poblar las tarjetas resumen de un período y calcular costo/beneficio.
-    _summarizeSales(sales) {
-        let totalCost = 0;
-        let totalRevenue = 0;
-        sales.forEach(sale => {
-            sale.items.forEach(item => {
-                const product = Inventory.findByBarcode(item.barcode);
-                if (product && product.cost) {
-                    totalCost += product.cost * item.quantity;
+            this._renderPeriodReports();
+            } catch (err) {
+                if (typeof console !== 'undefined' && console.error) {
+                    console.error('[DataValidator] Error al renderizar gráficas diarias:', err);
                 }
-                totalRevenue += item.amount;
-            });
-        });
-        const returnsTotal = (typeof Returns !== 'undefined') ? Returns.getTotalBySales(sales) : 0;
-        const profit = totalRevenue - totalCost - returnsTotal;
-        const margin = totalCost > 0 ? ((profit / totalCost) * 100).toFixed(1) : '0.0';
-        return { count: sales.length, revenue: totalRevenue, cost: totalCost, profit, margin, returns: returnsTotal };
-    }
-
-    _updatePeriodReport(salesId, countId, profitId, marginId, sales) {
-        const s = this._summarizeSales(sales);
-        const salesEl = document.getElementById(salesId);
-        const countEl = document.getElementById(countId);
-        const profitEl = document.getElementById(profitId);
-        const marginEl = document.getElementById(marginId);
-        if (salesEl) salesEl.textContent = '$' + s.revenue.toFixed(2);
-        if (countEl) countEl.textContent = s.count;
-        if (profitEl) profitEl.textContent = '$' + s.profit.toFixed(2);
-        if (marginEl) marginEl.textContent = s.margin + '%';
-    }
-
-    // --- Gráfica de ventas semanal (últimas 4 semanas) ---
-    renderWeeklySalesChart() {
-        const canvas = document.getElementById('weekly-sales-chart');
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        const labels = [];
-        const data = [];
-        const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        for (let i = 3; i >= 0; i--) {
-            const monday = new Date(today);
-            monday.setDate(today.getDate() - ((today.getDay() + 6) % 7) - i * 7);
-            const sunday = new Date(monday);
-            sunday.setDate(monday.getDate() + 6);
-            const sales = ReportService.getWeeklySales(monday.toISOString());
-            labels.push(monday.toLocaleDateString('es-MX') + ' – ' + sunday.toLocaleDateString('es-MX'));
-            data.push(sales.reduce((sum, s) => sum + s.total, 0));
+                if (typeof Toast !== 'undefined' && Toast.error) {
+                    Toast.error('No se pudieron cargar las gráficas de reportes. Intenta recargar.');
+                }
+            }
         }
-        this.drawBarChart(ctx, canvas, labels, data, '#7a5af0', 'Ventas Semanales (últimas 4 semanas)');
     }
 
-    // --- Gráfica de ventas anual (meses del año en curso) ---
-    renderAnnualSalesChart() {
-        const canvas = document.getElementById('annual-sales-chart');
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        const year = new Date().getFullYear();
-        const labels = [];
-        const data = [];
-        const monthNames = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+    // --- Actualizar tarjetas métricas de un período (Día/Semana/Mes/Año) ---
+    _updatePeriodSummary(cardIds, summary) {
+        const set = (id, val) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = val;
+        };
+        const fmt = (v) => '$' + (typeof v === 'number' ? v.toFixed(2) : '0.00');
+        if (cardIds.sales) set(cardIds.sales, fmt(summary.netSales));
+        if (cardIds.transactions) set(cardIds.transactions, summary.transactionCount);
+        if (cardIds.profit) set(cardIds.profit, fmt(summary.profit));
+        if (cardIds.margin) set(cardIds.margin, summary.margin + '%');
+        if (cardIds.pieces) set(cardIds.pieces, summary.netPieces);
+    }
+
+    // --- Mejor mes (Total Ventas) para vistas Mes y Año ---
+    _updateBestMonthCard(cardId, valueId, year) {
+        const bestMonthCard = document.getElementById(cardId);
+        const bestMonthValue = document.getElementById(valueId);
+        if (!bestMonthCard || !bestMonthValue) return;
+
+        let bestMonth = null;
+        let bestNet = -Infinity;
+        const monthNames = DateUtil.MONTH_NAMES_ES;
         for (let m = 1; m <= 12; m++) {
             const sales = ReportService.getMonthlySales(m, year);
-            labels.push(monthNames[m - 1]);
-            data.push(sales.reduce((sum, s) => sum + s.total, 0));
+            const summary = ReportService.summarizeSales(sales);
+            if (summary.netSales > bestNet) {
+                bestNet = summary.netSales;
+                bestMonth = monthNames[m - 1];
+            }
         }
-        this.drawBarChart(ctx, canvas, labels, data, '#0ea5a3', 'Ventas Mensuales del Año ' + year);
+        bestMonthCard.textContent = bestMonth || '—';
+        bestMonthValue.textContent = '$' + (bestNet >= 0 ? bestNet.toFixed(2) : '0.00');
     }
 
-    // --- Gráfica de ventas diarias (por hora) ---
+    // --- Renderizar todas las tarjetas y gráficas de los reportes por período ---
+    _renderPeriodReports() {
+        if (!Auth.isAdmin()) return;
+
+        const now = new Date();
+        const year = now.getFullYear();
+
+        // Semana: semana actual
+        const weekSummary = ReportService.getWeeklySummary();
+        this._updatePeriodSummary(
+            { sales: 'weekly-sales', transactions: 'weekly-transactions',
+              profit: 'weekly-profit', margin: 'weekly-margin',
+              pieces: 'weekly-pieces' },
+            weekSummary
+        );
+
+        // Mes: mes actual
+        const monthSummary = ReportService.getMonthlySummary();
+        this._updatePeriodSummary(
+            { sales: 'monthly-sales', transactions: 'monthly-transactions',
+              profit: 'monthly-profit', margin: 'monthly-margin',
+              pieces: 'monthly-pieces' },
+            monthSummary
+        );
+        this._updateBestMonthCard('monthly-best-month', 'monthly-best-month-value', year);
+
+        // Año: año actual
+        const yearSummary = ReportService.getYearlySummary(year);
+        this._updatePeriodSummary(
+            { sales: 'annual-sales', transactions: 'annual-transactions',
+              profit: 'annual-profit', margin: 'annual-margin',
+              pieces: 'annual-pieces' },
+            yearSummary
+        );
+        this._updateBestMonthCard('annual-best-month', 'annual-best-month-value', year);
+
+        // Gráficas de períodos (financieras + volumen)
+        try {
+            this.renderWeeklyFinancialChart();
+            this.renderWeeklyVolumeChart();
+            this.renderMonthlyFinancialChart();
+            this.renderMonthlyVolumeChart();
+            this.renderAnnualFinancialChart();
+            this.renderAnnualVolumeChart();
+        } catch (err) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('[DataValidator] Error al renderizar gráficas de período:', err);
+            }
+            if (typeof Toast !== 'undefined' && Toast.error) {
+                Toast.error('No se pudieron cargar las gráficas de período.');
+            }
+        }
+    }
+
+
+    // ============================================================
+    //  GRÁFICAS FINANCIERAS Y DE VOLUMEN CON CHART.JS
+    //  Utiliza Chart.js para renderizado interactivo con tooltips.
+    //  - Se destruye la instancia previa antes de crear una nueva.
+    //  - Se limpia el contenedor HTML para evitar duplicar <canvas>.
+    //  - No se muestran etiquetas de texto sobre las barras; los
+    //    montos aparecen solo en el tooltip al pasar el ratón.
+    // ============================================================
+
+    // --- Desactivar globalmente el plugin datalabels ---
+    // El plugin chartjs-plugin-datalabels está cargado, pero NO debe
+    // renderizar etiquetas de texto sobre las barras. La información
+    // ($ y piezas) SOLO se muestra al pasar el cursor (tooltip).
+    _initChartDefaults() {
+        if (typeof Chart !== 'undefined' && Chart.defaults && Chart.defaults.plugins) {
+            Chart.defaults.plugins.datalabels = false;
+        }
+    }
+
+    // --- Helper: destruir instancia previa y limpiar contenedor ---
+    _resetChart(chartVar, canvasId) {
+        if (window[chartVar]) {
+            window[chartVar].destroy();
+            window[chartVar] = null;
+        }
+        const canvas = document.getElementById(canvasId);
+        if (canvas && canvas.parentElement) {
+            canvas.parentElement.innerHTML = '';
+        }
+    }
+
+    // --- Helper: crear canvas limpio dentro del contenedor ---
+    _makeCanvas(container, canvasId) {
+        const canvas = document.createElement('canvas');
+        canvas.id = canvasId;
+        canvas.width = 600;
+        canvas.height = 300;
+        container.appendChild(canvas);
+        return canvas;
+    }
+
+    // --- Gráfica financiera (Ventas $) ---
+    _renderFinancialChart(container, canvasId, chartVar, labels, salesData) {
+        if (typeof Chart === 'undefined') {
+            if (typeof Toast !== 'undefined') {
+                Toast.warning('Chart.js no está disponible. Las gráficas no se pueden mostrar.');
+            }
+            return;
+        }
+
+        if (!container) return;
+
+        this._resetChart(chartVar, canvasId);
+
+        const canvas = this._makeCanvas(container, canvasId);
+        const ctx = canvas.getContext('2d');
+
+        window[chartVar] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Ventas ($)',
+                        data: salesData,
+                        backgroundColor: 'rgba(212, 175, 55, 0.7)',
+                        borderColor: '#d4af37',
+                        borderWidth: 1,
+                        borderRadius: 3
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: {
+                            color: '#a0a0b0',
+                            font: { weight: 'bold', size: 12 },
+                            padding: 12
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(15, 15, 20, 0.9)',
+                        titleColor: '#ffffff',
+                        bodyColor: '#c0c0d0',
+                        borderColor: '#2a2a3a',
+                        cornerRadius: 6,
+                        callbacks: {
+                            label: function(context) {
+                                const v = context.parsed.y;
+                                return `${context.dataset.label}: $${v.toFixed(2)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        type: 'linear',
+                        beginAtZero: true,
+                        ticks: {
+                            color: '#a0a0b0',
+                            callback: function(value) {
+                                return '$' + Math.round(value);
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(42, 42, 58, 0.5)'
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            color: '#a0a0b0',
+                            maxRotation: 45,
+                            minRotation: 45,
+                            autoSkip: true
+                        },
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+
+        window[chartVar].update();
+    }
+
+    // --- Gráfica de volumen (Piezas Vendidas) ---
+    _renderVolumeChart(container, canvasId, chartVar, labels, data) {
+        if (typeof Chart === 'undefined') {
+            if (typeof Toast !== 'undefined') {
+                Toast.warning('Chart.js no está disponible. Las gráficas no se pueden mostrar.');
+            }
+            return;
+        }
+
+        if (!container) return;
+
+        this._resetChart(chartVar, canvasId);
+
+        const canvas = this._makeCanvas(container, canvasId);
+        const ctx = canvas.getContext('2d');
+
+        window[chartVar] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Piezas Vendidas',
+                    data: data,
+                    backgroundColor: 'rgba(52, 152, 219, 0.7)',
+                    borderColor: '#3498db',
+                    borderWidth: 1,
+                    borderRadius: 3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: {
+                            color: '#a0a0b0',
+                            font: { weight: 'bold', size: 12 }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(15, 15, 20, 0.9)',
+                        titleColor: '#ffffff',
+                        bodyColor: '#c0c0d0',
+                        borderColor: '#2a2a3a',
+                        cornerRadius: 6,
+                        callbacks: {
+                            label: function(context) {
+                                const v = context.parsed.y;
+                                return `Piezas Vendidas: ${Math.round(v)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        type: 'linear',
+                        beginAtZero: true,
+                        ticks: {
+                            color: '#a0a0b0'
+                        },
+                        grid: {
+                            color: 'rgba(42, 42, 58, 0.5)'
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            color: '#a0a0b0',
+                            maxRotation: 45,
+                            minRotation: 45,
+                            autoSkip: true
+                        },
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
+
+        window[chartVar].update();
+    }
+
+    // ============================================================
+    //  GRÁFICA DIARIA (por hora)
+    // ============================================================
+
+    // --- Ventas por hora del día ---
+    renderDailyFinancialChart() {
+        const container = document.querySelector('#daily-financial-chart-container');
+        if (!container) return;
+
+        const today = DateUtil.today();
+        const sales = Cut.getDashboardSales(today);
+
+        const hourlySales = {};
+        for (let h = 0; h < 24; h++) {
+            hourlySales[h] = 0;
+        }
+
+        sales.forEach(s => {
+            const hour = new Date(s.date).getHours();
+            if (hour >= 0 && hour < 24) {
+                hourlySales[hour] += s.total;
+            }
+        });
+
+        const labels = Object.keys(hourlySales).map(h => `${h}:00`);
+        const salesData = Object.values(hourlySales);
+
+        this._renderFinancialChart(
+            container, 'daily-financial-chart', 'myChartVentas',
+            labels, salesData
+        );
+    }
+
+    // --- Piezas Vendidas por hora del día ---
+    renderDailyVolumeChart() {
+        const container = document.querySelector('#daily-volume-chart-container');
+        if (!container) return;
+
+        const today = DateUtil.today();
+        const sales = Cut.getDashboardSales(today);
+
+        const hourlyPieces = {};
+        for (let h = 0; h < 24; h++) hourlyPieces[h] = 0;
+
+        sales.forEach(s => {
+            const hour = new Date(s.date).getHours();
+            if (hour >= 0 && hour < 24) {
+                (s.items || []).forEach(item => {
+                    hourlyPieces[hour] += item.quantity || 0;
+                });
+            }
+        });
+
+        const labels = Object.keys(hourlyPieces).map(h => `${h}:00`);
+        const data = Object.values(hourlyPieces);
+
+        this._renderVolumeChart(
+            container, 'daily-volume-chart', 'myChartPiezas',
+            labels, data
+        );
+    }
+
+    // --- Ventas por hora del día (Gráfica 3) ---
     renderDailySalesChart() {
         const canvas = document.getElementById('daily-sales-chart');
         if (!canvas) return;
+
+        if (Chart.getChart(canvas)) {
+            Chart.getChart(canvas).destroy();
+        }
+
+        let chartInstance = this.dailySalesChartInstance;
+        if (chartInstance) chartInstance.destroy();
+
         const ctx = canvas.getContext('2d');
-
-        // Fecha del día de hoy en hora local del dispositivo (YYYY-MM-DD)
         const today = DateUtil.today();
-
-        // Resetear la lista de horas a cero antes de renderizar,
-        // destruyendo así cualquier dato residual de días anteriores.
-        const hourlyData = {};
-        for (let h = 0; h < 24; h++) hourlyData[h] = 0;
-
-        // Agrupar las transacciones del día en curso (jornada/caja de hoy),
-        // combinando las ventas de la sesión activa con los cortes cerrados
-        // hoy. Se filtra por fecha local exacta para no incluir días anteriores.
         const sales = Cut.getDashboardSales(today);
 
+        const hourlySales = {};
+        for (let h = 0; h < 24; h++) hourlySales[h] = 0;
+
         sales.forEach(s => {
-            const saleDate = new Date(s.date);
-            const hour = saleDate.getHours();
+            const hour = new Date(s.date).getHours();
             if (hour >= 0 && hour < 24) {
-                hourlyData[hour] += s.total;
+                hourlySales[hour] += s.total;
             }
         });
 
-        const labels = Object.keys(hourlyData).map(h => `${h}:00`);
-        const data = Object.values(hourlyData);
+        const labels = Object.keys(hourlySales).map(h => `${h}:00`);
+        const data = Object.values(hourlySales);
 
-        // Limpiar el canvas antes de dibujar para evitar que conserve
-        // barras o valores de días pasados en memoria
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        this.dailySalesChartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Ventas $',
+                    data: data,
+                    backgroundColor: 'rgba(212, 175, 55, 0.2)',
+                    borderColor: '#d4af37',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: '#d4af37',
+                    tension: 0.3,
+                    fill: true
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: true,
+                        labels: {
+                            color: '#a0a0b0',
+                            font: { weight: 'bold', size: 12 }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(15, 15, 20, 0.9)',
+                        titleColor: '#ffffff',
+                        bodyColor: '#c0c0d0',
+                        borderColor: '#2a2a3a',
+                        cornerRadius: 6,
+                        callbacks: {
+                            label: function(context) {
+                                const v = context.parsed.y;
+                                return `Ventas: $${v.toFixed(2)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        type: 'linear',
+                        beginAtZero: true,
+                        ticks: {
+                            color: '#a0a0b0',
+                            callback: function(value) {
+                                return '$' + Math.round(value);
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(42, 42, 58, 0.5)'
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            color: '#a0a0b0',
+                            maxRotation: 45,
+                            minRotation: 45,
+                            autoSkip: true
+                        },
+                        grid: {
+                            display: false
+                        }
+                    }
+                }
+            }
+        });
 
-        this.drawBarChart(ctx, canvas, labels, data, '#d4af37', 'Ventas por Hora');
+        this.dailySalesChartInstance.update();
     }
 
-    // --- Gráfica mensual de ventas (últimos 12 meses) ---
-    renderMonthlySalesChart() {
-        const canvas = document.getElementById('monthly-sales-chart');
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        const allSales = SaleService.getHistoricalSales().filter(s => s.status !== 'canceled');
-        const monthlyData = {};
 
-        const now = new Date();
-        for (let i = 11; i >= 0; i--) {
-            const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-            const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-            monthlyData[key] = 0;
-        }
+    // ============================================================
+    //  GRÁFICAS DE PERÍODO (Semana / Mes / Año)
+    // ============================================================
 
-        allSales.forEach(s => {
-            const d = new Date(s.date);
-            const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}`;
-            if (monthlyData.hasOwnProperty(key)) {
-                monthlyData[key] += s.total;
-            }
+    // --- Ventas por día de la semana (lunes → domingo) ---
+    renderWeeklyFinancialChart() {
+        const container = document.querySelector('#weekly-financial-chart-container');
+        if (!container) return;
+
+        const labels = DateUtil.WEEKDAY_NAMES_ES;
+        const salesData = [];
+        const dates = DateUtil.getWeekDates(new Date());
+        dates.forEach(dateStr => {
+            const sales = ReportService.getDailySales(dateStr);
+            const summary = ReportService.summarizeSales(sales);
+            salesData.push(summary.netSales);
         });
 
-        const labels = Object.keys(monthlyData);
-        const data = Object.values(monthlyData);
-
-        this.drawBarChart(ctx, canvas, labels, data, '#e6c14a', 'Ventas Mensuales (últimos 12 meses)');
+        this._renderFinancialChart(
+            container, 'weekly-financial-chart', 'myChartVentasSemana',
+            labels, salesData
+        );
     }
 
-    // Dibujar una gráfica de barras simple con Canvas API
-    drawBarChart(ctx, canvas, labels, data, color, title) {
-        const w = canvas.width;
-        const h = canvas.height;
-        const padding = { top: 40, right: 16, bottom: 50, left: 50 };
-        const chartW = w - padding.left - padding.right;
-        const chartH = h - padding.top - padding.bottom;
-        const max = Math.max(...data, 1);
+    // --- Piezas Vendidas por día de la semana (lunes → domingo) ---
+    renderWeeklyVolumeChart() {
+        const container = document.querySelector('#weekly-volume-chart-container');
+        if (!container) return;
 
-        ctx.clearRect(0, 0, w, h);
-        ctx.fillStyle = '#0a0a12';
-        ctx.fillRect(0, 0, w, h);
-
-        ctx.fillStyle = '#d4af37';
-        ctx.font = 'bold 14px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(title, w / 2, 24);
-
-        ctx.strokeStyle = '#2a2a3a';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(padding.left, padding.top);
-        ctx.lineTo(padding.left, padding.top + chartH);
-        ctx.lineTo(padding.left + chartW, padding.top + chartH);
-        ctx.stroke();
-
-        const barW = chartW / data.length * 0.7;
-        const gap = chartW / data.length;
-
-        data.forEach((val, i) => {
-            const barH = (val / max) * chartH;
-            ctx.fillStyle = val > 0 ? color : '#2a2a3a';
-            ctx.fillRect(padding.left + i * gap + (gap - barW) / 2, padding.top + chartH - barH, barW, barH);
-
-            ctx.fillStyle = '#a0a0b0';
-            ctx.font = '10px monospace';
-            ctx.textAlign = 'center';
-            if (val > 0) {
-                ctx.fillText(`$${val.toFixed(0)}`, padding.left + i * gap + gap / 2, padding.top + chartH - barH - 4);
-            }
+        const labels = DateUtil.WEEKDAY_NAMES_ES;
+        const data = [];
+        const dates = DateUtil.getWeekDates(new Date());
+        dates.forEach(dateStr => {
+            const sales = ReportService.getDailySales(dateStr);
+            const summary = ReportService.summarizeSales(sales);
+            data.push(summary.netPieces);
         });
 
-        ctx.fillStyle = '#a0a0b0';
-        ctx.font = '10px monospace';
-        ctx.textAlign = 'center';
+        this._renderVolumeChart(
+            container, 'weekly-volume-chart', 'myChartPiezasSemana',
+            labels, data
+        );
+    }
 
-        for (let i = 0; i < labels.length; i += Math.ceil(labels.length / 6)) {
-            ctx.fillText(labels[i], padding.left + i * gap + gap / 2, padding.top + chartH + 16);
+    // --- Ventas por día del mes actual ---
+    renderMonthlyFinancialChart() {
+        const container = document.querySelector('#monthly-financial-chart-container');
+        if (!container) return;
+
+        const dates = DateUtil.getMonthDates(new Date());
+        const labels = dates.map(d => d.split('-')[2]);
+        const salesData = [];
+        dates.forEach(dateStr => {
+            const sales = ReportService.getDailySales(dateStr);
+            const summary = ReportService.summarizeSales(sales);
+            salesData.push(summary.netSales);
+        });
+
+        this._renderFinancialChart(
+            container, 'monthly-financial-chart', 'myChartVentasMes',
+            labels, salesData
+        );
+    }
+
+    // --- Piezas Vendidas por día del mes actual ---
+    renderMonthlyVolumeChart() {
+        const container = document.querySelector('#monthly-volume-chart-container');
+        if (!container) return;
+
+        const dates = DateUtil.getMonthDates(new Date());
+        const labels = dates.map(d => d.split('-')[2]);
+        const data = [];
+        dates.forEach(dateStr => {
+            const sales = ReportService.getDailySales(dateStr);
+            const summary = ReportService.summarizeSales(sales);
+            data.push(summary.netPieces);
+        });
+
+        this._renderVolumeChart(
+            container, 'monthly-volume-chart', 'myChartPiezasMes',
+            labels, data
+        );
+    }
+
+    // --- Ventas por mes del año seleccionado ---
+    renderAnnualFinancialChart(year = new Date().getFullYear()) {
+        const container = document.querySelector('#annual-financial-chart-container');
+        if (!container) return;
+
+        const labels = DateUtil.MONTH_NAMES_ES;
+        const salesData = [];
+        for (let m = 1; m <= 12; m++) {
+            const sales = ReportService.getMonthlySales(m, year);
+            const summary = ReportService.summarizeSales(sales);
+            salesData.push(summary.netSales);
         }
 
-        ctx.fillStyle = '#d4af37';
-        ctx.font = 'bold 12px monospace';
-        ctx.fillText(`$${max.toFixed(2)}`, padding.left - 8, padding.top - 8);
+        this._renderFinancialChart(
+            container, 'annual-financial-chart', 'myChartVentasAnio',
+            labels, salesData
+        );
+    }
+
+    // --- Piezas Vendidas por mes del año seleccionado ---
+    renderAnnualVolumeChart(year = new Date().getFullYear()) {
+        const container = document.querySelector('#annual-volume-chart-container');
+        if (!container) return;
+
+        const labels = DateUtil.MONTH_NAMES_ES;
+        const data = [];
+        for (let m = 1; m <= 12; m++) {
+            const sales = ReportService.getMonthlySales(m, year);
+            const summary = ReportService.summarizeSales(sales);
+            data.push(summary.netPieces);
+        }
+
+        this._renderVolumeChart(
+            container, 'annual-volume-chart', 'myChartPiezasAnio',
+            labels, data
+        );
+    }
+
+    // ============================================================
+    //  AÑO HISTÓRICO-COMPLETO: selector de años + gráfica
+    //  muestra datos mensuales para todo el histórico disponible.
+    // ============================================================
+
+    // Poblar el selector de años con los años que tienen datos históricos
+    populateYearSelector() {
+        const selector = document.getElementById('year-selector');
+        if (!selector) return;
+
+        const years = [];
+        const sales = ReportService.getHistoricalSales();
+        sales.forEach(s => {
+            const y = new Date(s.date).getFullYear();
+            if (!years.includes(y)) years.push(y);
+        });
+
+        years.sort((a, b) => b - a);
+
+        const currentYear = new Date().getFullYear();
+        if (!years.includes(currentYear)) years.unshift(currentYear);
+
+        selector.innerHTML = '';
+        years.forEach(y => {
+            const opt = document.createElement('option');
+            opt.value = y;
+            opt.textContent = y;
+            selector.appendChild(opt);
+        });
+    }
+
+    // Actualizar la tarjeta de resumen y gráficas del Año histórico
+    updateHistoricalAnnual() {
+        if (!Auth.isAdmin()) return;
+        const selector = document.getElementById('year-selector');
+        if (!selector) return;
+        const year = parseInt(selector.value);
+        if (isNaN(year)) return;
+
+        const sales = ReportService.getYearlySales(year);
+        const summary = ReportService.summarizeSales(sales);
+
+        this._updatePeriodSummary(
+            { sales: 'annual-sales', transactions: 'annual-transactions',
+              profit: 'annual-profit', margin: 'annual-margin',
+              pieces: 'annual-pieces' },
+            summary
+        );
+        this._updateBestMonthCard('annual-best-month', 'annual-best-month-value', year);
+
+        try {
+            this.renderAnnualFinancialChart(year);
+            this.renderAnnualVolumeChart(year);
+        } catch (err) {
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('[DataValidator] Error al renderizar gráficas anuales:', err);
+            }
+        }
+    }
+
+    // --- Cambiar pestaña activa en el módulo de reportes ---
+    switchReportTab(tab) {
+        const tabs = document.querySelectorAll('.report-tab-content');
+        tabs.forEach(t => {
+            t.classList.toggle('hidden', t.dataset.reportTab !== tab);
+        });
+        const btns = document.querySelectorAll('.reports-tab-btn');
+        btns.forEach(b => {
+            b.classList.toggle('active', b.dataset.reportTab === tab);
+        });
     }
 
     viewCashReport() {
@@ -2987,6 +3541,8 @@ class App {
         const refreshDailyChartBtn = document.getElementById('refresh-daily-chart');
         if (refreshDailyChartBtn) {
             refreshDailyChartBtn.addEventListener('click', () => {
+                this.renderDailyFinancialChart();
+                this.renderDailyVolumeChart();
                 this.renderDailySalesChart();
             });
         }
@@ -2995,6 +3551,78 @@ class App {
         if (refreshDashboardBtn) {
             refreshDashboardBtn.addEventListener('click', () => {
                 this.refreshDashboard();
+            });
+        }
+
+        // --- Selector de pestañas de reportes (Día / Semana / Mes / Año) ---
+        const tabBtns = document.querySelectorAll('.reports-tab-btn[data-report-tab]');
+        tabBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                const tab = btn.dataset.reportTab;
+                this.switchReportTab(tab);
+                if (Auth.isAdmin()) {
+                    if (tab === 'anio') {
+                        this.populateYearSelector();
+                        this.updateHistoricalAnnual();
+                    } else if (tab === 'dia') {
+                        this.renderDailyFinancialChart();
+                        this.renderDailyVolumeChart();
+                        this.renderDailySalesChart();
+                    } else {
+                        this._renderPeriodReports();
+                    }
+                }
+            });
+        });
+
+        // --- Botones de refresco de gráficas de períodos ---
+        const refreshWeeklyBtn = document.getElementById('refresh-weekly-chart');
+        if (refreshWeeklyBtn) {
+            refreshWeeklyBtn.addEventListener('click', () => {
+                if (Auth.isAdmin()) {
+                    this.renderWeeklyFinancialChart();
+                    this.renderWeeklyVolumeChart();
+                }
+            });
+        }
+
+        const refreshMonthlyBtn = document.getElementById('refresh-monthly-chart');
+        if (refreshMonthlyBtn) {
+            refreshMonthlyBtn.addEventListener('click', () => {
+                if (Auth.isAdmin()) {
+                    this.renderMonthlyFinancialChart();
+                    this.renderMonthlyVolumeChart();
+                    this._updateBestMonthCard('monthly-best-month', 'monthly-best-month-value',
+                        new Date().getFullYear());
+                }
+            });
+        }
+
+        const refreshAnnualBtn = document.getElementById('refresh-annual-chart');
+        if (refreshAnnualBtn) {
+            refreshAnnualBtn.addEventListener('click', () => {
+                if (Auth.isAdmin()) {
+                    this.updateHistoricalAnnual();
+                }
+            });
+        }
+
+        const refreshHistoricalBtn = document.getElementById('refresh-historical-chart');
+        if (refreshHistoricalBtn) {
+            refreshHistoricalBtn.addEventListener('click', () => {
+                if (Auth.isAdmin()) {
+                    this.updateHistoricalAnnual();
+                }
+            });
+        }
+
+        // --- Selector de año para Año histórico ---
+        const yearSelector = document.getElementById('year-selector');
+        if (yearSelector) {
+            yearSelector.addEventListener('change', () => {
+                if (Auth.isAdmin()) {
+                    this.updateHistoricalAnnual();
+                }
             });
         }
 
@@ -3007,10 +3635,14 @@ class App {
         const dateSelect = document.getElementById('report-date-select');
         if (dateSelect) dateSelect.value = today;
 
-        // Recalcular todas las tarjetas superiores (del día) de la jornada
         this.updateDailyReport();
-        // Renderizar la gráfica por horas SIN recargar la página
+        this.renderDailyFinancialChart();
+        this.renderDailyVolumeChart();
         this.renderDailySalesChart();
+
+        if (Auth.isAdmin()) {
+            this._renderPeriodReports();
+        }
 
         Toast.success('Dashboard actualizado para el día de hoy');
     }
@@ -5535,28 +6167,41 @@ class App {
             return;
         }
 
+        const threshold = VIPConfig.getPiecesForFreeJewel();
+
         customers.forEach(customer => {
             const status = VIPCustomer.getCurrentStatus(customer);
             const history = VIPCustomer.getRewardHistory(customer);
-            const rewardCount = history.filter(h => h.type === 'canje').length;
+            const pieces = customer.accumulatedPieces || 0;
+            const progressPercent = Math.min(100, (pieces / threshold) * 100);
+            const isEligible = pieces >= threshold;
             const row = document.createElement('tr');
+            row.className = 'vip-table-row';
 
             let actionsHtml = '';
             if (isAdmin) {
                 actionsHtml = `
                     <td class="action-cell">
-                        <button class="btn btn-icon btn-sm" data-action="edit" data-id="${customer.id}" title="Editar cliente">
-                            ✎
-                        </button>
-                        <button class="btn btn-icon btn-sm" data-action="add-pieces" data-id="${customer.id}" title="Agregar piezas">
-                            +
-                        </button>
-                        <button class="btn btn-icon btn-sm ${customer.accumulatedPieces < VIPConfig.getPiecesForFreeJewel() ? 'hidden' : ''}" data-action="redeem" data-id="${customer.id}" title="Canjear joya gratis">
-                            🎁
-                        </button>
-                        <button class="btn btn-icon btn-sm" data-action="delete" data-id="${customer.id}" title="Eliminar cliente">
-                            ×
-                        </button>
+                        <div class="vip-action-group">
+                            <button class="btn btn-vip-icon btn-sm ${isEligible ? 'btn-gold' : 'btn-gold-outline'}" data-action="redeem" data-id="${customer.id}" title="Canjear joya gratis">
+                                🎁
+                            </button>
+                            <button class="btn btn-vip-icon btn-sm btn-green" data-action="add-pieces" data-id="${customer.id}" title="Aumentar piezas acumuladas">
+                                ＋
+                            </button>
+                            <button class="btn btn-vip-icon btn-sm btn-red" data-action="remove-pieces" data-id="${customer.id}" title="Disminuir piezas acumuladas">
+                                －
+                            </button>
+                            <button class="btn btn-vip-icon btn-sm btn-blue" data-action="set-pieces" data-id="${customer.id}" title="Editar valor total de piezas">
+                                ⚙
+                            </button>
+                            <button class="btn btn-vip-icon btn-sm" data-action="edit" data-id="${customer.id}" title="Editar cliente">
+                                ✎
+                            </button>
+                            <button class="btn btn-vip-icon btn-sm btn-red" data-action="delete" data-id="${customer.id}" title="Eliminar cliente">
+                                🗑
+                            </button>
+                        </div>
                     </td>
                 `;
             } else {
@@ -5564,16 +6209,36 @@ class App {
             }
 
             row.innerHTML = `
-                <td>${customer.name}</td>
-                <td>${customer.phone}</td>
-                <td>${customer.accumulatedPieces || 0}</td>
+                <td class="vip-name-cell">
+                    <span class="vip-name" title="${this.escapeHtml(customer.name)}">${this.escapeHtml(customer.name)}</span>
+                </td>
+                <td class="vip-phone-cell">
+                    <span class="vip-phone-muted">${this.escapeHtml(customer.phone)}</span>
+                </td>
+                <td>
+                    <div class="vip-pieces-cell">
+                        <span class="vip-pieces-value" title="Editar valor total" data-action="set-pieces" data-id="${isAdmin ? customer.id : ''}" style="${isAdmin ? 'cursor:pointer;' : ''}">${pieces}</span>
+                        <div class="vip-progress-container">
+                            <div class="vip-progress-bar ${isEligible ? 'vip-progress-eligible' : ''}" style="width: ${progressPercent}%"></div>
+                        </div>
+                        <div class="vip-progress-label">
+                            <span class="vip-progress-text">${progressPercent.toFixed(0)}%</span>
+                            <span class="vip-threshold-text">${pieces} / ${threshold} piezas</span>
+                        </div>
+                    </div>
+                </td>
                 <td class="vip-history-cell">
                     ${history.length > 0
                         ? `<span class="vip-history-badge" data-id="${customer.id}">${history.length} registro(s)</span>`
                         : '<span class="text-muted">Sin historial</span>'
                     }
                 </td>
-                <td><span class="${status.className}">${status.text}</span></td>
+                <td>
+                    <span class="status-badge ${status.className}">
+                        <span class="status-dot ${isEligible ? 'dot-green' : 'dot-blue'}"></span>
+                        ${status.text}
+                    </span>
+                </td>
                 ${actionsHtml}
             `;
             tbody.appendChild(row);
@@ -5589,7 +6254,21 @@ class App {
         tbody.querySelectorAll('[data-action="add-pieces"]').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const id = e.currentTarget.dataset.id;
-                this.showAddPiecesModal(id);
+                this.showAdjustPiecesModal(id, 'add');
+            });
+        });
+
+        tbody.querySelectorAll('[data-action="remove-pieces"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = e.currentTarget.dataset.id;
+                this.showAdjustPiecesModal(id, 'remove');
+            });
+        });
+
+        tbody.querySelectorAll('[data-action="set-pieces"]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const id = e.currentTarget.dataset.id;
+                if (id) this.showAdjustPiecesModal(id, 'set');
             });
         });
 
@@ -5613,6 +6292,12 @@ class App {
                 this.showVIPHistoryModal(id);
             });
         });
+
+        const countEl = document.getElementById('vip-section-count');
+        if (countEl) {
+            const total = VIPCustomer.count();
+            countEl.textContent = `${total} cliente(s)`;
+        }
     }
 
     showAddVIPModal(id = null) {
@@ -5697,32 +6382,83 @@ class App {
         });
     }
 
-    showAddPiecesModal(id) {
+    showAdjustPiecesModal(id, mode = 'add') {
         const customer = VIPCustomer.findById(id);
         if (!customer) return;
+
+        const current = customer.accumulatedPieces || 0;
+
+        const modeConfig = {
+            add: {
+                title: 'Aumentar Piezas',
+                label: 'Número de Piezas a Agregar',
+                button: 'Aumentar',
+                buttonClass: 'btn-primary',
+                min: 1,
+                defaultValue: '',
+                validate: (pieces) => {
+                    if (isNaN(pieces) || pieces <= 0) return 'Ingresa un número válido de piezas mayor a 0';
+                    return null;
+                },
+                action: (pieces, note) => VIPCustomer.addPieces(id, pieces, note),
+                successVerb: 'agregadas'
+            },
+            remove: {
+                title: 'Disminuir Piezas',
+                label: 'Número de Piezas a Restar',
+                button: 'Disminuir',
+                buttonClass: 'btn-danger',
+                min: 1,
+                defaultValue: '',
+                validate: (pieces) => {
+                    if (isNaN(pieces) || pieces <= 0) return 'Ingresa un número válido de piezas mayor a 0';
+                    if (pieces > current) return `Solo hay ${current} pieza(s) disponible(s) para restar`;
+                    return null;
+                },
+                action: (pieces, note) => VIPCustomer.removePieces(id, pieces, note),
+                successVerb: 'restadas'
+            },
+            set: {
+                title: 'Editar Valor Total',
+                label: 'Valor Total de Piezas',
+                button: 'Guardar',
+                buttonClass: 'btn-primary',
+                min: 0,
+                defaultValue: String(current),
+                validate: (pieces) => {
+                    if (isNaN(pieces) || pieces < 0) return 'Ingresa un número válido de piezas (0 o mayor)';
+                    return null;
+                },
+                action: (pieces, note) => VIPCustomer.setPieces(id, pieces, note),
+                successVerb: 'ajustadas'
+            }
+        };
+
+        const config = modeConfig[mode];
+        if (!config) return;
 
         const overlay = document.createElement('div');
         overlay.className = 'payment-overlay';
         overlay.innerHTML = `
             <div class="payment-modal" style="max-width: 420px;">
                 <div class="payment-modal-header">
-                    <h3 class="payment-title">Agregar Piezas - ${this.escapeHtml(customer.name)}</h3>
+                    <h3 class="payment-title">${config.title} - ${this.escapeHtml(customer.name)}</h3>
                 </div>
                 <div class="payment-info">
-                    <p>Piezas acumuladas actuales: <strong>${customer.accumulatedPieces || 0}</strong></p>
+                    <p>Piezas acumuladas actuales: <strong>${current}</strong></p>
                 </div>
-                <form id="vip-pieces-form" class="vip-pieces-form">
+                <form id="vip-adjust-form" class="vip-adjust-form">
                     <div class="input-group">
-                        <input type="number" name="pieces" min="1" placeholder=" " required>
-                        <label>Número de Piezas a Agregar</label>
+                        <input type="number" name="pieces" min="${config.min}" placeholder=" " required value="${config.defaultValue}">
+                        <label>${config.label}</label>
                     </div>
                     <div class="input-group">
                         <textarea name="note" placeholder=" " rows="2" maxlength="200"></textarea>
                         <label>Nota (opcional)</label>
                     </div>
                     <div class="payment-actions" style="display: flex; gap: 12px; justify-content: flex-end;">
-                        <button type="button" class="btn btn-outline" id="vip-pieces-cancel-btn">Cancelar</button>
-                        <button type="submit" class="btn btn-primary">Agregar</button>
+                        <button type="button" class="btn btn-outline" id="vip-adjust-cancel-btn">Cancelar</button>
+                        <button type="submit" class="btn ${config.buttonClass}">${config.button}</button>
                     </div>
                 </form>
             </div>
@@ -5735,24 +6471,25 @@ class App {
             }
         });
 
-        overlay.querySelector('#vip-pieces-cancel-btn')?.addEventListener('click', () => {
+        overlay.querySelector('#vip-adjust-cancel-btn')?.addEventListener('click', () => {
             document.body.removeChild(overlay);
         });
 
-        overlay.querySelector('#vip-pieces-form')?.addEventListener('submit', (e) => {
+        overlay.querySelector('#vip-adjust-form')?.addEventListener('submit', (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
             const pieces = parseInt(formData.get('pieces'));
             const note = formData.get('note').trim();
 
-            if (isNaN(pieces) || pieces <= 0) {
-                Toast.error('Ingresa un número válido de piezas');
+            const validationError = config.validate(pieces);
+            if (validationError) {
+                Toast.error(validationError);
                 return;
             }
 
-            const result = VIPCustomer.addPieces(id, pieces, note);
+            const result = config.action(pieces, note);
             if (result.success) {
-                Toast.success(`${pieces} pieza(s) agregadas al cliente ${customer.name}`);
+                Toast.success(`${pieces} pieza(s) ${config.successVerb} al cliente ${customer.name}`);
                 this.renderVIPTable();
             } else {
                 Toast.error(result.error);
@@ -5933,6 +6670,18 @@ class App {
         if (vipPiecesInput) {
             vipPiecesInput.value = VIPConfig.getPiecesForFreeJewel();
         }
+
+        // Cargar correo del administrador
+        const adminEmailInput = document.getElementById('admin-email-input');
+        if (adminEmailInput) {
+            adminEmailInput.value = Auth.getAdminEmail();
+        }
+
+        // Renderizar rangos de precios de volumen siempre que se muestre Configuración
+        this.renderVolumePricingTiers();
+
+        // Actualizar la visualización de credenciales
+        this.updateCredentialsDisplay();
     }
 }
 
@@ -5940,6 +6689,15 @@ const app = new App();
 window.app = app;
 
 document.addEventListener('DOMContentLoaded', ErrorBoundary.wrap('app-init', () => {
+    // --- Validación de seguridad: verificar que business.js se haya cargado ---
+    // Si Business no está definido, el sistema no puede acceder a las claves
+    // namespaced por device_id y no puede inicializarse. Se evita el colapso
+    // de la aplicación con un error claro en lugar de una excepción en cadena.
+    if (typeof Business === 'undefined') {
+        console.error('[app-init] El archivo business.js no se ha cargado correctamente. Business no está definido.');
+        return;
+    }
+
     // Migrar datos a la nueva namespace con device_id ANTES de cualquier
     // acceso a localStorage. Si se llamara a loadFromStorage() antes,
     // Inventory.init() / Settings.getSettings() crearían valores por

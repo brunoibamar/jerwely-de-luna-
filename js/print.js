@@ -2,13 +2,43 @@ class Print {
     static printReceipt(sale) {
         const receiptData = Checkout.getReceiptData(sale);
         const content = this.formatReceipt(receiptData);
+        this.printToHiddenFrame(content);
+    }
 
-        const printWindow = window.open('', '_blank', 'width=300,height=600');
-        printWindow.document.write(content);
-        printWindow.document.close();
-        printWindow.focus();
-        printWindow.print();
-        printWindow.close();
+    // Renderiza el HTML del ticket dentro del iframe oculto y dispara la
+    // impresión automáticamente. No abre ventanas emergentes ni modales:
+    // el iframe se mantiene off-screen y el navegador muestra su propio
+    // cuadro de diálogo de impresión (limite de seguridad del browser).
+    static printToHiddenFrame(html) {
+        const frame = this._getPrintFrame();
+        if (!frame) return;
+
+        const doc = frame.contentDocument || frame.contentWindow.document;
+        doc.open();
+        doc.write(html);
+        doc.close();
+
+        setTimeout(() => {
+            try {
+                frame.contentWindow.print();
+            } catch (err) {
+                console.warn('[Print] No se pudo imprimir el ticket:', err?.message);
+            }
+        }, 250);
+    }
+
+    // Obtiene (o crea) el iframe oculto usado para imprimir tickets.
+    // Se reutiliza entre llamadas para evitar recrear el elemento cada vez.
+    static _getPrintFrame() {
+        let frame = document.getElementById('pos-print-frame');
+        if (!frame) {
+            frame = document.createElement('iframe');
+            frame.id = 'pos-print-frame';
+            frame.setAttribute('aria-hidden', 'true');
+            frame.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:300px;height:600px;border:0;';
+            document.body.appendChild(frame);
+        }
+        return frame;
     }
 
     static formatReceipt(data) {
