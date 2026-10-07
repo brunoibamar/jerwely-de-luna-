@@ -262,11 +262,12 @@
                             </div>
                             <div id="vip-search-dropdown" class="vip-dropdown hidden"></div>
                             <div id="vip-selected-badge" class="vip-selected-badge hidden">
-                                <span class="vip-badge-name" id="vip-badge-name"></span>
-                                <span class="vip-badge-phone" id="vip-badge-phone"></span>
-                                <span class="vip-badge-pieces" id="vip-badge-pieces"></span>
-                                <button type="button" id="vip-clear-sales-btn" class="btn btn-icon btn-sm" title="Quitar cliente VIP">×</button>
-                            </div>
+                                 <span class="vip-badge-name" id="vip-badge-name"></span>
+                                 <span class="vip-badge-phone" id="vip-badge-phone"></span>
+                                 <span class="vip-badge-pieces" id="vip-badge-pieces"></span>
+                                 <button type="button" id="vip-unlink-sales-btn" class="btn btn-outline btn-sm" title="Desvincular cliente VIP">Desvincular</button>
+                                 <button type="button" id="vip-clear-sales-btn" class="btn btn-icon btn-sm" title="Quitar cliente VIP">×</button>
+                             </div>
                             <div id="vip-reward-alert" class="reward-alert-highlight hidden">
                                 <div class="reward-alert-content">
                                     <span class="reward-alert-icon">🎁</span>
@@ -663,151 +664,284 @@
                 </section>
 
                 <section id="vip-section" class="section">
-                    <h2 class="section-title">Clientes VIP</h2>
-                    <div class="vip-toolbar">
-                        <input type="text" id="vip-search" placeholder="Buscar por nombre o teléfono..." class="search-input">
-                        <button id="add-vip-btn" class="btn btn-primary admin-only">Nuevo Cliente VIP</button>
-                    </div>
-                    <div class="data-table-container">
-                        <table class="data-table" id="vip-table">
-                            <thead>
-                                <tr>
-                                    <th>Nombre</th>
-                                    <th>Teléfono</th>
-                                    <th>Piezas Acumuladas</th>
-                                    <th>Historial de Recompensas</th>
-                                    <th>Estado Actual</th>
-                                    <th class="action-header admin-only">Acciones</th>
-                                </tr>
-                            </thead>
-                            <tbody id="vip-table-body">
-                            </tbody>
-                        </table>
-                    </div>
-                </section>
+            <div class="vip-section-header">
+                <h2 class="section-title vip-section-title">Clientes VIP</h2>
+                <span class="vip-section-count" id="vip-section-count">0 cliente(s)</span>
+            </div>
+            <div class="vip-toolbar">
+                <input type="text" id="vip-search" placeholder="Buscar por nombre o teléfono..." class="search-input">
+                <button id="add-vip-btn" class="btn btn-primary admin-only">Nuevo Cliente VIP</button>
+            </div>
+            <div class="data-table-container vip-table-container">
+                <table class="data-table vip-table" id="vip-table">
+                    <thead>
+                        <tr>
+                            <th>Nombre</th>
+                            <th>Teléfono</th>
+                            <th>Piezas Acumuladas</th>
+                            <th>Historial de Recompensas</th>
+                            <th>Estado Actual</th>
+                            <th class="action-header admin-only">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="vip-table-body">
+                    </tbody>
+                </table>
+            </div>
+        </section>
 
-                <section id="reports-section" class="section">
-                    <h2 class="section-title">Reportes</h2>
+                 <section id="reports-section" class="section">
+                     <h2 class="section-title">Reportes</h2>
 
-                    <!-- Reportes por Día -->
-                    <div class="day-report-module" id="day-report-module">
-                    <div class="day-report-toolbar">
-                            <div class="day-report-date-picker">
-                                <label for="report-date-select">Fecha:</label>
-                                <input type="date" id="report-date-select">
-                                <button id="report-today-btn" class="btn btn-outline btn-sm">Hoy</button>
-                                <button id="refresh-dashboard-btn" class="btn btn-outline btn-sm">Refrescar</button>
-                            </div>
-                            <div class="day-report-actions admin-only">
-                                <button id="print-daily-report-btn" class="btn btn-outline btn-sm">Imprimir Consolidado</button>
-                                <button id="export-daily-report-btn" class="btn btn-outline btn-sm">Exportar Consolidado</button>
-                            </div>
-                    </div>
+                     <!-- Selector de vistas temporales -->
+                     <div class="reports-tabs">
+                         <button type="button" class="reports-tab-btn active" data-report-tab="dia">Día</button>
+                         <button type="button" class="reports-tab-btn" data-report-tab="semana">Semana</button>
+                         <button type="button" class="reports-tab-btn" data-report-tab="mes">Mes</button>
+                         <button type="button" class="reports-tab-btn" data-report-tab="anio">Año</button>
+                     </div>
 
-                        <div class="daily-consolidated-container" id="daily-consolidated-container">
-                        </div>
-                    </div>
+                     <!-- ========== Pestaña DÍA (sin cambios) ========== -->
+                     <div class="report-tab-content" data-report-tab="dia">
+                         <!-- Reportes por Día -->
+                         <div class="day-report-module" id="day-report-module">
+                         <div class="day-report-toolbar">
+                                 <div class="day-report-date-picker">
+                                     <label for="report-date-select">Fecha:</label>
+                                     <input type="date" id="report-date-select">
+                                     <button id="report-today-btn" class="btn btn-outline btn-sm">Hoy</button>
+                                     <button id="refresh-dashboard-btn" class="btn btn-outline btn-sm">Refrescar</button>
+                                 </div>
+                                 <div class="day-report-actions admin-only">
+                                     <button id="print-daily-report-btn" class="btn btn-outline btn-sm">Imprimir Consolidado</button>
+                                     <button id="export-daily-report-btn" class="btn btn-outline btn-sm">Exportar Consolidado</button>
+                                 </div>
+                             </div>
 
-                    <div class="reports-container" style="margin-top: 24px;">
-                        <div class="report-card admin-only">
-                            <h3>Ventas del Día</h3>
-                            <p class="report-value" id="daily-sales">$0.00</p>
-                        </div>
-                        <div class="report-card admin-only">
-                            <h3>Transacciones</h3>
-                            <p class="report-value" id="daily-transactions">0</p>
-                        </div>
-                        <div class="report-card admin-only">
-                            <h3>Ganancia Neta</h3>
-                            <p class="report-value" id="daily-profit">$0.00</p>
-                        </div>
-                        <div class="report-card admin-only">
-                            <h3>Margen Promedio</h3>
-                            <p class="report-value" id="avg-margin">0%</p>
-                        </div>
-                    </div>
-                    <div class="admin-only" style="margin-top: 24px;">
-                        <div class="chart-header">
-                            <h3 class="section-title">Gráfica de Ventas Diarias</h3>
-                            <button type="button" id="refresh-daily-chart" class="btn-icon btn-sm" title="Refrescar">
-                                <span aria-hidden="true">&#x21bb;</span>
-                            </button>
-                        </div>
-                        <div class="chart-container">
-                            <canvas id="daily-sales-chart" width="600" height="300"></canvas>
-                        </div>
-                    </div>
-                    <div class="admin-only" id="advanced-reports" style="margin-top: 24px;">
-                        <h3 class="section-title">Reportes Avanzados</h3>
-                        <div class="reports-container">
-                            <div class="report-card">
-                                <h3>Ventas por Categoría</h3>
-                                <p class="report-value" id="category-sales">$0.00</p>
-                            </div>
-                            <div class="report-card">
-                                <h3>Productos Más Vendidos</h3>
-                                <p class="report-value" id="top-product">N/A</p>
-                            </div>
-                        </div>
-                        <div style="margin-top: 24px;">
-                            <h3 class="section-title">Gráfica Mensual de Ventas</h3>
-                            <div class="chart-container">
-                            <canvas id="monthly-sales-chart" width="600" height="300"></canvas>
-                        </div>
-                    </div>
+                                 <div class="daily-consolidated-container" id="daily-consolidated-container">
+                                 </div>
+                             </div>
 
-                    <!-- Reportes por Semana -->
-                    <div class="reports-container" style="margin-top: 24px;">
-                        <div class="report-card">
-                            <h3>Ventas de la Semana</h3>
-                            <p class="report-value" id="weekly-sales">$0.00</p>
-                        </div>
-                        <div class="report-card">
-                            <h3>Transacciones</h3>
-                            <p class="report-value" id="weekly-transactions">0</p>
-                        </div>
-                        <div class="report-card">
-                            <h3>Ganancia Neta</h3>
-                            <p class="report-value" id="weekly-profit">$0.00</p>
-                        </div>
-                        <div class="report-card">
-                            <h3>Margen Promedio</h3>
-                            <p class="report-value" id="weekly-margin">0%</p>
-                        </div>
-                    </div>
-                    <div class="admin-only" style="margin-top: 24px;">
-                        <h3 class="section-title">Gráfica de Ventas Semanal</h3>
-                        <div class="chart-container">
-                            <canvas id="weekly-sales-chart" width="600" height="300"></canvas>
-                        </div>
-                    </div>
+                              <div class="reports-container" style="margin-top: 24px;">
+                                  <div class="report-card admin-only">
+                                      <h3>Total Ventas</h3>
+                                      <p class="report-value" id="daily-sales">$0.00</p>
+                                  </div>
+                                  <div class="report-card admin-only">
+                                      <h3>Transacciones</h3>
+                                      <p class="report-value" id="daily-transactions">0</p>
+                                  </div>
+                                  <div class="report-card admin-only">
+                                      <h3>Piezas Vendidas</h3>
+                                      <p class="report-value" id="daily-pieces">0</p>
+                                  </div>
+                                  <div class="report-card admin-only">
+                                      <h3>Ganancia Neta</h3>
+                                      <p class="report-value" id="daily-profit">$0.00</p>
+                                  </div>
+                                  <div class="report-card admin-only">
+                                      <h3>Margen Promedio</h3>
+                                      <p class="report-value" id="avg-margin">0%</p>
+                                  </div>
+                              </div>
+                              <div class="admin-only" style="margin-top: 24px;">
+                                   <div class="chart-header">
+                                       <h3 class="section-title">Gráfica 1: Ventas ($)</h3>
+                                       <button type="button" id="refresh-daily-chart" class="btn-icon btn-sm" title="Refrescar">
+                                           <span aria-hidden="true">&#x21bb;</span>
+                                       </button>
+                                   </div>
+                                   <div class="chart-container" id="daily-financial-chart-container">
+                                       <canvas id="daily-financial-chart" width="600" height="300"></canvas>
+                                   </div>
+                               </div>
+                               <div class="admin-only" style="margin-top: 24px;">
+                                   <div class="chart-header">
+                                       <h3 class="section-title">Gráfica 2: Piezas Vendidas</h3>
+                                   </div>
+                                    <div class="chart-container" id="daily-volume-chart-container">
+                                        <canvas id="daily-volume-chart" width="600" height="300"></canvas>
+                                    </div>
+                                </div>
+                                <div class="admin-only" style="margin-top: 24px;">
+                                    <div class="chart-header">
+                                        <h3 class="section-title">Gráfica 3: Ventas por Hora ($)</h3>
+                                    </div>
+                                    <div class="chart-container" id="daily-sales-chart-container">
+                                        <canvas id="daily-sales-chart" width="600" height="300"></canvas>
+                                    </div>
+                                </div>
+                      </div>
 
-                    <!-- Reportes por Año -->
-                    <div class="reports-container" style="margin-top: 24px;">
-                        <div class="report-card">
-                            <h3>Ventas del Año</h3>
-                            <p class="report-value" id="annual-sales">$0.00</p>
-                        </div>
-                        <div class="report-card">
-                            <h3>Transacciones</h3>
-                            <p class="report-value" id="annual-transactions">0</p>
-                        </div>
-                        <div class="report-card">
-                            <h3>Ganancia Neta</h3>
-                            <p class="report-value" id="annual-profit">$0.00</p>
-                        </div>
-                        <div class="report-card">
-                            <h3>Margen Promedio</h3>
-                            <p class="report-value" id="annual-margin">0%</p>
-                        </div>
-                    </div>
-                    <div class="admin-only" style="margin-top: 24px;">
-                        <h3 class="section-title">Gráfica de Ventas Anual</h3>
-                        <div class="chart-container">
-                            <canvas id="annual-sales-chart" width="600" height="300"></canvas>
-                        </div>
-                    </div>
-                </div>
+                      <!-- ========== Pestaña SEMANA ========== -->
+                      <div class="report-tab-content hidden" data-report-tab="semana">
+                          <div class="reports-container">
+                              <div class="report-card admin-only">
+                                  <h3>Total Ventas</h3>
+                                  <p class="report-value" id="weekly-sales">$0.00</p>
+                              </div>
+                              <div class="report-card admin-only">
+                                  <h3>Transacciones</h3>
+                                  <p class="report-value" id="weekly-transactions">0</p>
+                              </div>
+                              <div class="report-card admin-only">
+                                  <h3>Piezas Vendidas</h3>
+                                  <p class="report-value" id="weekly-pieces">0</p>
+                              </div>
+                              <div class="report-card admin-only">
+                                  <h3>Ganancia Neta</h3>
+                                  <p class="report-value" id="weekly-profit">$0.00</p>
+                              </div>
+                              <div class="report-card admin-only">
+                                  <h3>Margen Promedio</h3>
+                                  <p class="report-value" id="weekly-margin">0%</p>
+                              </div>
+                          </div>
+                          <div class="admin-only" style="margin-top: 24px;">
+                              <div class="chart-header">
+                                  <h3 class="section-title">Gráfica 1: Ventas ($)</h3>
+                                  <button type="button" id="refresh-weekly-chart" class="btn-icon btn-sm" title="Refrescar">
+                                      <span aria-hidden="true">&#x21bb;</span>
+                                  </button>
+                              </div>
+                              <div class="chart-container" id="weekly-financial-chart-container">
+                                   <canvas id="weekly-financial-chart" width="600" height="300"></canvas>
+                               </div>
+                          </div>
+                          <div class="admin-only" style="margin-top: 24px;">
+                              <div class="chart-header">
+                                  <h3 class="section-title">Gráfica 2: Piezas Vendidas</h3>
+                              </div>
+                              <div class="chart-container" id="weekly-volume-chart-container">
+                                   <canvas id="weekly-volume-chart" width="600" height="300"></canvas>
+                               </div>
+                          </div>
+                      </div>
+
+                      <!-- ========== Pestaña MES ========== -->
+                      <div class="report-tab-content hidden" data-report-tab="mes">
+                          <div class="reports-container">
+                              <div class="report-card admin-only">
+                                  <h3>Total Ventas</h3>
+                                  <p class="report-value" id="monthly-sales">$0.00</p>
+                              </div>
+                              <div class="report-card admin-only">
+                                  <h3>Transacciones</h3>
+                                  <p class="report-value" id="monthly-transactions">0</p>
+                              </div>
+                              <div class="report-card admin-only">
+                                  <h3>Piezas Vendidas</h3>
+                                  <p class="report-value" id="monthly-pieces">0</p>
+                              </div>
+                              <div class="report-card admin-only">
+                                  <h3>Ganancia Neta</h3>
+                                  <p class="report-value" id="monthly-profit">$0.00</p>
+                              </div>
+                              <div class="report-card admin-only">
+                                  <h3>Margen Promedio</h3>
+                                  <p class="report-value" id="monthly-margin">0%</p>
+                              </div>
+                              <div class="report-card admin-only highlight-card">
+                                  <h3>Mejor Mes</h3>
+                                  <p class="report-value" id="monthly-best-month">—</p>
+                                  <span class="report-subvalue" id="monthly-best-month-value">$0.00</span>
+                              </div>
+                          </div>
+                          <div class="admin-only" style="margin-top: 24px;">
+                              <div class="chart-header">
+                                  <h3 class="section-title">Gráfica 1: Ventas ($)</h3>
+                                  <button type="button" id="refresh-monthly-chart" class="btn-icon btn-sm" title="Refrescar">
+                                      <span aria-hidden="true">&#x21bb;</span>
+                                  </button>
+                              </div>
+                              <div class="chart-container" id="monthly-financial-chart-container">
+                                   <canvas id="monthly-financial-chart" width="600" height="300"></canvas>
+                               </div>
+                          </div>
+                          <div class="admin-only" style="margin-top: 24px;">
+                              <div class="chart-header">
+                                  <h3 class="section-title">Gráfica 2: Piezas Vendidas</h3>
+                              </div>
+                              <div class="chart-container" id="monthly-volume-chart-container">
+                                   <canvas id="monthly-volume-chart" width="600" height="300"></canvas>
+                               </div>
+                          </div>
+                      </div>
+
+                      <!-- ========== Pestaña AÑO ========== -->
+                      <div class="report-tab-content hidden" data-report-tab="anio">
+                          <div class="admin-only">
+                              <div class="chart-header" style="margin-bottom: 16px;">
+                                  <label for="year-selector">Año:</label>
+                                  <select id="year-selector"></select>
+                                  <button type="button" id="refresh-historical-chart" class="btn-icon btn-sm" title="Refrescar">
+                                      <span aria-hidden="true">&#x21bb;</span>
+                                  </button>
+                              </div>
+                          </div>
+                          <div class="reports-container">
+                              <div class="report-card admin-only">
+                                  <h3>Total Ventas</h3>
+                                  <p class="report-value" id="annual-sales">$0.00</p>
+                              </div>
+                              <div class="report-card admin-only">
+                                  <h3>Transacciones</h3>
+                                  <p class="report-value" id="annual-transactions">0</p>
+                              </div>
+                              <div class="report-card admin-only">
+                                  <h3>Piezas Vendidas</h3>
+                                  <p class="report-value" id="annual-pieces">0</p>
+                              </div>
+                              <div class="report-card admin-only">
+                                  <h3>Ganancia Neta</h3>
+                                  <p class="report-value" id="annual-profit">$0.00</p>
+                              </div>
+                              <div class="report-card admin-only">
+                                  <h3>Margen Promedio</h3>
+                                  <p class="report-value" id="annual-margin">0%</p>
+                              </div>
+                              <div class="report-card admin-only highlight-card">
+                                  <h3>Mejor Mes</h3>
+                                  <p class="report-value" id="annual-best-month">—</p>
+                                  <span class="report-subvalue" id="annual-best-month-value">$0.00</span>
+                              </div>
+                          </div>
+                          <div class="admin-only" style="margin-top: 24px;">
+                              <div class="chart-header">
+                                  <h3 class="section-title">Gráfica 1: Ventas ($)</h3>
+                                  <button type="button" id="refresh-annual-chart" class="btn-icon btn-sm" title="Refrescar">
+                                      <span aria-hidden="true">&#x21bb;</span>
+                                  </button>
+                              </div>
+                              <div class="chart-container" id="annual-financial-chart-container">
+                                   <canvas id="annual-financial-chart" width="600" height="300"></canvas>
+                               </div>
+                          </div>
+                          <div class="admin-only" style="margin-top: 24px;">
+                              <div class="chart-header">
+                                  <h3 class="section-title">Gráfica 2: Piezas Vendidas</h3>
+                              </div>
+                               <div class="chart-container" id="annual-volume-chart-container">
+                                   <canvas id="annual-volume-chart" width="600" height="300"></canvas>
+                               </div>
+                          </div>
+                      </div>
+
+                     <!-- Reportes Avanzados (admin-only, fuera de tabs) -->
+                     <div class="admin-only" id="advanced-reports" style="margin-top: 24px;">
+                         <h3 class="section-title">Reportes Avanzados</h3>
+                         <div class="reports-container">
+                             <div class="report-card">
+                                 <h3>Ventas por Categoría</h3>
+                                 <p class="report-value" id="category-sales">$0.00</p>
+                             </div>
+                             <div class="report-card">
+                                 <h3>Productos Más Vendidos</h3>
+                                 <p class="report-value" id="top-product">N/A</p>
+                             </div>
+                         </div>
+                     </div>
+                 </div>
             </section>
 
             <section id="settings-section" class="section">
@@ -1068,28 +1202,57 @@
                 </section>
             </main>
         </div>
-    </div>
+     </div>
 
-    <!-- EmailJS SDK v4 para envío directo de correos -->
-    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-    <!-- Aislamiento por device_id: cada navegador genera un device_id único
-         que namespacea todo el localStorage (pos_<clave>__biz_default__dev_<deviceId>) -->
-    <script src="js/business.js"></script>
-    <!-- Capturador global de errores (Error Boundary) -->
-    <script src="js/errorBoundary.js"></script>
-    <script src="js/auth.js"></script>
-    <!-- Módulo POS: VolumePricing, HeldSales, BarcodeScanner, PaymentProcessor -->
-    <script src="js/pos.js"></script>
-    <script src="js/cart.js"></script>
-    <script src="js/checkout.js"></script>
-    <script src="js/inventory.js"></script>
-    <script src="js/vip.js"></script>
-    <script src="js/cut.js"></script>
-    <script src="js/reports.js"></script>
-    <script src="js/print.js"></script>
-    <script src="js/backup.js"></script>
-    <script src="js/returns.js"></script>
-    <script src="js/guarantee.js"></script>
-    <script src="js/app.js"></script>
+     <!-- Ticket Preview Modal (hidden by default, shown only on explicit print/preview click) -->
+     <div id="ticket-modal" class="ticket-modal hidden">
+         <div class="ticket-modal-backdrop" id="ticket-modal-backdrop"></div>
+         <div class="ticket-modal-content">
+             <div class="ticket-modal-header">
+                 <h3 class="ticket-modal-title">Vista Previa del Ticket</h3>
+                 <button type="button" id="ticket-modal-close" class="ticket-modal-close" title="Cerrar">×</button>
+             </div>
+             <div class="ticket-preview-wrapper" id="ticket-preview-wrapper">
+                 <div class="ticket-receipt" id="ticket-receipt">
+                     <!-- Receipt content rendered by Print.showTicketModal() -->
+                 </div>
+             </div>
+             <div class="ticket-modal-actions">
+                 <button type="button" id="ticket-print-btn" class="btn btn-outline btn-sm">Imprimir Ticket</button>
+                 <button type="button" id="ticket-modal-close-btn" class="btn btn-primary btn-sm">Cerrar</button>
+             </div>
+         </div>
+     </div>
+
+      <!-- Marco de impresión oculto (off-screen): el ticket se renderiza dentro
+           de este iframe y se envía a imprimir sin abrir ventanas emergentes. -->
+      <iframe id="pos-print-frame" aria-hidden="true"
+              style="position:fixed;top:-9999px;left:-9999px;width:300px;height:600px;border:0;"></iframe>
+
+      <!-- EmailJS SDK v4 para envío directo de correos -->
+     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+     <!-- Chart.js para gráficas interactivas -->
+     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+      <!-- chartjs-plugin-datalabels: plugin desactivado globalmente en app.js (_initChartDefaults).
+           Las etiquetas de texto NO aparecen sobre las barras; los montos ($ y piezas)
+           se muestran únicamente en el tooltip al pasar el ratón. -->
+     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js"></script>
+     <script src="js/business.js"></script>
+     <!-- Capturador global de errores (Error Boundary) -->
+     <script src="js/errorBoundary.js"></script>
+     <script src="js/auth.js"></script>
+     <!-- Módulo POS: VolumePricing, HeldSales, BarcodeScanner, PaymentProcessor -->
+     <script src="js/pos.js"></script>
+     <script src="js/cart.js"></script>
+     <script src="js/checkout.js"></script>
+     <script src="js/inventory.js"></script>
+     <script src="js/vip.js"></script>
+     <script src="js/cut.js"></script>
+     <script src="js/reports.js"></script>
+     <script src="js/print.js"></script>
+     <script src="js/backup.js"></script>
+     <script src="js/returns.js"></script>
+     <script src="js/guarantee.js"></script>
+     <script src="js/app.js"></script>
 </body>
 </html>

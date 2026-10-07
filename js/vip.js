@@ -102,6 +102,7 @@ class VIPCustomer {
             phone: customer.phone.trim(),
             notes: customer.notes.trim() || '',
             accumulatedPieces: 0,
+            purchases: [],
             rewardHistory: [],
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString()
@@ -141,6 +142,99 @@ class VIPCustomer {
             type: 'acumulacion',
             pieces: count,
             description: `Se acumularon ${count} pieza(s)`,
+            note: note.trim()
+        });
+        return this.update(id, customer);
+    }
+
+    // Registrar una compra (venta) asociada al cliente VIP:
+    // acumula piezas, registra el monto y guarda el detalle
+    // individual en el historial de compras.
+    static addPurchase(id, sale, note = '') {
+        const customer = this.findById(id);
+        if (!customer) return { success: false, error: 'Cliente no encontrado' };
+        if (!sale || !Array.isArray(sale.items) || sale.items.length === 0) {
+            return { success: false, error: 'Datos de venta inválidos' };
+        }
+
+        const totalPieces = sale.items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+        const totalAmount = sale.items.reduce((sum, item) => sum + (item.amount || 0), 0);
+        if (totalPieces === 0) {
+            return { success: false, error: 'La venta no contiene piezas' };
+        }
+
+        customer.accumulatedPieces = (customer.accumulatedPieces || 0) + totalPieces;
+        customer.updatedAt = new Date().toISOString();
+
+        // Historial de compras individuales (para reportes y auditoría)
+        customer.purchases = customer.purchases || [];
+        customer.purchases.push({
+            id: `vp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            saleId: sale.id,
+            date: sale.date,
+            pieces: totalPieces,
+            amount: totalAmount,
+            paymentMethod: sale.paymentMethod || 'cash',
+            note: note.trim()
+        });
+
+        // Entrada en el historial de recompensas (tipo 'venta')
+        customer.rewardHistory.push({
+            id: `rw_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            date: new Date().toISOString(),
+            type: 'venta',
+            pieces: totalPieces,
+            amount: totalAmount,
+            description: `Venta ${sale.id} - $${totalAmount.toFixed(2)}`,
+            note: note.trim()
+        });
+
+        return this.update(id, customer);
+    }
+
+    static removePieces(id, pieces, note = '') {
+        const customer = this.findById(id);
+        if (!customer) return { success: false, error: 'Cliente no encontrado' };
+        const count = parseInt(pieces);
+        if (isNaN(count) || count <= 0) {
+            return { success: false, error: 'El número de piezas debe ser mayor a 0' };
+        }
+        const current = customer.accumulatedPieces || 0;
+        const newPieces = Math.max(0, current - count);
+        const actualRemoved = current - newPieces;
+        if (actualRemoved === 0) {
+            return { success: false, error: 'No hay piezas suficientes para restar' };
+        }
+        customer.accumulatedPieces = newPieces;
+        customer.updatedAt = new Date().toISOString();
+        customer.rewardHistory.push({
+            id: `rw_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            date: new Date().toISOString(),
+            type: 'ajuste',
+            pieces: -actualRemoved,
+            description: `Se restaron ${actualRemoved} pieza(s)`,
+            note: note.trim()
+        });
+        return this.update(id, customer);
+    }
+
+    static setPieces(id, pieces, note = '') {
+        const customer = this.findById(id);
+        if (!customer) return { success: false, error: 'Cliente no encontrado' };
+        const newCount = parseInt(pieces);
+        if (isNaN(newCount) || newCount < 0) {
+            return { success: false, error: 'El número de piezas debe ser 0 o mayor' };
+        }
+        const current = customer.accumulatedPieces || 0;
+        const diff = newCount - current;
+        customer.accumulatedPieces = newCount;
+        customer.updatedAt = new Date().toISOString();
+        customer.rewardHistory.push({
+            id: `rw_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+            date: new Date().toISOString(),
+            type: 'ajuste',
+            pieces: diff,
+            description: `Piezas ajustadas a ${newCount}`,
             note: note.trim()
         });
         return this.update(id, customer);
