@@ -104,6 +104,96 @@ class ReportService {
     }
 
     // ============================================================
+    //  RESUMENES POR PERIODO CON DEVOLUCIONES (return-aware)
+    //  Cada método devuelve: totalSales (netas), transactionCount,
+    //  piecesNetas, returnsTotal, profit, margin — todo descontando
+    //  devoluciones de forma explícita.
+    // ============================================================
+
+    // Resumen de ventas para un conjunto arbitrario de ventas,
+    // descontando devoluciones (monto y piezas).
+    static summarizeSales(sales = []) {
+        const list = Array.isArray(sales) ? sales : [];
+        let totalCost = 0;
+        let totalRevenue = 0;
+        let piecesSold = 0;
+
+        list.forEach(sale => {
+            (sale.items || []).forEach(item => {
+                const product = Inventory.findByBarcode(item.barcode);
+                if (product && product.cost) {
+                    totalCost += product.cost * item.quantity;
+                }
+                totalRevenue += item.amount || 0;
+                piecesSold += item.quantity || 0;
+            });
+        });
+
+        const returnsTotal = (typeof Returns !== 'undefined')
+            ? Returns.getTotalBySales(list) : 0;
+        const piecesReturned = (typeof Returns !== 'undefined')
+            ? Returns.getReturnedItemsBySales(list) : 0;
+        const netRevenue = totalRevenue - returnsTotal;
+        const netPieces = piecesSold - piecesReturned;
+        const profit = netRevenue - totalCost;
+        const margin = totalCost > 0 ? ((profit / totalCost) * 100).toFixed(1) : '0.0';
+
+        return {
+            grossRevenue: totalRevenue,
+            totalSales: netRevenue,
+            netSales: netRevenue,
+            transactionCount: list.length,
+            piecesSold: piecesSold,
+            piecesReturned: piecesReturned,
+            netPieces: netPieces,
+            totalCost: totalCost,
+            returnsTotal: returnsTotal,
+            profit: profit,
+            margin: margin
+        };
+    }
+
+    // Resumen semanal (lunes → domingo) con devoluciones
+    static getWeeklySummary(weekStart = null) {
+        const sales = this.getWeeklySales(weekStart);
+        return {
+            ...this.summarizeSales(sales),
+            periodStart: DateUtil.toLocalDate(
+                weekStart ? new Date(weekStart) : DateUtil.startOfWeek()
+            ),
+            periodEnd: DateUtil.toLocalDate(
+                weekStart ? new Date(weekStart) : DateUtil.endOfWeek()
+            )
+        };
+    }
+
+    // Resumen mensual con devoluciones
+    static getMonthlySummary(month = null, year = null) {
+        const now = new Date();
+        const m = month || now.getMonth() + 1;
+        const y = year || now.getFullYear();
+        const sales = this.getMonthlySales(m, y);
+        return {
+            ...this.summarizeSales(sales),
+            periodStart: DateUtil.toLocalDate(DateUtil.startOfMonth(new Date(y, m - 1, 1))),
+            periodEnd: DateUtil.toLocalDate(DateUtil.endOfMonth(new Date(y, m - 1, 1))),
+            month: m,
+            year: y
+        };
+    }
+
+    // Resumen anual con devoluciones
+    static getYearlySummary(year = new Date().getFullYear()) {
+        const sales = this.getYearlySales(year);
+        return {
+            ...this.summarizeSales(sales),
+            periodStart: DateUtil.toLocalDate(DateUtil.startOfYear(year)),
+            periodEnd: DateUtil.toLocalDate(DateUtil.endOfYear(year)),
+            year: year
+        };
+    }
+
+    // ============================================================
     //  OBTENER TODOS LOS CORTE DE CAJA (SESIONES) DE UNA FECHA
     //  Incluye cortes cerrados y la sesión abierta (si existe)
     //  cuya fecha de apertura coincide.

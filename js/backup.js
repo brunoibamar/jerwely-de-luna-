@@ -14,13 +14,14 @@ class Backup {
     // Datos completos del respaldo (usado por la descarga manual y el respaldo automático)
     static buildBackupData() {
         return {
-            version: '1.2',
+            version: '1.3',
             timestamp: new Date().toISOString(),
             store: Business.getStoreName(),
             businessName: Business.getBusinessName(),
             businessId: Business.getCurrentBusinessId(),
             inventory: Inventory.getAll(),
             sales: SaleService.getAll(true),
+            historicalSales: SaleService.getHistoricalSales(),
             users: Auth.adminProfile,
             settings: Settings.getSettings(),
             shiftSession: localStorage.getItem(Cut.storageKey),
@@ -57,6 +58,7 @@ class Backup {
             timestamp: new Date().toISOString(),
             inventory: Inventory.getAll(),
             sales: SaleService.getAll(),
+            historicalSales: SaleService.getHistoricalSales(),
             settings: Settings.getSettings(),
             heldSales: HeldSales.getAll(),
             returns: (typeof Returns !== 'undefined') ? Returns.getAll() : [],
@@ -74,6 +76,7 @@ class Backup {
         const data = JSON.parse(stored);
         Inventory.saveProducts(data.inventory || Inventory.defaultProducts);
         SaleService.save(data.sales || []);
+        if (data.historicalSales) SaleService.saveHistorical(data.historicalSales);
         Settings.saveSettings(data.settings || {});
         if (data.heldSales) localStorage.setItem(HeldSales.storageKey, JSON.stringify(data.heldSales));
         if (data.returns) localStorage.setItem(Returns.storageKey, JSON.stringify(data.returns));
@@ -370,6 +373,11 @@ class Backup {
         const backupSales = this._normalizeArray(data.sales);
         SaleService.save(backupSales);
 
+        if (data.historicalSales) {
+            const backupHistorical = this._normalizeArray(data.historicalSales);
+            SaleService.saveHistorical(backupHistorical);
+        }
+
         if (data.settings) {
             const backupSettings = this._normalizeObject(data.settings);
             Settings.saveSettings(Object.keys(backupSettings).length ? backupSettings : Settings.defaultSettings);
@@ -421,6 +429,7 @@ class Backup {
             timestamp: data.timestamp,
             inventoryCount: data.inventory?.length || 0,
             salesCount: data.sales?.length || 0,
+            historicalSalesCount: data.historicalSales?.length || 0,
             returnsCount: data.returns?.length || 0,
             cashAdjustmentsCount: data.cashAdjustments?.length || 0,
             guaranteeExchangesCount: data.guaranteeExchanges?.length || 0
@@ -457,6 +466,7 @@ class Backup {
                 reason: reason,
                 inventory: Inventory.getAll(),
                 sales: SaleService.getAll(true),
+                historicalSales: SaleService.getHistoricalSales(),
                 settings: Settings.getSettings(),
                 heldSales: HeldSales.getAll(),
                 returns: Returns.getAll(),
@@ -485,6 +495,7 @@ class Backup {
         try {
             if (data.inventory) Inventory.saveProducts(data.inventory);
             if (data.sales) SaleService.save(data.sales);
+            if (data.historicalSales) SaleService.saveHistorical(data.historicalSales);
             if (data.settings) Settings.saveSettings(data.settings);
             if (data.heldSales) SafeStorage.setItem(HeldSales.storageKey, SafeJSON.stringify(data.heldSales));
             if (data.returns) SafeStorage.setItem(Returns.storageKey, SafeJSON.stringify(data.returns));

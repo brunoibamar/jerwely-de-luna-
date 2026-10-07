@@ -207,6 +207,114 @@ class Business {
 
         return migrated;
     }
+
+    // --- Recuperar datos huérfanos de un device_id anterior ---
+    // Si la clave jewelry_deluna_device_id se perdió (limpieza parcial de
+    // localStorage, navegación privada, etc.), se genera un nuevo device_id y
+    // todos los datos guardados bajo el namespace anterior quedan huérfanos.
+    // Este método los detecta, los traslada al namespace del device_id actual
+    // y elimina los huérfanos. Es idempotente y seguro:
+    //   - Si el namespace actual NO tiene datos → restaura directamente.
+    //   - Si el namespace actual YA tiene datos → fusiona (prioriza los
+    //     datos actuales, completando con los huérfanos).
+    // Siempre prefiere datos existentes sobre los migrados.
+    static recoverOrphanedDeviceData() {
+        const currentDeviceId = Device.getId();
+        const marker = `__biz_${this.FIXED_BIZ_ID}__dev_`;
+        const markerLen = marker.length;
+
+        // Recolectar todos los device_ids huérfanos y sus claves
+        const orphansByDevice = new Map();
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || !key.startsWith('pos_')) continue;
+
+            const idx = key.indexOf(marker);
+            if (idx === -1) continue; // no es device-namespaced
+
+            const oldDeviceId = key.substring(idx + markerLen);
+            if (oldDeviceId === currentDeviceId) continue; // ya está bajo el device actual
+
+            const baseKey = key.substring(0, idx);
+            if (!this.ALL_NAMESPACED_KEYS.includes(baseKey)) continue;
+
+            if (!orphansByDevice.has(oldDeviceId)) {
+                orphansByDevice.set(oldDeviceId, []);
+            }
+            orphansByDevice.get(oldDeviceId).push({ key, baseKey, value: localStorage.getItem(key) });
+        }
+
+        if (orphansByDevice.size === 0) {
+            return { recovered: false, message: 'No hay datos huérfanos de device_id anterior' };
+        }
+
+        // Seleccionar el device_id huérfano con más claves (máxima preservación)
+        let bestOldId = null;
+        let bestCount = 0;
+        for (const [oldId, entries] of orphansByDevice) {
+            if (entries.length > bestCount) {
+                bestCount = entries.length;
+                bestOldId = oldId;
+            }
+        }
+
+        const restored = [];
+        const merged = [];
+        const bestOrphans = orphansByDevice.get(bestOldId);
+
+        for (const { key, baseKey, value } of bestOrphans) {
+            if (value === null) continue;
+
+            const newKey = this.key(baseKey);
+            const existing = localStorage.getItem(newKey);
+
+            if (existing === null) {
+                // No hay nada en el namespace actual → restaurar directamente
+                SafeStorage.setItem(newKey, value);
+                localStorage.removeItem(key);
+                restored.push(baseKey);
+            } else if (baseKey === 'pos_settings') {
+                // Settings: fusionar (los huérfanos completan valores perdidos)
+                const oldSettings = SafeJSON.parse(value, null, key);
+                const newSettings = SafeJSON.parse(existing, null, newKey);
+                if (oldSettings && newSettings &&
+                    typeof oldSettings === 'object' && !Array.isArray(oldSettings) &&
+                    typeof newSettings === 'object' && !Array.isArray(newSettings)) {
+                    const combined = { ...oldSettings, ...newSettings };
+                    SafeStorage.setItem(newKey, SafeJSON.stringify(combined));
+                    localStorage.removeItem(key);
+                    merged.push(baseKey);
+                } else {
+                    // No se pudo fusionar; preservar lo existente y limpiar huérfano
+                    localStorage.removeItem(key);
+                }
+            } else {
+                // Otros datos: preservar actual, limpiar huérfano
+                localStorage.removeItem(key);
+            }
+        }
+
+        // Limpiar los device_ids huérfanos restantes (si algún key no se procesó)
+        for (const [oldId, entries] of orphansByDevice) {
+            if (oldId === bestOldId) continue;
+            for (const { key } of entries) {
+                localStorage.removeItem(key);
+            }
+        }
+
+        // Si se recuperaron el device_id huérfano y la clave del device_id persistía,
+        // no borrar jewelry_deluna_device_id (es un dato global, no namespaced)
+
+        return {
+            recovered: restored.length > 0 || merged.length > 0,
+            restored,
+            merged,
+            oldDeviceId: bestOldId,
+            message: restored.length > 0 || merged.length > 0
+                ? `${restored.length + merged.length} clave(s) restaurada(s) desde device_id anterior (${bestOldId})`
+                : 'Datos huérfanos limpiados sin restauración'
+        };
+    }
 }
 
 window.Business = Business;
@@ -241,6 +349,79 @@ class DateUtil {
         if (!isoDate || !localDate) return false;
         return this.toLocalDate(isoDate) === localDate;
     }
+
+    // --- Date range helpers ---
+
+    // Primer día (lunes) de la semana que contiene `date` (local)
+    static startOfWeek(date = new Date()) {
+        const d = date instanceof Date ? date : new Date(date);
+        const day = d.getDay();
+        const monday = new Date(d);
+        monday.setDate(d.getDate() - ((day + 6) % 7));
+        monday.setHours(0, 0, 0, 0);
+        return monday;
+    }
+
+    // Último día (domingo) de la semana que contiene `date` (local)
+    static endOfWeek(date = new Date()) {
+        const d = date instanceof Date ? date : new Date(date);
+        const day = d.getDay();
+        const sunday = new Date(d);
+        sunday.setDate(d.getDate() + (6 - ((day + 6) % 7)));
+        sunday.setHours(23, 59, 59, 999);
+        return sunday;
+    }
+
+    // Array de 7 strings 'YYYY-MM-DD' (lunes → domingo)
+    static getWeekDates(date = new Date()) {
+        const dates = [];
+        const start = this.startOfWeek(date);
+        for (let i = 0; i < 7; i++) {
+            dates.push(this.toLocalDate(new Date(start.getTime() + i * 86400000)));
+        }
+        return dates;
+    }
+
+    // Primer día del mes (local)
+    static startOfMonth(date = new Date()) {
+        const d = date instanceof Date ? date : new Date(date);
+        return new Date(d.getFullYear(), d.getMonth(), 1);
+    }
+
+    // Último día del mes (local)
+    static endOfMonth(date = new Date()) {
+        const d = date instanceof Date ? date : new Date(date);
+        return new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+    }
+
+    // Array de strings 'YYYY-MM-DD' para cada día del mes que contiene `date`
+    static getMonthDates(date = new Date()) {
+        const dates = [];
+        const start = this.startOfMonth(date);
+        const end = this.endOfMonth(date);
+        const totalDays = Math.ceil((end - start + 1) / 86400000);
+        for (let i = 0; i < totalDays; i++) {
+            dates.push(this.toLocalDate(new Date(start.getTime() + i * 86400000)));
+        }
+        return dates;
+    }
+
+    // Primer día del año (local)
+    static startOfYear(year = new Date().getFullYear()) {
+        return new Date(year, 0, 1);
+    }
+
+    // Último día del año (local)
+    static endOfYear(year = new Date().getFullYear()) {
+        return new Date(year, 11, 31, 23, 59, 59, 999);
+    }
+
+    // Nombres de meses en español (para etiquetas de gráfica)
+    static MONTH_NAMES_ES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun',
+        'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+    // Nombres de días de la semana en español (lunes → domingo)
+    static WEEKDAY_NAMES_ES = ['lun', 'mar', 'mié', 'jue', 'vie', 'sáb', 'dom'];
 }
 
 window.DateUtil = DateUtil;
