@@ -55,6 +55,7 @@ class Cut {
     static calculateSummary(sales, initialAmount = 0) {
         let cashTotal = 0;
         let cardTotal = 0;
+        let transferTotal = 0;
         let piecesSold = 0;
 
         sales.forEach(s => {
@@ -66,6 +67,8 @@ class Cut {
                 const pd = s.paymentDetails || {};
                 cashTotal += pd.cashAmount || 0;
                 cardTotal += pd.cardAmount || 0;
+            } else if (s.paymentMethod === 'transfer') {
+                transferTotal += s.total;
             }
             piecesSold += s.items ? s.items.reduce((sum, item) => sum + (item.quantity || 0), 0) : 0;
         });
@@ -80,6 +83,7 @@ class Cut {
             cardSales: cardCount,
             cashTotal,
             cardTotal,
+            transferTotal,
             grandTotal: sales.reduce((sum, s) => sum + s.total, 0),
             cashInDrawer: cashTotal,
             transactionCount: sales.length,
@@ -236,7 +240,11 @@ class Cut {
         const profit = totalRevenue - totalCost - returnsTotal;
         const margin = totalCost > 0 ? ((profit / totalCost) * 100).toFixed(1) : '0.0';
 
-        // Resumen completo basado en la ventana de tiempo de la sesión
+        const adjTotals = (CashAdjustment && CashAdjustment.getTotal)
+            ? CashAdjustment.getTotal(DateUtil.toLocalDate(now))
+            : { cash: 0, card: 0, total: 0 };
+        const cashAdjustmentsTotal = adjTotals.cash || 0;
+
         const sessionSummary = this.getSessionSummary(session);
 
         session.summary = sessionSummary;
@@ -258,9 +266,9 @@ class Cut {
             totalSales: sessionSummary.grandTotal || 0,
             cashSales: sessionSummary.cashTotal || 0,
             cardSales: sessionSummary.cardTotal || 0,
-            closingAmount: (sessionSummary.cashTotal || 0) + session.initialAmount,
+            closingAmount: (sessionSummary.cashTotal || 0) + session.initialAmount + cashAdjustmentsTotal,
             transactionCount: sessionSummary.transactionCount,
-            cashInDrawer: (sessionSummary.cashTotal || 0) + session.initialAmount,
+            cashInDrawer: (sessionSummary.cashTotal || 0) + session.initialAmount + cashAdjustmentsTotal,
             salesInSession: sessionSales.length,
             piecesSold: piecesSold,
             items: sessionSales.map(s => ({
@@ -270,16 +278,9 @@ class Cut {
                 paymentMethod: s.paymentMethod,
                 time: new Date(s.date).toLocaleTimeString('es-MX')
             })),
-            // Ajustes de caja (devoluciones y anulaciones) del día
-            totalAdjustments: (CashAdjustment && CashAdjustment.getTotal)
-                ? CashAdjustment.getTotal(DateUtil.toLocalDate(now)).total
-                : 0,
-            cashAdjustments: (CashAdjustment && CashAdjustment.getTotal)
-                ? CashAdjustment.getTotal(DateUtil.toLocalDate(now)).cash
-                : 0,
-            cardAdjustments: (CashAdjustment && CashAdjustment.getTotal)
-                ? CashAdjustment.getTotal(DateUtil.toLocalDate(now)).card
-                : 0,
+            totalAdjustments: adjTotals.total || 0,
+            cashAdjustments: adjTotals.cash || 0,
+            cardAdjustments: adjTotals.card || 0,
             adjustmentCount: (CashAdjustment && CashAdjustment.getByDate)
                 ? CashAdjustment.getByDate(DateUtil.toLocalDate(now)).length
                 : 0,

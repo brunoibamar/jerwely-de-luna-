@@ -4,7 +4,7 @@
 //  - Gestión de intercambios por piezas defectuosas/defecto
 //  - Sin reembolso de dinero ($0.00 en caja)
 //  - Ajuste físico de inventario: descuenta pieza de reemplazo,
-//    registra pieza recibida con estatus "Baja por Garantía"
+//    registra pieza recibida con estatus "Merma por Garantía / Pieza Rota"
 // ============================================================
 
 class GuaranteeExchange {

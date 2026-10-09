@@ -226,10 +226,10 @@
                 <button id="cash-drawer-btn" class="btn btn-outline admin-only">Corte de Caja</button>
                 <button id="cash-close-btn" class="btn btn-outline guest-only">Cierre de Caja</button>
                 <button id="backup-btn" class="btn btn-outline admin-only">Respaldo</button>
-                <button id="returns-btn" class="btn btn-outline admin-only">Devoluciones</button>
+                <button id="returns-btn" class="btn btn-outline guest-allowed">Devoluciones</button>
                 <button id="cancel-sale-btn" class="btn btn-outline admin-only">Anular Venta</button>
-                <button id="guarantee-btn" class="btn btn-outline admin-only">Cambio por Garantía</button>
-                <button id="withdrawal-btn" class="btn btn-outline admin-only">Retiro para Depósito</button>
+                <button id="guarantee-btn" class="btn btn-outline guest-allowed">Cambio por Garantía</button>
+                <button id="withdrawal-btn" class="btn btn-outline guest-allowed">Retiro para Depósito / Retiro de Efectivo</button>
                 <button id="logout-btn" class="btn btn-outline">Salir</button>
             </div>
         </header>
@@ -371,6 +371,9 @@
                             <button type="button" class="payment-method-btn" data-method="mixed">
                                 <span class="method-icon">🔄</span> Pago Mixto
                             </button>
+                            <button type="button" class="payment-method-btn" data-method="transfer">
+                                <span class="method-icon">🏦</span> Transferencia
+                            </button>
                         </div>
 
                         <!-- Sección: Efectivo + Calculadora de cambio -->
@@ -430,16 +433,51 @@
                             </div>
                         </div>
 
-                        <!-- Sección: Tarjeta (confirmación simple) -->
-                        <div class="payment-section card-payment-section hidden" id="card-payment-section">
-                            <div class="payment-info">
-                                <p>¿Confirmar pago con tarjeta por <strong id="card-total-display">$0.00</strong>?</p>
-                                <p class="payment-hint">Asegúrate de que la tarjeta se haya cargado correctamente.</p>
-                            </div>
-                            <div class="calculator-actions">
-                                <button class="btn btn-primary" id="confirm-card-btn">Confirmar Pago con Tarjeta</button>
-                            </div>
-                        </div>
+                         <!-- Sección: Tarjeta (confirmación simple) -->
+                         <div class="payment-section card-payment-section hidden" id="card-payment-section">
+                             <div class="payment-info">
+                                 <p>¿Confirmar pago con tarjeta por <strong id="card-total-display">$0.00</strong>?</p>
+                                 <p class="payment-hint">Asegúrate de que la tarjeta se haya cargado correctamente.</p>
+                             </div>
+                             <div class="calculator-actions">
+                                 <button class="btn btn-primary" id="confirm-card-btn">Confirmar Pago con Tarjeta</button>
+                             </div>
+                         </div>
+
+                         <!-- Sección: Transferencia bancaria -->
+                         <div class="payment-section transfer-payment-section hidden" id="transfer-payment-section">
+                             <div class="payment-info">
+                                 <p>¿Confirmar pago por transferencia por <strong id="transfer-total-display">$0.00</strong>?</p>
+                                 <p class="payment-hint">Pide al cliente que realice la transferencia y proporcióname los datos bancarios.</p>
+                             </div>
+
+                              <div class="transfer-bank-details">
+                                  <div class="input-group">
+                                      <input type="text" id="transfer-bank-input" placeholder=" " autocomplete="off">
+                                      <label for="transfer-bank-input">Banco</label>
+                                  </div>
+                                  <div class="transfer-clabe-row">
+                                      <div class="input-group" style="flex: 1; margin-bottom: 0;">
+                                          <input type="text" id="transfer-clabe-input" placeholder=" " autocomplete="off">
+                                          <label for="transfer-clabe-input">Número de Tarjeta / CLABE</label>
+                                      </div>
+                                      <button type="button" class="btn btn-outline btn-sm copy-clabe-btn" id="copy-clabe-btn" title="Copiar cuenta al portapapeles">Copiar Cuenta</button>
+                                  </div>
+                                  <div class="input-group">
+                                      <input type="text" id="transfer-holder-input" placeholder=" " autocomplete="off">
+                                      <label for="transfer-holder-input">Titular</label>
+                                  </div>
+                                  <div class="input-group">
+                                      <input type="text" id="transfer-reference-input" placeholder=" " autocomplete="off">
+                                      <label for="transfer-reference-input">Número de Comprobante / Referencia (Opcional)</label>
+                                  </div>
+                              </div>
+
+                              <div class="calculator-actions">
+                                  <button type="button" class="btn btn-outline" id="save-bank-data-btn">Guardar Datos Bancarios</button>
+                                  <button class="btn btn-primary" id="confirm-transfer-btn">Confirmar Pago con Transferencia</button>
+                              </div>
+                         </div>
 
                         <div class="payment-actions">
                             <button class="btn btn-outline" id="cancel-payment-btn">Cancelar</button>
@@ -604,7 +642,7 @@
                                     <div class="detail-row"><span class="detail-label">Venta Original:</span><span class="detail-value" id="guarantee-confirm-sale-id"></span></div>
                                 </div>
                                 <div class="guarantee-confirm-defective">
-                                    <h5 class="guarantee-subtitle">Piezas por Garantía (Baja)</h5>
+                                    <h5 class="guarantee-subtitle">Piezas por Garantía (Merma / Pieza Rota)</h5>
                                     <div id="guarantee-confirm-defective-list"></div>
                                 </div>
                                 <div class="guarantee-confirm-replacement">
@@ -742,6 +780,18 @@
                                   <div class="report-card admin-only">
                                       <h3>Margen Promedio</h3>
                                       <p class="report-value" id="avg-margin">0%</p>
+                                  </div>
+                                  <div class="report-card admin-only">
+                                      <h3>Retiros Efectivo</h3>
+                                      <p class="report-value" id="daily-withdrawals-count">0</p>
+                                  </div>
+                                  <div class="report-card admin-only">
+                                      <h3>Devoluciones</h3>
+                                      <p class="report-value" id="daily-returns-count">0</p>
+                                  </div>
+                                  <div class="report-card admin-only">
+                                      <h3>Cambios Garantía</h3>
+                                      <p class="report-value" id="daily-guarantees-count">0</p>
                                   </div>
                               </div>
                               <div class="admin-only" style="margin-top: 24px;">
@@ -927,21 +977,43 @@
                           </div>
                       </div>
 
-                     <!-- Reportes Avanzados (admin-only, fuera de tabs) -->
-                     <div class="admin-only" id="advanced-reports" style="margin-top: 24px;">
-                         <h3 class="section-title">Reportes Avanzados</h3>
-                         <div class="reports-container">
-                             <div class="report-card">
-                                 <h3>Ventas por Categoría</h3>
-                                 <p class="report-value" id="category-sales">$0.00</p>
-                             </div>
-                             <div class="report-card">
-                                 <h3>Productos Más Vendidos</h3>
-                                 <p class="report-value" id="top-product">N/A</p>
-                             </div>
-                         </div>
-                     </div>
-                 </div>
+                      <!-- Desglose por Categoría y Productos Más Vendidos -->
+                      <div class="admin-only" id="category-breakdown-section" style="margin-top: 32px;">
+                          <h3 class="section-title">Desglose por Categoría y Productos Más Vendidos</h3>
+
+                          <!-- A) Piezas vendidas por categoría -->
+                          <div class="report-block" style="margin-bottom: 32px;">
+                              <div class="chart-header">
+                                  <h3 class="section-title">Piezas Vendidas por Categoría</h3>
+                                  <span class="report-subvalue" id="category-pieces-total">0 piezas</span>
+                              </div>
+                              <div class="reports-container" id="category-breakdown-cards">
+                                  <!-- Tarjetas dinámicas por categoría -->
+                              </div>
+                              <div class="admin-only" style="margin-top: 24px;">
+                                  <div class="chart-container" id="category-breakdown-chart-container">
+                                      <canvas id="category-breakdown-chart" width="600" height="300"></canvas>
+                                  </div>
+                              </div>
+                          </div>
+
+                          <!-- B) Top 5 productos más vendidos -->
+                          <div class="report-block">
+                              <div class="chart-header">
+                                  <h3 class="section-title">Top 5 Productos Más Vendidos</h3>
+                                  <span class="report-subvalue" id="top-products-subtitle">0 ventas</span>
+                              </div>
+                              <div class="top-products-list" id="top-products-list">
+                                  <!-- Lista dinámica: Top 5 -->
+                              </div>
+                              <div class="admin-only" style="margin-top: 24px;">
+                                  <div class="chart-container" id="top-products-chart-container">
+                                      <canvas id="top-products-chart" width="600" height="300"></canvas>
+                                  </div>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
             </section>
 
             <section id="settings-section" class="section">
@@ -962,15 +1034,30 @@
                          <input type="text" id="store-phone-input" placeholder=" ">
                          <label for="store-phone-input">Teléfono</label>
                      </div>
-                     <div class="input-group">
-                         <input type="text" id="store-rfc-input" placeholder=" ">
-                         <label for="store-rfc-input">RFC / Identificación</label>
-                     </div>
+                      <div class="input-group">
+                          <input type="text" id="store-rfc-input" placeholder=" ">
+                          <label for="store-rfc-input">RFC / Identificación</label>
+                      </div>
+                       <div class="form-divider">
+                           <h3 class="form-divider-title">Datos Bancarios para Transferencia</h3>
+                       </div>
+                       <div class="input-group">
+                           <input type="text" id="settings-transfer-bank-input" placeholder=" ">
+                           <label for="settings-transfer-bank-input">Banco</label>
+                       </div>
+                       <div class="input-group">
+                           <input type="text" id="settings-transfer-clabe-input" placeholder=" ">
+                            <label for="settings-transfer-clabe-input">Número de Tarjeta / CLABE (18 dígitos)</label>
+                       </div>
+                       <div class="input-group">
+                           <input type="text" id="settings-transfer-holder-input" placeholder=" ">
+                           <label for="settings-transfer-holder-input">Titular</label>
+                       </div>
 
-                     <div class="form-divider">
-                         <h3 class="form-divider-title">Logotipo del Ticket</h3>
-                     </div>
-                     <div class="logo-upload-section">
+                      <div class="form-divider">
+                          <h3 class="form-divider-title">Logotipo del Ticket</h3>
+                      </div>
+                      <div class="logo-upload-section">
                          <div class="logo-preview-container" id="logo-preview-container">
                              <img id="logo-preview" class="logo-preview" src="" alt="Logotipo" style="display: none;">
                              <div id="logo-placeholder" class="logo-placeholder">
@@ -1252,7 +1339,8 @@
      <script src="js/print.js"></script>
      <script src="js/backup.js"></script>
      <script src="js/returns.js"></script>
-     <script src="js/guarantee.js"></script>
-     <script src="js/app.js"></script>
+      <script src="js/guarantee.js"></script>
+      <script src="js/telegram-notify.js"></script>
+      <script src="js/app.js"></script>
 </body>
 </html>

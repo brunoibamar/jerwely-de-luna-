@@ -27,7 +27,11 @@ class Checkout {
                 cardAmount: paymentDetails.cardAmount || 0,
                 amountReceived: paymentDetails.amountReceived || 0,
                 change: paymentDetails.change || 0,
-                receivedBreakdown: paymentDetails.receivedBreakdown || {}
+                receivedBreakdown: paymentDetails.receivedBreakdown || {},
+                transferBank: paymentDetails.transferBank || '',
+                transferClabe: paymentDetails.transferClabe || '',
+                transferHolder: paymentDetails.transferHolder || '',
+                transferReference: paymentDetails.transferReference || ''
             },
             cashier: Auth.getCurrentUser()?.name || 'Desconocido',
             status: 'active',
@@ -77,7 +81,8 @@ class Checkout {
         const methodLabels = {
             cash: 'Efectivo',
             card: 'Tarjeta',
-            mixed: 'Pago Mixto'
+            mixed: 'Pago Mixto',
+            transfer: 'Transferencia'
         };
 
         const pd = sale.paymentDetails || {};
@@ -114,12 +119,16 @@ class Checkout {
             subtotal: sale.subtotal,
             total: sale.total,
             totalSavings: parseFloat(totalSavings.toFixed(2)),
-            paymentMethod: methodLabels[sale.paymentMethod] || sale.paymentMethod,
-            // Detalles de pago para el ticket (cambio, montos desglosados)
-            amountReceived: pd.amountReceived || 0,
-            change: pd.change || 0,
-            cashAmount: pd.cashAmount || 0,
-            cardAmount: pd.cardAmount || 0
-        };
+             paymentMethod: methodLabels[sale.paymentMethod] || sale.paymentMethod,
+             // Detalles de pago para el ticket (cambio, montos desglosados)
+             amountReceived: pd.amountReceived || 0,
+             change: pd.change || 0,
+             cashAmount: pd.cashAmount || 0,
+             cardAmount: pd.cardAmount || 0,
+             transferBank: pd.transferBank || '',
+             transferClabe: pd.transferClabe || '',
+             transferHolder: pd.transferHolder || '',
+             transferReference: pd.transferReference || ''
+         };
     }
 }

@@ -23,8 +23,9 @@ class Backup {
             sales: SaleService.getAll(true),
             historicalSales: SaleService.getHistoricalSales(),
             users: Auth.adminProfile,
-            settings: Settings.getSettings(),
-            shiftSession: localStorage.getItem(Cut.storageKey),
+             settings: Settings.getSettings(),
+             bankData: localStorage.getItem(BankData.storageKey),
+             shiftSession: localStorage.getItem(Cut.storageKey),
             shiftHistory: localStorage.getItem(Cut.shiftHistoryKey),
             heldSales: localStorage.getItem(HeldSales.storageKey),
             returns: (typeof Returns !== 'undefined') ? Returns.getAll() : JSON.parse(localStorage.getItem(Returns.storageKey) || '[]'),
@@ -59,8 +60,9 @@ class Backup {
             inventory: Inventory.getAll(),
             sales: SaleService.getAll(),
             historicalSales: SaleService.getHistoricalSales(),
-            settings: Settings.getSettings(),
-            heldSales: HeldSales.getAll(),
+             settings: Settings.getSettings(),
+             bankData: BankData.getBankData(),
+             heldSales: HeldSales.getAll(),
             returns: (typeof Returns !== 'undefined') ? Returns.getAll() : [],
             cashAdjustments: (typeof CashAdjustment !== 'undefined') ? CashAdjustment.getAll() : [],
             guaranteeExchanges: (typeof GuaranteeExchange !== 'undefined') ? GuaranteeExchange.getAll() : []
@@ -78,6 +80,7 @@ class Backup {
         SaleService.save(data.sales || []);
         if (data.historicalSales) SaleService.saveHistorical(data.historicalSales);
         Settings.saveSettings(data.settings || {});
+        if (data.bankData) BankData.saveBankData(data.bankData);
         if (data.heldSales) localStorage.setItem(HeldSales.storageKey, JSON.stringify(data.heldSales));
         if (data.returns) localStorage.setItem(Returns.storageKey, JSON.stringify(data.returns));
         if (data.cashAdjustments) localStorage.setItem(CashAdjustment.storageKey, JSON.stringify(data.cashAdjustments));
@@ -383,6 +386,11 @@ class Backup {
             Settings.saveSettings(Object.keys(backupSettings).length ? backupSettings : Settings.defaultSettings);
         }
 
+        if (data.bankData) {
+            const backupBank = this._normalizeObject(data.bankData);
+            if (Object.keys(backupBank).length > 0) BankData.saveBankData(backupBank);
+        }
+
         if (data.store) Business.setBusinessName(data.store);
 
         if (data.auth) {
@@ -468,6 +476,7 @@ class Backup {
                 sales: SaleService.getAll(true),
                 historicalSales: SaleService.getHistoricalSales(),
                 settings: Settings.getSettings(),
+                bankData: BankData.getBankData(),
                 heldSales: HeldSales.getAll(),
                 returns: Returns.getAll(),
                 cashAdjustments: CashAdjustment.getAll(),
@@ -497,6 +506,7 @@ class Backup {
             if (data.sales) SaleService.save(data.sales);
             if (data.historicalSales) SaleService.saveHistorical(data.historicalSales);
             if (data.settings) Settings.saveSettings(data.settings);
+            if (data.bankData) BankData.saveBankData(data.bankData);
             if (data.heldSales) SafeStorage.setItem(HeldSales.storageKey, SafeJSON.stringify(data.heldSales));
             if (data.returns) SafeStorage.setItem(Returns.storageKey, SafeJSON.stringify(data.returns));
             if (data.cashAdjustments) SafeStorage.setItem(CashAdjustment.storageKey, SafeJSON.stringify(data.cashAdjustments));
@@ -538,6 +548,11 @@ class Backup {
         const summary = Cut.getSummaryByRole(null, session || null);
         const now = new Date();
 
+        const adjTotals = (typeof CashAdjustment !== 'undefined' && CashAdjustment.getTotal)
+            ? CashAdjustment.getTotal(reportDate)
+            : { cash: 0, card: 0, total: 0 };
+        const cashAdjustmentTotal = adjTotals.cash || 0;
+
         const report = {
             type: reportType,
             date: reportDate,
@@ -549,8 +564,8 @@ class Backup {
             cashSales: summary.isFull ? summary.cashTotal : 0,
             cardSales: summary.isFull ? summary.cardTotal : 0,
             transactionCount: summary.transactionCount,
-            cashInDrawer: summary.isFull ? summary.cashTotal + initialAmount : 0,
-            closingAmount: summary.isFull ? summary.cashTotal + initialAmount : 0,
+            cashInDrawer: summary.isFull ? summary.cashTotal + initialAmount + cashAdjustmentTotal : 0,
+            closingAmount: summary.isFull ? summary.cashTotal + initialAmount + cashAdjustmentTotal : 0,
             piecesSold: summary.piecesSold || 0,
             items: summary.isFull ? sales.map(s => ({
                 id: s.id,
@@ -588,19 +603,11 @@ class Backup {
             report.returnsTotal = returnsTotal;
             report.margin = totalCost > 0 ? ((report.profit / totalCost) * 100).toFixed(1) : '0.0';
 
+            report.cashAdjustments = adjTotals.cash || 0;
+            report.cardAdjustments = adjTotals.card || 0;
+            report.totalAdjustments = adjTotals.total || 0;
             if (typeof CashAdjustment !== 'undefined') {
-                const reportDateStr = reportDate;
-                const adjustments = CashAdjustment.getByDate(reportDateStr);
-                let adjCash = 0;
-                let adjCard = 0;
-                adjustments.forEach(a => {
-                    if (a.paymentMethod === 'cash') adjCash += a.amount;
-                    else if (a.paymentMethod === 'card') adjCard += a.amount;
-                });
-                report.cashAdjustments = adjCash;
-                report.cardAdjustments = adjCard;
-                report.totalAdjustments = adjCash + adjCard;
-                report.adjustmentCount = adjustments.length;
+                report.adjustmentCount = CashAdjustment.getByDate(reportDate).length;
             }
         }
 
