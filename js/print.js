@@ -181,10 +181,14 @@ class Print {
                         ${showPaymentMethod ? `Pago: ${data.paymentMethod}` : ''}
                         ${showPaymentDetails && data.amountReceived > 0 ? `<br>Recibido: $${data.amountReceived.toFixed(2)}` : ''}
                         ${showPaymentDetails && data.change > 0 ? `<br>Cambio: $${data.change.toFixed(2)}` : ''}
-                        ${showPaymentDetails && data.paymentMethod === 'Pago Mixto'
-                            ? `<br>Efectivo: $${data.cashAmount.toFixed(2)} / Tarjeta: $${data.cardAmount.toFixed(2)}`
-                            : ''}
-                    </div>
+                         ${showPaymentDetails && data.paymentMethod === 'Pago Mixto'
+                             ? `<br>Efectivo: $${data.cashAmount.toFixed(2)} / Tarjeta: $${data.cardAmount.toFixed(2)}`
+                             : ''}
+                          ${showPaymentDetails && data.paymentMethod === 'Transferencia'
+                              ? `<br>Banco: ${data.transferBank || ''} / CLABE: ${data.transferClabe || ''} / Titular: ${data.transferHolder || ''}`
+                              + (data.transferReference ? `<br>Referencia: ${data.transferReference}` : '')
+                              : ''}
+                     </div>
                 </div>
                 <div class="receipt-footer">
                     ${data.receiptFooter || ''}
@@ -233,6 +237,7 @@ class Print {
                         <tr><td style="padding:4px 8px;">Total Ventas</td><td>$${fmt(s.totalSales)}</td></tr>
                         <tr><td style="padding:4px 8px;">Efectivo</td><td>$${fmt(s.cashSales)}</td></tr>
                         <tr><td style="padding:4px 8px;">Tarjeta</td><td>$${fmt(s.cardSales)}</td></tr>
+                        ${s.transferTotal ? `<tr><td style="padding:4px 8px;">Transferencia</td><td>$${fmt(s.transferTotal)}</td></tr>` : ''}
                         <tr><td style="padding:4px 8px;">Transacciones</td><td>${s.transactionCount}</td></tr>
                         <tr><td style="padding:4px 8px;">Ventas en Sesión</td><td>${s.salesInSession}</td></tr>
                         <tr><td style="padding:4px 8px;">Caja Final</td><td>$${fmt(s.closingAmount)}</td></tr>
@@ -306,11 +311,23 @@ class Print {
                         <div class="summary-label">Cortes</div>
                         <div class="summary-value">${report.sessionCount}</div>
                     </div>
+                    <div class="summary-item">
+                        <div class="summary-label">Retiros Efectivo</div>
+                        <div class="summary-value">${report.withdrawalCount || 0}</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-label">Devoluciones</div>
+                        <div class="summary-value">${report.returnsCount || 0}</div>
+                    </div>
+                    <div class="summary-item">
+                        <div class="summary-label">Cambios por Garantía</div>
+                        <div class="summary-value">${report.guaranteeExchangeCount || 0}</div>
+                    </div>
                 </div>
                 <h2>Consolidado por Método de Pago</h2>
                 <table>
-                    <tr><th>Efectivo</th><th>Tarjeta</th><th>Ganancia Neta</th><th>Margen</th></tr>
-                    <tr><td>$${fmt(report.cashTotal)}</td><td>$${fmt(report.cardTotal)}</td><td>$${fmt(report.profit)}</td><td>${report.margin}%</td></tr>
+                    <tr><th>Efectivo</th><th>Tarjeta</th><th>Transferencia</th><th>Ganancia Neta</th><th>Margen</th></tr>
+                    <tr><td>$${fmt(report.cashTotal)}</td><td>$${fmt(report.cardTotal)}</td><td>$${fmt(report.transferTotal || 0)}</td><td>$${fmt(report.profit)}</td><td>${report.margin}%</td></tr>
                 </table>
                 ${report.adjustmentCount > 0 ? `
                 <h2>Ajustes de Caja (${report.adjustmentCount})</h2>
@@ -375,8 +392,9 @@ class Print {
                     <tr><th>Concepto</th><th>Valor</th></tr>
                      <tr><td>Monto Inicial</td><td>$${report.initialAmount.toFixed(2)}</td></tr>
                      <tr><td>Total Ventas</td><td>$${report.totalSales.toFixed(2)}</td></tr>
-                     <tr><td>Efectivo</td><td>$${report.cashSales.toFixed(2)}</td></tr>
-                     <tr><td>Tarjeta</td><td>$${report.cardSales.toFixed(2)}</td></tr>
+                      <tr><td>Efectivo</td><td>$${report.cashSales.toFixed(2)}</td></tr>
+                      <tr><td>Tarjeta</td><td>$${report.cardSales.toFixed(2)}</td></tr>
+                      ${report.transferTotal ? `<tr><td>Transferencia</td><td>$${report.transferTotal.toFixed(2)}</td></tr>` : ''}
                      <tr><td>Transacciones</td><td>${report.transactionCount}</td></tr>
                      ${report.salesInSession !== undefined ? `<tr><td>Ventas en Sesión</td><td>${report.salesInSession}</td></tr>` : ''}
                      ${report.adjustmentCount > 0 ? `<tr><td>Devoluciones / Anulaciones / Retiros</td><td style="color:#e74c3c;">-${Math.abs(report.totalAdjustments || 0).toFixed(2)}</td></tr>` : ''}

@@ -295,15 +295,15 @@ class Auth {
     }
 
     static canPerformReturns() {
-        return this.isAdmin();
+        return this.isAdmin() || this.isGuest();
     }
 
     static canRegisterExpenses() {
-        return this.isAdmin();
+        return this.isAdmin() || this.isGuest();
     }
 
     static canManageGuarantees() {
-        return this.isAdmin();
+        return this.isAdmin() || this.isGuest();
     }
 
     static canCancelTickets() {
@@ -485,12 +485,14 @@ class License {
                 : null,
             shiftClosures: localStorage.getItem(Business.key('pos_shift_closures')),
             settings: localStorage.getItem(Settings.storageKey),
+            bankData: localStorage.getItem(BankData.storageKey),
             shift: localStorage.getItem(Business.key('pos_shift_opened')),
             shiftSession: localStorage.getItem(Cut.storageKey),
             shiftHistory: localStorage.getItem(Cut.shiftHistoryKey),
                 heldSales: localStorage.getItem(HeldSales.storageKey),
                 returns: localStorage.getItem(Returns.storageKey),
                 cashAdjustments: localStorage.getItem(CashAdjustment.storageKey),
+                guaranteeExchanges: localStorage.getItem(GuaranteeExchange.storageKey),
                 vipCustomers: localStorage.getItem(VIPCustomer.storageKey),
                 vipConfig: localStorage.getItem(VIPConfig.storageKey),
                 reportHistory: localStorage.getItem(Backup.reportHistoryKey),

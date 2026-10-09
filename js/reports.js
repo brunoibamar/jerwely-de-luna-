@@ -104,6 +104,97 @@ class ReportService {
     }
 
     // ============================================================
+    //  DESGLOSE POR CATEGORÍA Y PRODUCTOS MÁS VENDIDOS
+    //  Agregan la categoría del producto (obtenida del inventario)
+    //  a cada línea de venta para poder agrupar y rankear.
+    // ============================================================
+
+    // Ventas válidas (no canceladas) con su lista de líneas.
+    static _getSalesLines(sales = []) {
+        const list = Array.isArray(sales) ? sales : [];
+        const lines = [];
+        list.forEach(sale => {
+            if (sale && sale.status === 'canceled') return;
+            (sale.items || []).forEach(item => {
+                if (!item) return;
+                lines.push(item);
+            });
+        });
+        return lines;
+    }
+
+    // Índice barcode → producto cargado una sola vez (evita releer el
+    // localStorage por cada línea de venta al resolver la categoría).
+    static _getProductMap() {
+        const map = new Map();
+        if (typeof Inventory === 'undefined' || typeof Inventory.getAll !== 'function') {
+            return map;
+        }
+        try {
+            Inventory.getAll().forEach(p => {
+                if (p && p.barcode) map.set(p.barcode, p);
+            });
+        } catch (err) {
+            console.warn('[ReportService] No se pudo indexar el inventario para reportes:', err?.message);
+        }
+        return map;
+    }
+
+    // Cantidad total de piezas (y monto) vendidas por categoría.
+    // Lee desde el historial maestro para cubrir todo el período disponible.
+    static getCategorySales() {
+        const sales = this.getHistoricalSales();
+        const lines = this._getSalesLines(sales);
+        const productMap = this._getProductMap();
+        const byCategory = {};
+
+        lines.forEach(item => {
+            const product = productMap.get(item.barcode);
+            const category = (product && product.category) || 'Otros';
+            if (!byCategory[category]) {
+                byCategory[category] = { category, pieces: 0, revenue: 0, sales: 0 };
+            }
+            byCategory[category].pieces += item.quantity || 0;
+            byCategory[category].revenue += item.amount || 0;
+            byCategory[category].sales += 1;
+        });
+
+        const categories = Object.values(byCategory).sort((a, b) => b.pieces - a.pieces);
+        const totalPieces = categories.reduce((sum, c) => sum + c.pieces, 0);
+        const totalRevenue = categories.reduce((sum, c) => sum + c.revenue, 0);
+        return {
+            categories: categories,
+            totalPieces: totalPieces,
+            totalRevenue: totalRevenue,
+            count: categories.length
+        };
+    }
+
+    // Top N productos más vendidos por unidades.
+    static getTopProducts(limit = 5) {
+        const sales = this.getHistoricalSales();
+        const lines = this._getSalesLines(sales);
+        const byProduct = {};
+
+        lines.forEach(item => {
+            const key = item.barcode || item.description;
+            if (!byProduct[key]) {
+                byProduct[key] = {
+                    barcode: item.barcode,
+                    description: item.description,
+                    quantity: 0,
+                    revenue: 0
+                };
+            }
+            byProduct[key].quantity += item.quantity || 0;
+            byProduct[key].revenue += item.amount || 0;
+        });
+
+        const sorted = Object.values(byProduct).sort((a, b) => b.quantity - a.quantity);
+        return sorted.slice(0, limit);
+    }
+
+    // ============================================================
     //  RESUMENES POR PERIODO CON DEVOLUCIONES (return-aware)
     //  Cada método devuelve: totalSales (netas), transactionCount,
     //  piecesNetas, returnsTotal, profit, margin — todo descontando
@@ -256,6 +347,10 @@ class ReportService {
                 ? ((profit / totalCost) * 100).toFixed(1)
                 : '0.0';
 
+            const adjTotals = (typeof CashAdjustment !== 'undefined' && CashAdjustment.getTotal)
+                ? CashAdjustment.getTotal(DateUtil.toLocalDate(session.openedAt))
+                : { cash: 0, card: 0, total: 0 };
+
             return {
                 type: 'session',
                 sessionId: session.id,
@@ -270,11 +365,14 @@ class ReportService {
                 totalSales: summary.grandTotal || 0,
                 cashSales: summary.cashTotal || 0,
                 cardSales: summary.cardTotal || 0,
-                closingAmount: (summary.cashTotal || 0) + session.initialAmount,
+                closingAmount: (summary.cashTotal || 0) + session.initialAmount + (adjTotals.cash || 0),
                 transactionCount: summary.transactionCount,
                 salesInSession: sales.length,
-                cashInDrawer: (summary.cashTotal || 0) + session.initialAmount,
+                cashInDrawer: (summary.cashTotal || 0) + session.initialAmount + (adjTotals.cash || 0),
                 returnsTotal: returnsTotal,
+                cashAdjustments: adjTotals.cash || 0,
+                cardAdjustments: adjTotals.card || 0,
+                totalAdjustments: adjTotals.total || 0,
                 profit: profit,
                 margin: margin,
                 isOpen: true
@@ -298,6 +396,11 @@ class ReportService {
         const returnsTotal = (typeof Returns !== 'undefined') ? Returns.getTotalBySales(sales) : 0;
         const profit = totalRevenue - totalCost - returnsTotal;
         const margin = totalCost > 0 ? ((profit / totalCost) * 100).toFixed(1) : '0.0';
+
+        const adjTotalsClosed = (typeof CashAdjustment !== 'undefined' && CashAdjustment.getTotal)
+            ? CashAdjustment.getTotal(DateUtil.toLocalDate(session.openedAt))
+            : { cash: 0, card: 0, total: 0 };
+
         return {
             type: 'session',
             sessionId: session.id,
@@ -311,11 +414,14 @@ class ReportService {
             totalSales: summary.grandTotal || 0,
             cashSales: summary.cashTotal || 0,
             cardSales: summary.cardTotal || 0,
-            closingAmount: (summary.cashTotal || 0) + session.initialAmount,
+            closingAmount: (summary.cashTotal || 0) + session.initialAmount + (adjTotalsClosed.cash || 0),
             transactionCount: summary.transactionCount,
             salesInSession: sales.length,
-            cashInDrawer: (summary.cashTotal || 0) + session.initialAmount,
+            cashInDrawer: (summary.cashTotal || 0) + session.initialAmount + (adjTotalsClosed.cash || 0),
             returnsTotal: returnsTotal,
+            cashAdjustments: adjTotalsClosed.cash || 0,
+            cardAdjustments: adjTotalsClosed.card || 0,
+            totalAdjustments: adjTotalsClosed.total || 0,
             profit: profit,
             margin: margin,
             isOpen: false
@@ -365,6 +471,7 @@ class ReportService {
         const cashSales = allSales.filter(s => s.paymentMethod === 'cash').length;
         const cardSales = allSales.filter(s => s.paymentMethod === 'card').length;
         const mixedSales = allSales.filter(s => s.paymentMethod === 'mixed').length;
+        const transferSales = allSales.filter(s => s.paymentMethod === 'transfer').length;
 
         let cashTotal = 0;
         let cardTotal = 0;
@@ -380,16 +487,34 @@ class ReportService {
             }
         });
 
-        // Ajustes de caja por devoluciones y anulaciones del día
+        // Ajustes de caja por devoluciones, anulaciones y retiros del día
         const adjustmentsRaw = typeof CashAdjustment !== 'undefined'
             ? CashAdjustment.getByDate(target)
             : [];
         let adjustmentCash = 0;
         let adjustmentCard = 0;
+        let withdrawalCount = 0;
+        let withdrawalTotal = 0;
         adjustmentsRaw.forEach(a => {
             if (a.paymentMethod === 'cash') adjustmentCash += a.amount;
             else if (a.paymentMethod === 'card') adjustmentCard += a.amount;
+            if (a.type === 'expense' || a.type === 'withdrawal') {
+                withdrawalCount += 1;
+                withdrawalTotal += Math.abs(a.amount || 0);
+            }
         });
+
+        // Devoluciones procesadas del día
+        const returnsByDate = (typeof Returns !== 'undefined')
+            ? Returns.getByDate(target)
+            : [];
+        const returnsCount = returnsByDate.length;
+
+        // Cambios por garantía / piezas mermadas del día
+        const guaranteeByDate = (typeof GuaranteeExchange !== 'undefined')
+            ? GuaranteeExchange.getByDate(target)
+            : [];
+        const guaranteeExchangeCount = guaranteeByDate.length;
 
         return {
             date: target,
@@ -399,11 +524,19 @@ class ReportService {
             cashTransactionCount: cashSales,
             cardTransactionCount: cardSales,
             mixedTransactionCount: mixedSales,
+            transferTransactionCount: transferSales,
             cashTotal: cashTotal,
             cardTotal: cardTotal,
-            cashAdjustments: adjustmentCash,
+            transferTotal: allSales
+                .filter(s => s.paymentMethod === 'transfer')
+                .reduce((sum, s) => sum + (s.total || 0), 0),
+             cashAdjustments: adjustmentCash,
             cardAdjustments: adjustmentCard,
             adjustmentCount: adjustmentsRaw.length,
+            withdrawalCount: withdrawalCount,
+            withdrawalTotal: withdrawalTotal,
+            returnsCount: returnsCount,
+            guaranteeExchangeCount: guaranteeExchangeCount,
             returnsTotal: returnsTotal,
             profit: profit,
             margin: margin,
@@ -426,7 +559,8 @@ class ReportService {
             total: s.total,
             paymentMethod: s.paymentMethod === 'cash' ? 'Efectivo'
                 : s.paymentMethod === 'card' ? 'Tarjeta'
-                : s.paymentMethod === 'mixed' ? 'Mixto' : s.paymentMethod,
+                : s.paymentMethod === 'mixed' ? 'Mixto'
+                : s.paymentMethod === 'transfer' ? 'Transferencia' : s.paymentMethod,
             itemCount: s.items.length,
             items: s.items.map(i => ({
                 barcode: i.barcode,
@@ -575,10 +709,26 @@ class ReportService {
                          <span class="consolidated-label">Efectivo</span>
                          <span class="consolidated-value">${fmt(report.cashTotal)}</span>
                      </div>
-                     <div class="consolidated-card">
-                         <span class="consolidated-label">Tarjeta</span>
-                         <span class="consolidated-value">${fmt(report.cardTotal)}</span>
-                     </div>
+                      <div class="consolidated-card">
+                          <span class="consolidated-label">Tarjeta</span>
+                          <span class="consolidated-value">${fmt(report.cardTotal)}</span>
+                      </div>
+                      <div class="consolidated-card">
+                          <span class="consolidated-label">Transferencia</span>
+                          <span class="consolidated-value">${fmt(report.transferTotal || 0)}</span>
+                      </div>
+                      <div class="consolidated-card">
+                          <span class="consolidated-label">Retiros de Efectivo</span>
+                          <span class="consolidated-value">${(report.withdrawalCount || 0)} (${fmt(report.withdrawalTotal || 0)})</span>
+                      </div>
+                      <div class="consolidated-card">
+                          <span class="consolidated-label">Devoluciones</span>
+                          <span class="consolidated-value">${(report.returnsCount || 0)} (${fmt(report.returnsTotal || 0)})</span>
+                      </div>
+                      <div class="consolidated-card">
+                          <span class="consolidated-label">Cambios por Garantía</span>
+                          <span class="consolidated-value">${(report.guaranteeExchangeCount || 0)}</span>
+                      </div>
                      ${report.adjustmentCount > 0 ? `
                      <div class="consolidated-card">
                          <span class="consolidated-label">Ajustes Dev/Adm</span>

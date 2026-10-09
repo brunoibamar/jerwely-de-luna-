@@ -460,6 +460,47 @@ class Settings {
     }
 }
 
+// ============================================================
+//  BankData: datos bancarios para transferencias.
+//  Se almacenan bajo la clave namespaced 'pos_datos_bancarios'
+//  y persisten en localStorage. Si no existen, se usan los
+//  valores por defecto (Titular: Hector Estrada, Banco: BBVA,
+//  Cuenta/CLABE: 4152 3144 8718 3546).
+// ============================================================
+class BankData {
+    static get storageKey() { return Business.key('pos_datos_bancarios'); }
+
+    static defaultData = {
+        bank: 'BBVA',
+        clabe: '4152 3144 8718 3546',
+        holder: 'Hector Estrada'
+    };
+
+    static getBankData() {
+        const stored = localStorage.getItem(this.storageKey);
+        if (!stored) {
+            return { ...this.defaultData };
+        }
+        const parsed = SafeJSON.parse(stored, null, 'pos_datos_bancarios');
+        if (parsed === null || !DataValidator.validateBankData(parsed)) {
+            return { ...this.defaultData };
+        }
+        return { ...this.defaultData, ...parsed };
+    }
+
+    static saveBankData(data) {
+        const merged = {
+            bank: (data.bank || this.defaultData.bank).toString(),
+            clabe: (data.clabe || this.defaultData.clabe).toString(),
+            holder: (data.holder || this.defaultData.holder).toString()
+        };
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(merged));
+        return merged;
+    }
+}
+
+window.BankData = BankData;
+
 class App {
     constructor() {
         this.cart = new Cart();
@@ -1195,6 +1236,12 @@ class App {
         Backup.saveReportToHistory(report);
         Backup.createLocalRecovery('corte');
 
+        // Notificar corte de caja por Telegram (en segundo plano, sin
+        // interrumpir el proceso de cierre ni guardado en localStorage).
+        if (typeof TelegramNotify !== 'undefined') {
+            TelegramNotify.notificarCorte(report);
+        }
+
         // Mostrar el resumen en pantalla
         this.showCashSummary(report);
 
@@ -1281,10 +1328,16 @@ class App {
                          <span class="summary-label">Efectivo</span>
                          <span class="summary-value">$${report.cashSales.toFixed(2)}</span>
                      </div>
-                     <div class="summary-row">
-                         <span class="summary-label">Tarjeta</span>
-                         <span class="summary-value">$${report.cardSales.toFixed(2)}</span>
-                     </div>
+                      <div class="summary-row">
+                          <span class="summary-label">Tarjeta</span>
+                          <span class="summary-value">$${report.cardSales.toFixed(2)}</span>
+                      </div>
+                      ${report.transferTotal ? `
+                      <div class="summary-row">
+                          <span class="summary-label">Transferencia</span>
+                          <span class="summary-value">$${report.transferTotal.toFixed(2)}</span>
+                      </div>
+                      ` : ''}
                       ${report.adjustmentCount > 0 ? `
                       <div class="summary-row">
                           <span class="summary-label">Devoluciones / Anulaciones / Retiros</span>
@@ -1734,7 +1787,30 @@ class App {
         } else if (method === 'mixed') {
             document.getElementById('mixed-payment-section')?.classList.remove('hidden');
             document.querySelector('.payment-method-btn[data-method="mixed"]')?.classList.add('active');
+        } else if (method === 'transfer') {
+            document.getElementById('transfer-payment-section')?.classList.remove('hidden');
+            document.querySelector('.payment-method-btn[data-method="transfer"]')?.classList.add('active');
+            this.populateTransferData();
         }
+    }
+
+    // Poblar los datos bancarios de transferencia desde el almacenamiento persistente
+    populateTransferData() {
+        const total = this.cart.getTotal();
+        const totalEl = document.getElementById('transfer-total-display');
+        if (totalEl) totalEl.textContent = `$${total.toFixed(2)}`;
+
+        const bankData = BankData.getBankData();
+        const bankInput = document.getElementById('transfer-bank-input');
+        const clabeInput = document.getElementById('transfer-clabe-input');
+        const holderInput = document.getElementById('transfer-holder-input');
+
+        if (bankInput) bankInput.value = bankData.bank || '';
+        if (clabeInput) clabeInput.value = bankData.clabe || '';
+        if (holderInput) holderInput.value = bankData.holder || '';
+
+        const refInput = document.getElementById('transfer-reference-input');
+        if (refInput) refInput.value = '';
     }
 
     // Vincular eventos del modal de pago
@@ -1992,6 +2068,74 @@ class App {
                     cardAmount: cardAmount,
                     amountReceived: receivedTotal,
                     change: Math.max(0, Math.round((receivedTotal - total) * 100) / 100)
+                });
+            });
+        }
+
+        // Botón Copiar Cuenta (Transferencia)
+        const copyClabeBtn = document.getElementById('copy-clabe-btn');
+        if (copyClabeBtn) {
+            copyClabeBtn.addEventListener('click', () => {
+                const clabeInput = document.getElementById('transfer-clabe-input');
+                const clabe = clabeInput?.value.trim() || '';
+                if (!clabe) {
+                    Toast.warning('No hay cuenta para copiar');
+                    return;
+                }
+                navigator.clipboard.writeText(clabe).then(() => {
+                    Toast.success('Cuenta copiada al portapapeles');
+                    copyClabeBtn.textContent = 'Copiada';
+                    setTimeout(() => { copyClabeBtn.textContent = 'Copiar Cuenta'; }, 2000);
+                }).catch(() => {
+                    Toast.error('No se pudo copiar la cuenta');
+                });
+            });
+        }
+
+        // Boton Guardar Datos Bancarios (Transferencia)
+        const saveBankDataBtn = document.getElementById('save-bank-data-btn');
+        if (saveBankDataBtn) {
+            saveBankDataBtn.addEventListener('click', () => {
+                const bankInput = document.getElementById('transfer-bank-input');
+                const clabeInput = document.getElementById('transfer-clabe-input');
+                const holderInput = document.getElementById('transfer-holder-input');
+                BankData.saveBankData({
+                    bank: (bankInput?.value || '').trim(),
+                    clabe: (clabeInput?.value || '').trim(),
+                    holder: (holderInput?.value || '').trim()
+                });
+                Toast.success('Datos bancarios guardados correctamente');
+            });
+        }
+
+        // Confirmar pago con transferencia
+        const confirmTransferBtn = document.getElementById('confirm-transfer-btn');
+        if (confirmTransferBtn) {
+            confirmTransferBtn.addEventListener('click', () => {
+                const bankInput = document.getElementById('transfer-bank-input');
+                const clabeInput = document.getElementById('transfer-clabe-input');
+                const holderInput = document.getElementById('transfer-holder-input');
+                const refInput = document.getElementById('transfer-reference-input');
+                const bank = (bankInput?.value || '').trim();
+                const clabe = (clabeInput?.value || '').trim();
+                const holder = (holderInput?.value || '').trim();
+                const reference = (refInput?.value || '').trim();
+
+                if (!bank || !clabe || !holder) {
+                    Toast.warning('Complete todos los datos bancarios');
+                    return;
+                }
+
+                BankData.saveBankData({ bank, clabe, holder });
+
+                this.completeCheckout({
+                    method: 'transfer',
+                    transferBank: bank,
+                    transferClabe: clabe,
+                    transferHolder: holder,
+                    transferReference: reference,
+                    amountReceived: this.cart.getTotal(),
+                    change: 0
                 });
             });
         }
@@ -2665,6 +2809,12 @@ class App {
                 BarcodeScanner.focusInput();
 
                 Toast.success(`Venta completada - Folio: ${result.sale.id}`);
+
+                // Notificar venta por Telegram (en segundo plano, sin interrumpir
+                // la venta en localStorage ni la impresión del ticket).
+                if (typeof notificarTelegram === 'function') {
+                    notificarTelegram(TelegramNotify.formatearVenta(result.sale));
+                }
             } else {
                 Toast.error(result.error || 'Error al procesar la venta');
             }
@@ -2754,6 +2904,15 @@ class App {
         if (Auth.isAdmin()) {
             if (profitEl) profitEl.textContent = `$${profit.toFixed(2)}`;
             if (marginEl) marginEl.textContent = `${margin}%`;
+
+            // Populate daily summary cards for withdrawals, returns, guarantees
+            const dailyReport = ReportService.getConsolidatedDaily(hoy);
+            const withdrawalsEl = document.getElementById('daily-withdrawals-count');
+            const returnsCountEl = document.getElementById('daily-returns-count');
+            const guaranteesCountEl = document.getElementById('daily-guarantees-count');
+            if (withdrawalsEl) withdrawalsEl.textContent = dailyReport.withdrawalCount || 0;
+            if (returnsCountEl) returnsCountEl.textContent = dailyReport.returnsCount || 0;
+            if (guaranteesCountEl) guaranteesCountEl.textContent = dailyReport.guaranteeExchangeCount || 0;
         }
 
         this.renderDailyConsolidated(hoy);
@@ -3748,6 +3907,107 @@ class App {
                 this.loadSessionDetail(s.sessionId, s);
             });
         }
+
+        this.renderCategoryBreakdownReport();
+    }
+
+    // ============================================================
+    //  DESGLOSE POR CATEGORÍA Y PRODUCTOS MÁS VENDIDOS
+    //  Se calcula sobre el historial maestro de ventas (todos los
+    //  períodos disponibles) y se actualiza dinámicamente al
+    //  confirmar una nueva venta (ver updateDailyReport).
+    // ============================================================
+
+    // Renderiza las tarjetas numéricas por categoría + gráfica de barras,
+    // y el Top 5 de productos más vendidos + su gráfica de barras.
+    renderCategoryBreakdownReport() {
+        if (!Auth.isAdmin()) return;
+
+        const section = document.getElementById('category-breakdown-section');
+        if (!section) return;
+
+        // Sólo recalcular cuando la vista de Reportes está activa: así las
+        // métricas se actualizan dinámicamente al confirmar una venta (mientras
+        // se consulta el módulo) sin recorrer todo el histórico en cada venta.
+        const reportsSection = document.getElementById('reports-section');
+        if (!reportsSection || !reportsSection.classList.contains('active')) return;
+
+        const report = ReportService.getCategorySales();
+        const top = ReportService.getTopProducts(5);
+
+        const fmt = (v) => (typeof v === 'number' ? `$${v.toFixed(2)}` : '$0.00');
+
+        // --- Tarjetas dinámicas por categoría ---
+        const cardsContainer = document.getElementById('category-breakdown-cards');
+        if (cardsContainer) {
+            if (report.categories.length === 0) {
+                cardsContainer.innerHTML = '<p class="empty-text">Sin ventas registradas</p>';
+            } else {
+                cardsContainer.innerHTML = report.categories.map(c => `
+                    <div class="report-card">
+                        <h3>${this.escapeHtml(c.category)}</h3>
+                        <p class="report-value">${c.pieces}</p>
+                        <span class="report-subvalue">${fmt(c.revenue)}</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        const totalEl = document.getElementById('category-pieces-total');
+        if (totalEl) totalEl.textContent = `${report.totalPieces} piezas · ${fmt(report.totalRevenue)}`;
+
+        // --- Gráfica: piezas vendidas por categoría ---
+        this._renderCategoryBreakdownChart(report.categories);
+
+        // --- Lista dinámica: Top 5 productos ---
+        const listContainer = document.getElementById('top-products-list');
+        if (listContainer) {
+            if (top.length === 0) {
+                listContainer.innerHTML = '<p class="empty-text">Sin ventas registradas</p>';
+            } else {
+                listContainer.innerHTML = top.map((p, i) => `
+                    <div class="top-product-card report-card">
+                        <h3>
+                            <span class="top-product-rank">${i + 1}</span>
+                            ${this.escapeHtml(p.description || 'Producto')}
+                        </h3>
+                        <p class="report-value">${p.quantity}</p>
+                        <span class="report-subvalue">${fmt(p.revenue)}</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        const subEl = document.getElementById('top-products-subtitle');
+        if (subEl) subEl.textContent = `${top.length} productos en el ranking`;
+
+        // --- Gráfica: top 5 productos ---
+        this._renderTopProductsChart(top);
+    }
+
+    // Gráfica de barras: piezas vendidas por categoría
+    _renderCategoryBreakdownChart(categories) {
+        const container = document.getElementById('category-breakdown-chart-container');
+        if (!container || !categories.length) return;
+        const labels = categories.map(c => c.category);
+        const data = categories.map(c => c.pieces);
+        this._renderVolumeChart(
+            container, 'category-breakdown-chart', 'chartCategorias', labels, data
+        );
+    }
+
+    // Gráfica de barras: top productos más vendidos
+    _renderTopProductsChart(products) {
+        const container = document.getElementById('top-products-chart-container');
+        if (!container || !products.length) return;
+        const labels = products.map(p => {
+            const d = p.description || 'Producto';
+            return d.length > 24 ? d.substring(0, 22) + '…' : d;
+        });
+        const data = products.map(p => p.quantity);
+        this._renderVolumeChart(
+            container, 'top-products-chart', 'chartTopProducts', labels, data
+        );
     }
 
     // Alternar visibilidad del detalle individual de una sesión/corte
@@ -3798,7 +4058,7 @@ class App {
                                 </td>
                                 <td class="qty-cell">${s.itemCount}</td>
                                 <td class="amount-cell">$${s.total.toFixed(2)}</td>
-                                <td>${s.paymentMethod}</td>
+                                <td>${s.paymentMethod === 'cash' ? 'Efectivo' : s.paymentMethod === 'card' ? 'Tarjeta' : s.paymentMethod === 'mixed' ? 'Mixto' : s.paymentMethod === 'transfer' ? 'Transferencia' : s.paymentMethod}</td>
                                 <td class="action-cell">
                                     <button class="btn btn-icon btn-sm"
                                             onclick="window.app.reprintTicket('${s.id}')"
@@ -3950,6 +4210,7 @@ class App {
             card.innerHTML = `
                 <div class="product-name">${product.description}</div>
                 <div class="product-sku">Código: ${product.barcode}</div>
+                <div class="product-category-badge" title="Categoría">${this.escapeHtml(product.category || 'Otros')}</div>
                 <div class="product-price">$${product.price.toFixed(2)}</div>
                 <div class="product-stock ${stockClass}">Existencia: ${product.stock} unidades${isLowStock ? ' ⚠ Bajo' : ''}</div>
                 ${costHtml}
@@ -4007,14 +4268,14 @@ class App {
                         <input type="number" name="stock" min="0" placeholder=" " required>
                         <label>Existencia Inicial</label>
                     </div>
-                    <div class="input-group">
-                        <input type="text" name="category" placeholder=" ">
-                        <label>Categoría</label>
-                    </div>
-                    <div class="input-group admin-only-field">
-                        <input type="number" name="cost" step="0.01" min="0" placeholder=" ">
-                        <label>Costo de Adquisición</label>
-                    </div>
+                     <div class="input-group">
+                         ${Inventory.renderCategorySelect('Otros')}
+                         <label>Categoría</label>
+                     </div>
+                     <div class="input-group admin-only-field">
+                         <input type="number" name="cost" step="0.01" min="0" placeholder=" ">
+                         <label>Costo de Adquisición</label>
+                     </div>
                     <div class="input-group">
                         <div class="checkbox-group" style="margin-top: 12px;">
                             <input type="checkbox" id="product-volume-pricing" name="aplicaPromocion" value="1" style="margin-right: 8px;">
@@ -4057,7 +4318,7 @@ class App {
                 price: parseFloat(formData.get('price')),
                 stock: parseInt(formData.get('stock')),
                 cost: formData.get('cost') ? parseFloat(formData.get('cost')) : 0,
-                category: formData.get('category') ? formData.get('category').trim() : 'General',
+                category: formData.get('category') ? formData.get('category').trim() : 'Otros',
                 aplicaPromocion: e.target.aplicaPromocion.checked
             };
 
@@ -4111,7 +4372,7 @@ class App {
                         <button type="button" class="btn btn-outline btn-sm" id="edit-restock-btn" title="Reponer stock" style="height: 40px; padding: 0 14px;">+</button>
                     </div>
                     <div class="input-group">
-                        <input type="text" name="category" placeholder=" " value="${this.escapeHtml(product.category || 'General')}">
+                        ${Inventory.renderCategorySelect(product.category || 'Otros')}
                         <label>Categoría</label>
                     </div>
                     <div class="input-group admin-only-field">
@@ -4180,7 +4441,7 @@ class App {
                 price: parseFloat(formData.get('price')) || 0,
                 stock: isNaN(stock) ? 0 : stock,
                 cost: formData.get('cost') ? parseFloat(formData.get('cost')) : 0,
-                category: formData.get('category') ? formData.get('category').trim() : 'General',
+                category: formData.get('category') ? formData.get('category').trim() : 'Otros',
                 aplicaPromocion: form.aplicaPromocion.checked
             };
 
@@ -4224,8 +4485,21 @@ class App {
                  if (addressEl) { settings.storeAddress = addressEl.value.trim(); saved = true; }
                  if (phoneEl) { settings.storePhone = phoneEl.value.trim(); saved = true; }
 
-                 const rfcEl = document.getElementById('store-rfc-input');
-                 if (rfcEl) { settings.storeRfc = rfcEl.value.trim(); saved = true; }
+                  const rfcEl = document.getElementById('store-rfc-input');
+                  if (rfcEl) { settings.storeRfc = rfcEl.value.trim(); saved = true; }
+
+                   // Guardar datos bancarios de transferencia
+                   const transferBankEl = document.getElementById('settings-transfer-bank-input');
+                   const transferClabeEl = document.getElementById('settings-transfer-clabe-input');
+                   const transferHolderEl = document.getElementById('settings-transfer-holder-input');
+                   if (transferBankEl || transferClabeEl || transferHolderEl) {
+                       BankData.saveBankData({
+                           bank: transferBankEl ? transferBankEl.value.trim() : '',
+                           clabe: transferClabeEl ? transferClabeEl.value.trim() : '',
+                           holder: transferHolderEl ? transferHolderEl.value.trim() : ''
+                       });
+                       saved = true;
+                   }
 
                  if (headerEl) { settings.receiptHeader = headerEl.value.trim() || settings.receiptHeader; saved = true; }
                  if (footerEl) { settings.receiptFooter = footerEl.value.trim() || settings.receiptFooter; saved = true; }
@@ -4996,7 +5270,7 @@ class App {
             metaEl.innerHTML = `
                 <div>Fecha: ${date}</div>
                 <div>Total: $${sale.total.toFixed(2)}</div>
-                <div>Pago: ${sale.paymentMethod === 'cash' ? 'Efectivo' : sale.paymentMethod === 'card' ? 'Tarjeta' : 'Mixto'}</div>
+                <div>Pago: ${sale.paymentMethod === 'cash' ? 'Efectivo' : sale.paymentMethod === 'card' ? 'Tarjeta' : sale.paymentMethod === 'mixed' ? 'Mixto' : sale.paymentMethod === 'transfer' ? 'Transferencia' : sale.paymentMethod}</div>
                 <div>${totalItems} pieza(s) • ${sale.cashier || 'N/A'}</div>
             `;
         }
@@ -5129,6 +5403,18 @@ class App {
                 note: note
             });
 
+            // Notificar devolución por Telegram
+            if (typeof notificarTelegram === 'function' && typeof TelegramNotify !== 'undefined') {
+                const firstItem = itemsToReturn[0] || {};
+                TelegramNotify.notificarDevolucion({
+                    saleId: sale.id,
+                    productName: firstItem.description || 'Producto',
+                    refundAmount: refundAmount,
+                    cashier: returnRecord.cashier || (Auth.getCurrentUser()?.name || 'Invitado'),
+                    motivo: note
+                });
+            }
+
             Backup.createLocalRecovery('devolución');
 
             // Actualizar reportes y UI
@@ -5243,7 +5529,7 @@ class App {
             metaEl.innerHTML = `
                 <div>Fecha: ${date}</div>
                 <div>Total: $${sale.total.toFixed(2)}</div>
-                <div>Pago: ${sale.paymentMethod === 'cash' ? 'Efectivo' : sale.paymentMethod === 'card' ? 'Tarjeta' : 'Mixto'}</div>
+                <div>Pago: ${sale.paymentMethod === 'cash' ? 'Efectivo' : sale.paymentMethod === 'card' ? 'Tarjeta' : sale.paymentMethod === 'mixed' ? 'Mixto' : sale.paymentMethod === 'transfer' ? 'Transferencia' : sale.paymentMethod}</div>
                 <div>${totalItems} pieza(s) • ${sale.cashier || 'N/A'}</div>
             `;
         }
@@ -5326,11 +5612,11 @@ class App {
 
     // ============================================================
     //  MÓDULO DE CAMBIO POR GARANTÍA / DEFECTO
-    //  - Reingreso de pieza defectuosa con estatus "Baja por Garantía"
+    //  - Reingreso de pieza defectuosa con estatus "Merma por Garantía / Pieza Rota"
     //  - Salida de pieza de reemplazo (del inventario)
     //  - Impacto contable: $0.00 (ningún movimiento en caja)
     //  - Ajuste físico: descuenta pieza entregada, registra pieza recibida
-    //  Exclusivo del rol Administrador.
+    //  Disponible para roles Administrador e Invitado.
     // ============================================================
 
     bindGuaranteeEvents() {
@@ -5338,7 +5624,7 @@ class App {
         if (guaranteeBtn) {
             guaranteeBtn.addEventListener('click', () => {
                 if (!Auth.canManageGuarantees()) {
-                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    Toast.warning('Permiso denegado: esta acción no está disponible para tu rol');
                     return;
                 }
                 this.showGuaranteeModal();
@@ -5538,7 +5824,7 @@ class App {
             metaEl.innerHTML = `
                 <div>Fecha: ${date}</div>
                 <div>Total: $${sale.total.toFixed(2)}</div>
-                <div>Pago: ${sale.paymentMethod === 'cash' ? 'Efectivo' : sale.paymentMethod === 'card' ? 'Tarjeta' : 'Mixto'}</div>
+                <div>Pago: ${sale.paymentMethod === 'cash' ? 'Efectivo' : sale.paymentMethod === 'card' ? 'Tarjeta' : sale.paymentMethod === 'mixed' ? 'Mixto' : sale.paymentMethod === 'transfer' ? 'Transferencia' : sale.paymentMethod}</div>
                 <div>${totalItems} pieza(s) • ${sale.cashier || 'N/A'}</div>
             `;
         }
@@ -5730,7 +6016,7 @@ class App {
             if (qty > 0) {
                 html += `
                     <div class="returns-item">
-                        <div class="returns-item-name">${item.description} <span class="sale-canceled-badge">Baja por Garantía</span></div>
+                        <div class="returns-item-name">${item.description} <span class="sale-canceled-badge">Merma por Garantía / Pieza Rota</span></div>
                         <div class="returns-item-price">$${item.price.toFixed(2)}</div>
                         <div class="returns-item-qty">${qty}x</div>
                         <div class="returns-item-amount">$${(qty * item.price).toFixed(2)}</div>
@@ -5770,7 +6056,7 @@ class App {
         }
 
         if (!Auth.canManageGuarantees()) {
-            Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+            Toast.warning('Permiso denegado: esta acción no está disponible para tu rol');
             return;
         }
 
@@ -5784,7 +6070,7 @@ class App {
                     quantity: qty,
                     price: item.price,
                     amount: qty * item.price,
-                    status: 'Baja por Garantía'
+                    status: 'Merma por Garantía / Pieza Rota'
                 });
             }
         });
@@ -5831,6 +6117,11 @@ class App {
                 cashAdjustment: false
             });
 
+            // Notificar cambio por garantía a Telegram
+            if (typeof notificarTelegram === 'function' && typeof TelegramNotify !== 'undefined') {
+                TelegramNotify.notificarCambioGarantia(exchangeRecord);
+            }
+
             Backup.createLocalRecovery('garantía');
 
             // Actualizar reportes y UI
@@ -5852,7 +6143,7 @@ class App {
     //  - Registra un ajuste de caja (tipo 'expense') con la
     //    nota explicativa proporcionada
     //  - Impacto: resta del efectivo en efectivo del reporte de caja
-    //  Exclusivo del rol Administrador.
+    //  - Disponible para roles Administrador e Invitado.
     // ============================================================
 
     bindWithdrawalEvents() {
@@ -5860,7 +6151,7 @@ class App {
         if (withdrawalBtn) {
             withdrawalBtn.addEventListener('click', () => {
                 if (!Auth.canRegisterExpenses()) {
-                    Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
+                    Toast.warning('Permiso denegado: esta acción no está disponible para tu rol');
                     return;
                 }
                 this.showWithdrawalModal();
@@ -5933,7 +6224,7 @@ class App {
 
     processWithdrawal() {
         if (!Auth.canRegisterExpenses()) {
-            Toast.error('Permiso denegado: Esta acción requiere privilegios de administrador');
+            Toast.error('Permiso denegado: esta acción no está disponible para tu rol');
             return;
         }
 
@@ -5949,6 +6240,7 @@ class App {
         const note = (noteInput?.value || '').trim();
 
         try {
+            const cashierName = Auth.getCurrentUser()?.name || 'Invitado';
             CashAdjustment.add({
                 type: 'expense',
                 amount: -amount,
@@ -5957,6 +6249,14 @@ class App {
                 relatedSaleId: null,
                 note: note
             });
+
+            if (typeof notificarTelegram === 'function' && typeof TelegramNotify !== 'undefined') {
+                TelegramNotify.notificarRetiroEfectivo({
+                    amount: amount,
+                    cashier: cashierName,
+                    note: note
+                });
+            }
 
             Backup.createLocalRecovery('retiro para depósito');
 
@@ -6630,6 +6930,15 @@ class App {
 
         const rfcEl = document.getElementById('store-rfc-input');
         if (rfcEl) rfcEl.value = settings.storeRfc || '';
+
+        const transferBankEl = document.getElementById('settings-transfer-bank-input');
+        if (transferBankEl) transferBankEl.value = BankData.getBankData().bank || '';
+
+        const transferClabeEl = document.getElementById('settings-transfer-clabe-input');
+        if (transferClabeEl) transferClabeEl.value = BankData.getBankData().clabe || '';
+
+        const transferHolderEl = document.getElementById('settings-transfer-holder-input');
+        if (transferHolderEl) transferHolderEl.value = BankData.getBankData().holder || '';
 
         const headerEl = document.getElementById('receipt-header-input');
         if (headerEl) headerEl.value = settings.receiptHeader || 'Gracias por su compra';

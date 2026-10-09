@@ -68,7 +68,8 @@ class Business {
          'pos_autobackup_last',
          'pos_business_name',
          'pos_vip_customers',
-         'pos_vip_config'
+          'pos_vip_config',
+         'pos_datos_bancarios'
      ];
 
     // --- Generar una clave namespaced bajo el negocio único + device_id ---
@@ -696,6 +697,13 @@ class DataValidator {
         if (data === null || typeof data !== 'object' || Array.isArray(data)) return false;
         return typeof data.piecesForFreeJewel === 'number' && data.piecesForFreeJewel >= 1;
     }
+
+    static validateBankData(data) {
+        if (data === null || typeof data !== 'object' || Array.isArray(data)) return false;
+        return typeof data.bank === 'string' &&
+               typeof data.clabe === 'string' &&
+               typeof data.holder === 'string';
+    }
 }
 
 window.DataValidator = DataValidator;
@@ -787,6 +795,7 @@ class StorageGuard {
          { key: 'pos_volume_pricing', validate: (d) => DataValidator.validateVolumeTiers(d), fallback: null },
          { key: 'pos_vip_config', validate: (d) => DataValidator.validateVIPConfig(d), fallback: null },
          { key: 'pos_vip_customers', validate: (d) => DataValidator.validateVIPCustomers(d), fallback: [] },
+         { key: 'pos_datos_bancarios', validate: (d) => DataValidator.validateBankData(d), fallback: {} },
          { key: 'pos_current_user', validate: (d) => DataValidator.validateUser(d), fallback: null, isObject: true },
         { key: 'pos_business_name', validate: (d) => typeof d === 'string' && d.length > 0, fallback: null, isObject: false, defaultValue: Business.BUSINESS_NAME }
     ];

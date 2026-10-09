@@ -202,6 +202,40 @@ body {
     padding: 0 6px;
 }
 
+/* Select dentro de .input-group: apariencia consistente con los inputs */
+.input-group select {
+    width: 100%;
+    padding: 14px 16px;
+    background: var(--bg-input);
+    border: 1.5px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-size: 15px;
+    color: var(--text-primary);
+    transition: all 0.2s ease;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a0a0b0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    background-size: 12px;
+}
+
+.input-group select:focus {
+    outline: none;
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.2);
+}
+
+/* Etiqueta flotante para selects (siempre visible como outlined) */
+.input-group select + label {
+    top: -8px;
+    transform: none;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--gold);
+    background: var(--bg-primary);
+    padding: 0 6px;
+}
+
 .login-screen {
     position: fixed;
     inset: 0;
@@ -854,6 +888,18 @@ body {
     font-size: 12px;
     color: var(--text-muted);
     font-family: 'Courier New', monospace;
+}
+
+.inventory-card .product-category-badge {
+    display: inline-block;
+    margin-top: 6px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--gold-light);
+    background: rgba(212, 175, 55, 0.12);
+    border: 1px solid rgba(212, 175, 55, 0.3);
+    border-radius: var(--radius-sm);
 }
 
 .inventory-card .product-price {
@@ -1845,6 +1891,28 @@ body {
     color: var(--text-secondary);
     font-size: 13px;
     margin-top: 8px;
+}
+
+/* Sección de pago por Transferencia bancaria */
+.transfer-bank-details {
+    margin: 16px 0;
+}
+
+.transfer-clabe-row {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+
+.transfer-clabe-row .input-group {
+    margin-bottom: 0;
+}
+
+.copy-clabe-btn {
+    height: 40px;
+    align-self: flex-end;
+    margin-bottom: 4px;
 }
 
 /* ============================================================
@@ -3764,6 +3832,37 @@ body {
     color: var(--text-secondary);
     font-family: 'Segoe UI', sans-serif;
     font-weight: 400;
+}
+
+/* Desglose por categoría y top productos */
+.top-product-card {
+    text-align: left;
+}
+
+.top-product-card h3 {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.top-product-rank {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    background: var(--gold);
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.top-products-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
 /* ============================================================

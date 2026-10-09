@@ -1,6 +1,16 @@
 class Inventory {
     static get storageKey() { return Business.key('pos_inventory'); }
 
+    // Categorías predefinidas para el catálogo de productos.
+    static productCategories = [
+        'Aretes',
+        'Anillos',
+        'Collares',
+        'Donitas de cabello',
+        'Impresiones 3D',
+        'Otros'
+    ];
+
     static defaultProducts = [
         { barcode: '7501000100018', description: 'Anillo de Plata Luna Creciente', price: 450.00, cost: 225.00, stock: 25, category: 'Anillos' },
         { barcode: '7501000100025', description: 'Collar de Oro 18K', price: 1250.00, cost: 750.00, stock: 8, category: 'Collares' },
@@ -45,6 +55,9 @@ class Inventory {
             if (p && typeof p.aplicaPromocion === 'undefined' && typeof p.volumePricing !== 'undefined') {
                 p.aplicaPromocion = p.volumePricing === true;
             }
+            if (!p || typeof p.category !== 'string' || p.category.length === 0) {
+                if (p) p.category = 'Otros';
+            }
             return p;
         });
     }
@@ -76,7 +89,7 @@ class Inventory {
         product.cost = parseFloat(product.cost) || 0;
         product.price = parseFloat(product.price) || 0;
         product.stock = parseInt(product.stock) || 0;
-        product.category = product.category || 'General';
+        product.category = product.category || 'Otros';
         products.push(product);
         this.saveProducts(products);
         return { success: true };
@@ -130,6 +143,34 @@ class Inventory {
         return ((product.price - product.cost) / product.cost) * 100;
     }
 
+    // Escapar HTML básico para valores dinámicos renderizados en el DOM.
+    static escapeHtml(value) {
+        if (value === null || typeof value === 'undefined') return '';
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    // Generar el markup de un <select> de categoría. Si la categoría actual
+    // del producto no está en la lista predefinida (p. ej. categorías legadas),
+    // se incluye como primera opción para conservar su valor al editar.
+    static renderCategorySelect(currentCategory = '') {
+        const base = this.productCategories.slice();
+        const cur = currentCategory || 'Otros';
+        const ordered = base.indexOf(cur) === -1
+            ? [cur, ...base.filter(c => c !== cur)]
+            : base;
+        const options = ordered.map(cat => {
+            const sel = cat === cur ? ' selected' : '';
+            const esc = this.escapeHtml(cat);
+            return `<option value="${esc}"${sel}>${esc}</option>`;
+        });
+        return `<select name="category" class="category-select">${options.join('')}</select>`;
+    }
+
     // Obtener productos con stock bajo según el umbral de Settings
     static getLowStockProducts() {
         const threshold = Settings.getSettings().lowStockThreshold || 5;
@@ -174,6 +215,7 @@ class Inventory {
             card.innerHTML = `
                 <div class="product-name">${product.description}</div>
                 <div class="product-sku">Código: ${product.barcode}</div>
+                <div class="product-category-badge" title="Categoría">${this.escapeHtml(product.category || 'Otros')}</div>
                 <div class="product-price">$${product.price.toFixed(2)}</div>
                 <div class="product-stock ${stockClass}">Existencia: ${product.stock} unidades${isLowStock ? ' ⚠ Bajo' : ''}</div>
                 ${costHtml}
