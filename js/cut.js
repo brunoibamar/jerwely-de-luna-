@@ -174,12 +174,12 @@ class Cut {
             return { ...summary, isFull: true };
         }
 
-        // Guest / Cashier: ocultar todos los montos y detalles sensibles
+        // Guest / Cashier: ocultar todos los montos, piezas vendidas y detalles sensibles
         return {
             date: summary.date,
-            totalSales: summary.totalSales,
+            totalSales: 0,
             transactionCount: summary.transactionCount,
-            piecesSold: summary.piecesSold,
+            piecesSold: 0,
             isFull: false
         };
     }

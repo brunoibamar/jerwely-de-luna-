@@ -156,7 +156,7 @@
                 </div>
             </div>
 <div class="summary-actions">
-                <button type="button" id="print-cut-btn" class="btn btn-outline">Imprimir Cierre de Caja</button>
+                <button type="button" id="print-cut-btn" class="btn btn-outline admin-only">Imprimir Cierre de Caja</button>
                 <button type="button" id="send-email-btn" class="btn btn-outline">Enviar Registro al Correo</button>
                 <button type="button" id="download-local-btn" class="btn btn-outline">Guardar Localmente</button>
             </div>
@@ -256,7 +256,7 @@
                         <div class="vip-sales-picker">
                             <div class="vip-picker-row">
                                 <input type="text" id="vip-search-input" placeholder="Cliente VIP..." class="search-input vip-search-input" autocomplete="off">
-                                <button id="add-vip-quick-btn" class="btn btn-outline btn-sm admin-only" title="Registrar nuevo cliente VIP rápidamente">
+                                <button id="add-vip-quick-btn" class="btn btn-outline btn-sm guest-allowed" title="Registrar nuevo cliente VIP rápidamente">
                                     + Nuevo VIP
                                 </button>
                             </div>
@@ -708,7 +708,7 @@
             </div>
             <div class="vip-toolbar">
                 <input type="text" id="vip-search" placeholder="Buscar por nombre o teléfono..." class="search-input">
-                <button id="add-vip-btn" class="btn btn-primary admin-only">Nuevo Cliente VIP</button>
+                <button id="add-vip-btn" class="btn btn-primary guest-allowed">Nuevo Cliente VIP</button>
             </div>
             <div class="data-table-container vip-table-container">
                 <table class="data-table vip-table" id="vip-table">

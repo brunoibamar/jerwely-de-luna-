@@ -1118,8 +1118,10 @@ class App {
             });
         }
 
-        // Cierre de Caja simplificado para el perfil Invitado.
-        // Muestra solo el total de piezas vendidas (sin totales monetarios ni ganancias).
+        // Cierre de Caja para el perfil Invitado.
+        // El invitado ve únicamente Hora de Entrada y Hora de Salida en el
+        // resumen; los totales monetarios, piezas vendidas y ganancias se
+        // ocultan. El correo enviado mantiene el formato completo del admin.
         const cashCloseBtn = document.getElementById('cash-close-btn');
         if (cashCloseBtn) {
             cashCloseBtn.addEventListener('click', () => {
@@ -1360,16 +1362,21 @@ class App {
                  `;
             } else {
                 // --- Invitado / Cajero: vista restringida ---
-                // No se muestra dinero, ganancias ni montos totales.
-                // Únicamente el total de piezas vendidas en el turno/sesión.
-                const piecesSold = report.piecesSold !== undefined
-                    ? report.piecesSold
-                    : (report.salesInSession || report.transactionCount || 0);
+                // Únicamente Hora de Entrada y Hora de Salida.
+                // No se muestra dinero, ganancias, piezas ni montos totales.
+                const openTime = report.formattedOpenTime || report.sessionStartTime || '';
+                const closeTime = report.formattedCloseTime || report.sessionEndTime || '';
 
                 summaryEl.innerHTML = `
-                    <div class="summary-row guest-pieces-sold">
-                        <span class="summary-label">Piezas Vendidas</span>
-                        <span class="summary-value gold">${piecesSold}</span>
+                    <div class="session-timestamps">
+                        <div class="session-time-row">
+                            <span class="summary-label">Hora de Entrada:</span>
+                            <span class="summary-value">${openTime}</span>
+                        </div>
+                        <div class="session-time-row">
+                            <span class="summary-label">Hora de Salida:</span>
+                            <span class="summary-value">${closeTime}</span>
+                        </div>
                     </div>
                 `;
             }
@@ -1396,7 +1403,7 @@ class App {
                 // Usar el reporte de la sesión/turno recién cerrado
                 const report = this.currentReport || Cut.generateCutReport();
                 if (Auth.isGuest()) {
-                    // Invitado: ticket simplificado (solo piezas vendidas)
+                    // Invitado: ticket simplificado (solo Hora de Entrada y Salida)
                     Print.printGuestClosure(report);
                 } else {
                     // Administrador: corte financiero completo
@@ -1417,7 +1424,7 @@ class App {
             downloadBtn.addEventListener('click', () => {
                 if (this.currentReport) {
                     if (Auth.isGuest()) {
-                        // Invitado: registro de sesión simplificado (solo piezas vendidas)
+                        // Invitado: registro de sesión simplificado
                         Backup.exportGuestSession(this.currentReport);
                     } else {
                         // Administrador: reporte completo + respaldo JSON (respaldo_pos_[FECHA].json)
@@ -2532,7 +2539,7 @@ class App {
 
         if (addBtn) {
             addBtn.addEventListener('click', () => {
-                if (!Auth.canModifyInventory()) {
+                if (!Auth.canManageVIP()) {
                     Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
                     return;
                 }
@@ -6426,7 +6433,7 @@ class App {
         const addVipBtn = document.getElementById('add-vip-btn');
         if (addVipBtn) {
             addVipBtn.addEventListener('click', () => {
-                if (!Auth.canModifyInventory()) {
+                if (!Auth.canManageVIP()) {
                     Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
                     return;
                 }
@@ -6517,7 +6524,7 @@ class App {
                 </td>
                 <td>
                     <div class="vip-pieces-cell">
-                        <span class="vip-pieces-value" title="Editar valor total" data-action="set-pieces" data-id="${isAdmin ? customer.id : ''}" style="${isAdmin ? 'cursor:pointer;' : ''}">${pieces}</span>
+                         <span class="vip-pieces-value" ${isAdmin ? `title="Editar valor total" data-action="set-pieces" data-id="${customer.id}" style="cursor:pointer;"` : ''}>${pieces}</span>
                         <div class="vip-progress-container">
                             <div class="vip-progress-bar ${isEligible ? 'vip-progress-eligible' : ''}" style="width: ${progressPercent}%"></div>
                         </div>

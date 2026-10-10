@@ -899,8 +899,9 @@ class Backup {
     // Envío por email de la información de cierre de caja.
     // Para el rol Invitado/Cajero se envía el MISMO reporte financiero completo
     // que para el administrador, calculando y adjuntando todos los valores
-    // monetarios, caja final y utilidades. La restricción visual (solo piezas
-    // vendidas) aplica exclusivamente a la pantalla del POS, no al correo.
+    // monetarios, caja final y utilidades. La restricción visual (solo Hora de
+    // Entrada y Salida en pantalla) aplica exclusivamente a la pantalla del POS,
+    // no al correo: el email siempre contiene el reporte detallado completo.
     static async sendGuestSessionEmail(report, recipient) {
         try {
             const email = recipient || Auth.getAdminEmail();

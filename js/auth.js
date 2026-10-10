@@ -313,6 +313,10 @@ class Auth {
     static canPerformSales() {
         return true;
     }
+
+    static canManageVIP() {
+        return this.isAdmin() || this.isGuest();
+    }
 }
 
 // ============================================================
