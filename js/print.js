@@ -408,7 +408,7 @@ class Print {
     }
 
     // --- Ticket simplificado para el perfil Invitado ---
-    // Imprime EXCLUSIVAMENTE el número total de piezas vendidas en la sesión.
+    // Muestra EXCLUSIVAMENTE la Hora de Entrada y la Hora de Salida.
     static printGuestClosure(report) {
         const content = this.formatGuestClosure(report);
         const printWindow = window.open('', '_blank', 'width=400,height=600');
@@ -420,10 +420,6 @@ class Print {
     }
 
     static formatGuestClosure(report) {
-        const piecesSold = report.piecesSold !== undefined
-            ? report.piecesSold
-            : (report.salesInSession || report.transactionCount || 0);
-
         return `
             <!DOCTYPE html>
             <html>
@@ -447,28 +443,17 @@ class Print {
                         padding: 6px 0;
                         border-bottom: 1px dashed #ddd;
                     }
-                    .guest-ticket-total {
-                        text-align: center;
-                        margin-top: 16px;
-                        padding-top: 16px;
-                        border-top: 2px solid #d4af37;
-                    }
-                    .guest-pieces {
-                        font-size: 42px;
-                        font-weight: bold;
-                        color: #d4af37;
-                    }
                 </style>
             </head>
             <body>
                 <h1>Cierre de Caja - ${report.store || Business.getStoreName()}</h1>
-                <p><strong>Cajero:</strong> ${report.cashier || report.closedBy || 'Desconocido'}</p>
-                <p><strong>Sesión:</strong> ${report.sessionId || 'N/A'}</p>
-                <p><strong>Apertura:</strong> ${report.formattedOpenTime || report.sessionStartTime || 'N/A'}</p>
-                <p><strong>Cierre:</strong> ${report.formattedCloseTime || report.sessionEndTime || 'N/A'}</p>
-                <div class="guest-ticket-total">
-                    <div>Piezas Vendidas</div>
-                    <div class="guest-pieces">${piecesSold}</div>
+                <div class="guest-ticket-row">
+                    <span><strong>Hora de Entrada:</strong></span>
+                    <span>${report.formattedOpenTime || report.sessionStartTime || 'N/A'}</span>
+                </div>
+                <div class="guest-ticket-row">
+                    <span><strong>Hora de Salida:</strong></span>
+                    <span>${report.formattedCloseTime || report.sessionEndTime || 'N/A'}</span>
                 </div>
             </body>
             </html>
