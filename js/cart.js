@@ -35,6 +35,8 @@ class Cart {
 
         // Re-evaluar la promoción por volumen multicategoría (total global)
         this.applyVolumePromotion();
+        // Aplicar promoción Buen Fin (7 pagas, la 8ª gratis)
+        this.applyBuenFinPromotion();
 
         this.render();
         this.updateTotals();
@@ -44,6 +46,7 @@ class Cart {
         this.items = this.items.filter(item => item.barcode !== barcode);
         // Recalcular el total global: al quitar un artículo el umbral puede cambiar
         this.applyVolumePromotion();
+        this.applyBuenFinPromotion();
         this.render();
         this.updateTotals();
     }
@@ -68,6 +71,7 @@ class Cart {
         if (item && quantity > 0) {
             item.quantity = quantity;
             this.applyVolumePromotion();
+            this.applyBuenFinPromotion();
             this.render();
             this.updateTotals();
         }
@@ -92,6 +96,68 @@ class Cart {
             }
             item.amount = item.price * item.quantity;
         });
+    }
+
+    // --- Promoción Buen Fin: Lleva 7, la 8ª es GRATIS ---
+    // Lee la bandera buenFinActive de localStorage. Si está activa y el
+    // carrito tiene 8 o más piezas, por cada bloque de 8 piezas la pieza de
+    // menor valor se marca como gratuita (precio = $0). La pieza gratis sigue
+    // descontando inventario pero NO se cuenta como pieza vendida en métricas.
+    isBuenFinActive() {
+        return localStorage.getItem('buenFinActive') === 'true';
+    }
+
+    applyBuenFinPromotion() {
+        // Resetear cantidades gratuitas
+        this.items.forEach(item => {
+            item.buenFinFreeQty = 0;
+        });
+
+        if (!this.isBuenFinActive()) return;
+
+        const totalPieces = this.getItemCount();
+        const freeBlocks = Math.floor(totalPieces / 8);
+        if (freeBlocks === 0) return;
+
+        // Construir lista expandida de piezas individuales ordenadas por precio
+        // ascendente para que en cada bloque de 8 la más barata sea la gratuita.
+        const pieces = [];
+        this.items.forEach((item, idx) => {
+            for (let i = 0; i < item.quantity; i++) {
+                pieces.push({ itemIndex: idx, price: item.price, barcode: item.barcode });
+            }
+        });
+
+        pieces.sort((a, b) => a.price - b.price);
+
+        const freeCounts = {};
+        for (let b = 0; b < freeBlocks; b++) {
+            const freePiece = pieces[b * 8]; // pieza más barata del bloque b
+            freeCounts[freePiece.itemIndex] = (freeCounts[freePiece.itemIndex] || 0) + 1;
+        }
+
+        this.items.forEach((item, idx) => {
+            item.buenFinFreeQty = freeCounts[idx] || 0;
+            item.amount = (item.quantity - item.buenFinFreeQty) * item.price;
+        });
+    }
+
+    getBuenFinDiscount() {
+        return this.items.reduce((sum, item) => {
+            return sum + (item.buenFinFreeQty || 0) * item.price;
+        }, 0);
+    }
+
+    getBuenFinFreePieces() {
+        return this.items.reduce((sum, item) => sum + (item.buenFinFreeQty || 0), 0);
+    }
+
+    getPaidItemCount() {
+        return this.items.reduce((sum, item) => sum + (item.quantity - (item.buenFinFreeQty || 0)), 0);
+    }
+
+    getItemCount() {
+        return this.items.reduce((sum, item) => sum + item.quantity, 0);
     }
 
     canAddItem(barcode) {
@@ -136,10 +202,16 @@ class Cart {
         }
 
         this.items.forEach(item => {
+            const freeQty = item.buenFinFreeQty || 0;
+            const isFreeItem = freeQty > 0;
+            const paidQty = item.quantity - freeQty;
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td class="barcode-cell">${item.barcode}</td>
-                <td class="description-cell">${item.description}</td>
+                <td class="description-cell">
+                    ${item.description}
+                    ${isFreeItem ? `<span class="buen-fin-badge" title="Promoción Buen Fin (Gratis): ${freeQty} pieza(s) gratis">• Buen Fin (${freeQty} gratis)</span>` : ''}
+                </td>
                 <td class="price-cell">
                     ${Auth.isAdmin()
                         ? `<input type="number" min="0" step="0.01" value="${item.price.toFixed(2)}"
@@ -163,6 +235,19 @@ class Cart {
             `;
             tbody.appendChild(tr);
         });
+
+        // Fila de desglose Buen Fin en el total
+        const totalDiscount = this.getBuenFinDiscount();
+        if (this.isBuenFinActive() && totalDiscount > 0) {
+            const tr = document.createElement('tr');
+            tr.className = 'buen-fin-row';
+            tr.innerHTML = `
+                <td colspan="4" class="buen-fin-label">Promoción Buen Fin (Gratis) — ${this.getBuenFinFreePieces()} pieza(s) gratis</td>
+                <td class="amount-cell buen-fin-amount">-$${totalDiscount.toFixed(2)}</td>
+                <td colspan="2"></td>
+            `;
+            tbody.appendChild(tr);
+        }
     }
 
     clear() {
@@ -184,6 +269,7 @@ class Cart {
     restoreFromData(data) {
         this.items = data.items.map(item => ({ ...item }));
         this.applyVolumePromotion();
+        this.applyBuenFinPromotion();
         this.render();
         this.updateTotals();
     }

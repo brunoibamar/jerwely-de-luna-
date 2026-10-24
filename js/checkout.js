@@ -12,6 +12,8 @@ class Checkout {
         if (cart.isEmpty()) return { success: false, error: 'El carrito está vacío' };
 
         const subtotal = cart.getSubtotal();
+        const buenFinDiscount = cart.getBuenFinDiscount ? cart.getBuenFinDiscount() : 0;
+        const buenFinFreePieces = cart.getBuenFinFreePieces ? cart.getBuenFinFreePieces() : 0;
 
         const sale = {
             id: this.generateSaleId(),
@@ -19,6 +21,9 @@ class Checkout {
             items: cart.getItems(),
             subtotal: subtotal,
             total: subtotal,
+            buenFinActive: cart.isBuenFinActive ? cart.isBuenFinActive() : false,
+            buenFinDiscount: buenFinDiscount,
+            buenFinFreePieces: buenFinFreePieces,
             paymentMethod: paymentDetails.method,
             // Guardar detalles completos del pago (cambio, montos mixtos, etc.)
             paymentDetails: {
@@ -92,13 +97,17 @@ class Checkout {
             qty: item.quantity,
             price: item.price,
             amount: item.amount,
-            originalPrice: item.originalPrice || item.price
+            originalPrice: item.originalPrice || item.price,
+            buenFinFreeQty: item.buenFinFreeQty || 0
         }));
 
         const totalSavings = items.reduce((sum, item) => {
             const saved = Math.max(0, (item.originalPrice - item.price) * item.qty);
             return sum + saved;
         }, 0);
+
+        const buenFinDiscount = typeof sale.buenFinDiscount === 'number' ? sale.buenFinDiscount : 0;
+        const buenFinFreePieces = typeof sale.buenFinFreePieces === 'number' ? sale.buenFinFreePieces : 0;
 
         return {
             store: settings.storeName || 'Jewerly De Luna',
@@ -118,6 +127,9 @@ class Checkout {
             items: items,
             subtotal: sale.subtotal,
             total: sale.total,
+            buenFinActive: sale.buenFinActive === true,
+            buenFinDiscount: parseFloat(buenFinDiscount.toFixed(2)),
+            buenFinFreePieces: buenFinFreePieces,
             totalSavings: parseFloat(totalSavings.toFixed(2)),
              paymentMethod: methodLabels[sale.paymentMethod] || sale.paymentMethod,
              // Detalles de pago para el ticket (cambio, montos desglosados)
