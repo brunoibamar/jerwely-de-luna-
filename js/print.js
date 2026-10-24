@@ -165,6 +165,13 @@ class Print {
                     </thead>
                     <tbody>
                         ${itemsRows}
+                    ${(data.buenFinActive && data.buenFinDiscount > 0)
+                        ? `<tr>
+                            <td style="text-align: left; padding: 4px 0;" colspan="2">Promoción Buen Fin (Gratis): ${data.buenFinFreePieces} pieza(s)</td>
+                            <td style="text-align: right; padding: 4px 0;">$0.00</td>
+                            <td style="text-align: right; padding: 4px 0;">-$${data.buenFinDiscount.toFixed(2)}</td>
+                         </tr>`
+                        : ''}
                     </tbody>
                  </table>
                  <div class="total-row">

@@ -70,7 +70,7 @@ class Cut {
             } else if (s.paymentMethod === 'transfer') {
                 transferTotal += s.total;
             }
-            piecesSold += s.items ? s.items.reduce((sum, item) => sum + (item.quantity || 0), 0) : 0;
+            piecesSold += s.items ? s.items.reduce((sum, item) => sum + (item.quantity || 0) - (item.buenFinFreeQty || 0), 0) : 0;
         });
 
         const cashCount = sales.filter(s => s.paymentMethod === 'cash' || s.paymentMethod === 'mixed').length;
@@ -232,7 +232,7 @@ class Cut {
                     totalCost += product.cost * item.quantity;
                 }
                 totalRevenue += item.amount;
-                piecesSold += item.quantity || 0;
+                piecesSold += (item.quantity || 0) - (item.buenFinFreeQty || 0);
             });
         });
 

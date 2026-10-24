@@ -154,7 +154,7 @@ class ReportService {
             if (!byCategory[category]) {
                 byCategory[category] = { category, pieces: 0, revenue: 0, sales: 0 };
             }
-            byCategory[category].pieces += item.quantity || 0;
+            byCategory[category].pieces += (item.quantity || 0) - (item.buenFinFreeQty || 0);
             byCategory[category].revenue += item.amount || 0;
             byCategory[category].sales += 1;
         });
@@ -186,7 +186,7 @@ class ReportService {
                     revenue: 0
                 };
             }
-            byProduct[key].quantity += item.quantity || 0;
+            byProduct[key].quantity += (item.quantity || 0) - (item.buenFinFreeQty || 0);
             byProduct[key].revenue += item.amount || 0;
         });
 
@@ -216,7 +216,7 @@ class ReportService {
                     totalCost += product.cost * item.quantity;
                 }
                 totalRevenue += item.amount || 0;
-                piecesSold += item.quantity || 0;
+                piecesSold += (item.quantity || 0) - (item.buenFinFreeQty || 0);
             });
         });
 
@@ -461,7 +461,7 @@ class ReportService {
                     totalCost += product.cost * item.quantity;
                 }
                 totalRevenue += item.amount;
-                piecesSold += item.quantity || 0;
+                piecesSold += (item.quantity || 0) - (item.buenFinFreeQty || 0);
             });
         });
 

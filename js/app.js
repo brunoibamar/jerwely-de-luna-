@@ -427,7 +427,8 @@ class Settings {
         receiptShowDate: true,
         receiptShowPaymentMethod: true,
         receiptShowPaymentDetails: true,
-        lowStockThreshold: 5
+        lowStockThreshold: 5,
+        buenFinActive: false
     };
 
     static getSettings() {
@@ -4526,7 +4527,14 @@ class App {
                      saved = true;
                  }
 
-                   Settings.saveSettings(settings);
+                 const buenFinEl = document.getElementById('buen-fin-active');
+                 if (buenFinEl) {
+                     settings.buenFinActive = buenFinEl.checked;
+                     localStorage.setItem('buenFinActive', buenFinEl.checked);
+                     saved = true;
+                 }
+
+                    Settings.saveSettings(settings);
                    Business.setBusinessName(settings.storeName);
 
                   // Guardar configuración de EmailJS
@@ -6955,6 +6963,12 @@ class App {
 
         const stockEl = document.getElementById('low-stock-input');
         if (stockEl) stockEl.value = settings.lowStockThreshold || 5;
+
+        const buenFinEl = document.getElementById('buen-fin-active');
+        if (buenFinEl) {
+            buenFinEl.checked = settings.buenFinActive === true;
+            localStorage.setItem('buenFinActive', String(settings.buenFinActive === true));
+        }
 
         const showCashierEl = document.getElementById('receipt-show-cashier');
         if (showCashierEl) showCashierEl.checked = settings.receiptShowCashier !== false;
