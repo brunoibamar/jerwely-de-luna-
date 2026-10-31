@@ -94,6 +94,40 @@ const { chromium } = require('playwright');
             localStorage.setItem(Auth.current_userKey, JSON.stringify(Auth.currentUser));
             app.showApp(); app.switchSection('settings');
         });
+        const originalSales = await page.evaluate(() => localStorage.getItem(SaleService.storageKey));
+        await page.evaluate(async () => {
+            window.__pickerDescriptors = ['showDirectoryPicker', 'showSaveFilePicker'].map(key => [key, Object.getOwnPropertyDescriptor(window, key)]);
+            for (const [key] of window.__pickerDescriptors) Object.defineProperty(window, key, { value: undefined, configurable: true });
+            await AutoBackup.renderStatus();
+        });
+        assert.equal(await page.locator('#auto-backup-choose-btn').isEnabled(), true);
+        await page.locator('#auto-backup-choose-btn').click();
+        assert.ok((await page.locator('#auto-backup-feedback').textContent()).includes('Brave'));
+        assert.ok((await page.locator('#auto-backup-status').textContent()).includes('no los transfiere'));
+        await page.evaluate(async () => {
+            Object.defineProperty(window, 'showDirectoryPicker', { configurable: true, value: async () => {
+                window.__pickerCalledWithActivation = navigator.userActivation.isActive;
+                throw new DOMException('Test blocked', 'SecurityError');
+            } });
+            await AutoBackup.renderStatus();
+        });
+        assert.equal(await page.evaluate(() => AutoBackup.isSupported()), true, 'Directory picker does not depend on save-file picker');
+        await page.locator('#auto-backup-choose-btn').click();
+        await page.waitForFunction(() => document.getElementById('auto-backup-feedback').textContent.includes('no permitió'));
+        assert.equal(await page.evaluate(() => window.__pickerCalledWithActivation), true);
+        await page.evaluate(() => Object.defineProperty(window, 'showDirectoryPicker', { configurable: true, value: async () => { throw new DOMException('Cancel', 'AbortError'); } }));
+        await page.locator('#auto-backup-choose-btn').click();
+        await page.waitForFunction(() => document.getElementById('auto-backup-feedback').textContent.includes('No se seleccionó'));
+        assert.equal(await page.locator('#auto-backup-choose-btn').isEnabled(), true);
+        assert.equal(await page.evaluate(() => localStorage.getItem(SaleService.storageKey)), originalSales);
+        await page.evaluate(async () => {
+            for (const [key, descriptor] of window.__pickerDescriptors) {
+                if (descriptor) Object.defineProperty(window, key, descriptor);
+                else delete window[key];
+            }
+            await AutoBackup.renderStatus();
+        });
+        console.log('PASS: unsupported browser, blocked picker and cancellation explain the result without touching sales; supported click keeps user activation');
         assert.equal(await page.locator('#backup-restore-section, #export-backup-setting-btn, #import-backup-setting-btn').count(), 0);
         // Ejercitar la descarga mensual con confirmación explícita del archivo.
         page.on('dialog', dialog => dialog.accept());

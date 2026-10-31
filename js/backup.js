@@ -1405,7 +1405,20 @@ class AutoBackup {
     }
 
     static isSupported() {
-        return typeof window.showSaveFilePicker === 'function' && typeof indexedDB !== 'undefined';
+        return (typeof window.showDirectoryPicker === 'function' || typeof window.showSaveFilePicker === 'function') && typeof indexedDB !== 'undefined';
+    }
+
+    static canChooseDirectory() {
+        return window.isSecureContext && typeof window.showDirectoryPicker === 'function' && typeof indexedDB !== 'undefined';
+    }
+
+    static folderFeedback(message) {
+        const el = document.getElementById('auto-backup-feedback');
+        if (el) el.textContent = message;
+    }
+
+    static folderUnavailableMessage() {
+        return 'Este navegador no habilita la elección de carpeta para respaldos automáticos. En Brave esta función puede estar desactivada. Use “Descargar respaldo completo (JSON)” y guarde el archivo en su computadora. Los datos siguen en este navegador: cambiar a otro navegador no los transfiere.';
     }
 
     // --- IndexedDB (persistencia del manejador del archivo) ---
@@ -1454,21 +1467,37 @@ class AutoBackup {
     }
 
     static async chooseDirectory() {
-        if (typeof window.showDirectoryPicker !== 'function') {
-            Toast.warning('Use Chrome o Edge en computadora para elegir una carpeta. También puede descargar el respaldo manual.');
+        if (!this.canChooseDirectory()) {
+            const message = this.folderUnavailableMessage();
+            this.folderFeedback(message);
+            Toast.warning(message, 12000);
             return false;
         }
+        if (this._choosingDirectory) return false;
+        this._choosingDirectory = true;
+        const button = document.getElementById('auto-backup-choose-btn');
+        if (button) button.disabled = true;
+        this.folderFeedback('Elija una carpeta en la ventana del navegador y permita el acceso.');
         try {
             const handle = await window.showDirectoryPicker({ id: 'jdl-backup-folder', mode: 'readwrite', startIn: 'documents' });
             await this._dbOp('readwrite', s => s.put(handle, this.HANDLE_ID));
             this._handle = handle;
             const saved = await this.save('configuración de carpeta');
+            this.folderFeedback(saved ? 'Carpeta activada y primera copia verificada.' : 'Se eligió la carpeta, pero no se confirmó el primer respaldo. Revise el permiso y el espacio disponible; conserve su JSON descargado.');
             if (saved) Toast.success('Carpeta activada. Cada respaldo nuevo conservará los archivos anteriores.');
             return saved;
         } catch (err) {
-            if (err?.name !== 'AbortError') Toast.error('No se pudo activar la carpeta: ' + (err?.message || err));
+            if (err?.name === 'AbortError') {
+                this.folderFeedback('No se seleccionó una carpeta y no se cambió la configuración anterior. Si no apareció una ventana, el navegador puede estar bloqueando la función. Puede guardar una copia con “Descargar respaldo completo (JSON)”.');
+            } else {
+                const message = /SecurityError|NotAllowedError/.test(err?.name || '')
+                    ? 'El navegador no permitió abrir o autorizar la carpeta. Conserve el JSON descargado; puede seguir usando la descarga manual en este navegador.'
+                    : 'No se pudo activar la carpeta: ' + (err?.message || err);
+                this.folderFeedback(message);
+                Toast.error(message, 12000);
+            }
             return false;
-        } finally { this.renderStatus(); }
+        } finally { this._choosingDirectory = false; this.renderStatus(); }
     }
 
     // --- Acciones del administrador ---
@@ -1740,12 +1769,19 @@ class AutoBackup {
         const reauthBtn = document.getElementById('auto-backup-reauth-btn');
         const disableBtn = document.getElementById('auto-backup-disable-btn');
         if (!statusEl) return;
+        if (chooseBtn) {
+            chooseBtn.disabled = !!this._choosingDirectory;
+            chooseBtn.setAttribute('aria-describedby', 'auto-backup-status auto-backup-feedback');
+        }
 
         if (!this.isSupported()) {
-            statusEl.textContent = 'Este navegador no permite respaldo automático a archivo. Use Chrome o Edge en computadora, o exporte copias manualmente con frecuencia.';
-            if (chooseBtn) chooseBtn.disabled = true;
+            statusEl.textContent = this.folderUnavailableMessage();
+            reauthBtn?.classList.add('hidden');
+            disableBtn?.classList.add('hidden');
             return;
         }
+
+        if (!this.canChooseDirectory()) this.folderFeedback(this.folderUnavailableMessage());
 
         const handle = await this._loadHandle();
         const last = await this._dbOp('readonly', s => s.get('last-verified-save')).catch(() => null) || localStorage.getItem(this.lastSaveKey);

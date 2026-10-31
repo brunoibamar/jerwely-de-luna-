@@ -7,6 +7,11 @@
 3. Confirmar que el estado indique ACTIVO y muestre la fecha del último guardado verificado.
 4. Si aparece EN PAUSA, presionar **Reactivar permiso**. El navegador puede pedir el permiso otra vez al reiniciar.
 
+Si **Elegir carpeta de respaldos** explica que la función no está habilitada (puede ocurrir en Brave),
+usar **Descargar respaldo completo (JSON)**. La descarga manual y la importación de JSON siguen disponibles.
+El sitio no puede habilitar por su cuenta una función que el navegador bloquea. No cambiar de navegador
+esperando que aparezcan los mismos registros: los datos locales no se transfieren automáticamente.
+
 Se crean archivos JSON completos y distintos, en subcarpetas por día. No se eliminan las copias anteriores.
 El programa intenta respaldar después de ventas, devoluciones, garantías, movimientos VIP y cortes, y cada hora
 mientras esté abierto. Los cambios de inventario o configuración también se incluyen en la siguiente copia

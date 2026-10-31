@@ -875,7 +875,9 @@ class App {
                 intervalBackupNowBtn.textContent = original;
             }
             if (result.local && result.external === true) Toast.success('Copia del navegador y archivo de la carpeta guardados y verificados.');
-            else if (result.local && result.external === null) Toast.info('Copia del navegador verificada. Elija una carpeta o descargue el JSON para tener una copia fuera del navegador.', 8000);
+            else if (result.local && result.external === null) Toast.info(AutoBackup.canChooseDirectory()
+                ? 'Copia del navegador verificada. Elija una carpeta o descargue el JSON para tener una copia fuera del navegador.'
+                : 'Copia del navegador verificada. Este navegador no habilita la carpeta automática: descargue el respaldo completo JSON para tener una copia en su computadora.', 10000);
             else if (result.local) Toast.warning('Copia del navegador verificada. No se confirmó el archivo de la carpeta; revise el permiso y el espacio en disco.', 10000);
             else Toast.warning('Archivo de la carpeta verificado, pero falló la copia del navegador. Conserve el archivo.', 10000);
         });
