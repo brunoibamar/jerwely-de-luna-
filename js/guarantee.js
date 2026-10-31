@@ -11,7 +11,7 @@ class GuaranteeExchange {
     static get storageKey() { return Business.key('pos_guarantee_exchanges'); }
 
     static getAll() {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) return [];
         const parsed = SafeJSON.parse(stored, [], 'garantias');
         if (!DataValidator.validateSimpleRecords(parsed) && !Array.isArray(parsed)) {

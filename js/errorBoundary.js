@@ -156,13 +156,16 @@ class ErrorBoundary {
         // No usa lectores de inventario/ventas ni escribe en almacenamiento.
         // Incluye datos sin transformar aunque el arranque esté incompleto.
         const rawStorage = { ...(window.SafeStorage?.archivedCopies || {}) }
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i)
-            rawStorage[key] = localStorage.getItem(key)
+        for (let i = 0; i < AppStorage.length; i++) {
+            const key = AppStorage.key(i)
+            rawStorage[key] = AppStorage.getItem(key)
         }
         const blob = new Blob([JSON.stringify({
             type: 'emergency_raw_backup', version: '1.0',
-            timestamp: new Date().toISOString(), rawStorage
+            timestamp: new Date().toISOString(), rawStorage,
+            migrationOriginals: window.AppStorage?.originals || {},
+            operationalRecords: Object.fromEntries(window.AppStorage?.records || []),
+            nativeConflicts: window.AppStorage?.conflicts || {}
         }, null, 2)], { type: 'application/json' })
         const url = URL.createObjectURL(blob)
         const link = document.createElement('a')
@@ -238,7 +241,15 @@ class ErrorBoundary {
             const previous = ErrorBoundary.currentComponent
             ErrorBoundary.currentComponent = component
             try {
-                return fn.apply(this, args)
+                const result = fn.apply(this, args)
+                if (result?.then) return result.catch(error => {
+                    const previousComponent = ErrorBoundary.currentComponent
+                    ErrorBoundary.currentComponent = component
+                    try {
+                        ErrorBoundary.handleError({ type: 'wrapped', message: error?.message || String(error), source: error?.stack, error })
+                    } finally { ErrorBoundary.currentComponent = previousComponent }
+                })
+                return result
             } catch (error) {
                 ErrorBoundary.handleError({
                     type: 'wrapped',

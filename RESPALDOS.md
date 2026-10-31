@@ -1,5 +1,22 @@
 # Respaldos de Joyería de Luna
 
+## Traslado automático del almacenamiento
+
+Al cargar esta versión en la misma computadora y perfil del navegador, el sistema copia los registros
+operativos de LocalStorage a IndexedDB. No requiere acceso de administrador ni elegir una carpeta.
+Durante la preparación se muestra un aviso: esperar a que termine y evitar abrir otra pestaña del sistema.
+
+La copia se compara literalmente con la información anterior, sin cambiar folios, fechas, montos ni puntos.
+Los valores originales se conservan en un apartado separado de la base local. Sólo después de verificar
+se retira el duplicado del espacio pequeño del navegador. Una interrupción puede reanudarse al abrir de nuevo.
+Si no se puede verificar o hay cambios de una pestaña con una versión anterior, se detiene el arranque y
+se ofrece un respaldo de emergencia; no se inicia un negocio vacío encima de los registros existentes.
+
+Las nuevas ventas confirman juntas venta, historial, inventario y puntos VIP. Un error de escritura conserva
+el carrito. El corte confirma su historial y el cierre de turno en una transacción; un error mantiene la caja abierta.
+Los registros se verifican al abrir y antes de preparar nuevas operaciones. Sigue siendo almacenamiento de
+ese navegador y computadora: no sustituye un respaldo en archivo ante pérdida del equipo o borrado del navegador.
+
 ## Activar una carpeta en la computadora del negocio
 
 1. En Chrome o Edge, iniciar sesión como administrador y abrir Configuración → Respaldos del negocio.
@@ -39,7 +56,8 @@ una carpeta controlada por el administrador.
    registro, se conserva el actual y el mensaje informa cuántas diferencias hubo. No se renumeran folios.
 
 Antes de escribir se valida la entrada y se conserva el archivo completo y el estado previo en IndexedDB.
-Si falla una escritura durante la importación, se intenta revertir las escrituras realizadas en orden inverso.
+Los cambios operativos de la importación se confirman juntos en una transacción de IndexedDB.
+Si falla una escritura, no se aplican parcialmente esos cambios.
 Un mensaje de error no debe interpretarse como una recuperación terminada. Conservar el archivo y usar
 **Descargar respaldo de emergencia** si la pantalla no abre.
 
@@ -49,10 +67,11 @@ La recuperación conserva el identificador del nuevo equipo; las ventas importad
 
 ## Alcance de esta mejora
 
-Las copias auxiliares se guardan y verifican en IndexedDB, sin volver a llenar LocalStorage con duplicados.
-Las tablas operativas de ventas, inventario y clientes todavía usan LocalStorage. Esta versión **no** realiza
-una migración completa de esas tablas a IndexedDB ni promete capacidad ilimitada. Un archivo que supera
-el espacio disponible del almacenamiento operativo puede requerir esa migración antes de importarse.
+Ventas, historial, inventario, clientes VIP, cortes, devoluciones, garantías, movimientos de caja, ventas
+pausadas, precios, configuración y reportes operativos usan IndexedDB. Las copias auxiliares también se
+guardan fuera del espacio pequeño de LocalStorage. Los metadatos pequeños de acceso e identidad siguen
+en LocalStorage. No hay capacidad ilimitada: la base local y los archivos necesitan espacio en disco.
+Un error de cuota o de permisos se informa sin anunciar una operación no confirmada como completada.
 
 No se ejecuta una restauración de fábrica ni una reparación automática que cambie los folios históricos.
 Los respaldos antiguos siguen siendo entradas de importación; los archivos de emergencia con `rawStorage`
@@ -65,6 +84,9 @@ Pruebas en perfiles de Chromium aislados, con Node y Playwright disponibles:
 - `tests/storage-full.cjs`: cuota llena, corte, datos preservados, recarga y respaldo de emergencia.
 - `tests/backup-safety.cjs`: descarga mensual, recuperación en navegador nuevo, importación repetida,
   diferencias, errores de escritura, copias de archivo independientes y fallos de disco.
+- `tests/indexed-storage.cjs`: migración con almacenamiento lleno, comparación literal y originales,
+  venta e inventario VIP atómicos, fallo y doble envío de cobro, dos pestañas concurrentes, corte fallido,
+  recuperación completa, interrupción de migración, comprobación de integridad y movimientos del negocio.
 
 Las pruebas no acceden a los datos del cliente. La carpeta elegida por el cliente se configura únicamente
 desde su propia computadora; los manejadores de archivos usados en las pruebas son simulados.

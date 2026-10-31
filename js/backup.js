@@ -17,12 +17,14 @@ class Backup {
         // dispositivo y datos antiguos que los lectores normalizados omitirían.
         // Sólo lee; la descarga funciona aunque no quede espacio para escribir.
         const rawStorage = { ...SafeStorage.archivedCopies };
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
-            rawStorage[key] = localStorage.getItem(key);
+        for (let i = 0; i < AppStorage.length; i++) {
+            const key = AppStorage.key(i);
+            rawStorage[key] = AppStorage.getItem(key);
         }
         return {
             rawStorage,
+            storageBackend: AppStorage.ready ? 'indexeddb-v1' : 'localStorage',
+            migrationOriginals: AppStorage.originals,
             version: '1.3',
             deviceId: Device.getId(),
             timestamp: new Date().toISOString(),
@@ -32,20 +34,20 @@ class Backup {
             inventory: Inventory.getAll(),
             sales: SaleService.getAll(true),
             historicalSales: SaleService.getHistoricalSales(),
-            vipCustomers: localStorage.getItem(VIPCustomer.storageKey),
-            vipConfig: localStorage.getItem(VIPConfig.storageKey),
+            vipCustomers: AppStorage.getItem(VIPCustomer.storageKey),
+            vipConfig: AppStorage.getItem(VIPConfig.storageKey),
             users: Auth.adminProfile,
              settings: Settings.getSettings(),
-             bankData: localStorage.getItem(BankData.storageKey),
-             shiftSession: localStorage.getItem(Cut.storageKey),
-            shiftHistory: localStorage.getItem(Cut.shiftHistoryKey),
-            heldSales: localStorage.getItem(HeldSales.storageKey),
-            returns: (typeof Returns !== 'undefined') ? Returns.getAll() : JSON.parse(localStorage.getItem(Returns.storageKey) || '[]'),
-            cashAdjustments: (typeof CashAdjustment !== 'undefined') ? CashAdjustment.getAll() : JSON.parse(localStorage.getItem(CashAdjustment.storageKey) || '[]'),
-            guaranteeExchanges: (typeof GuaranteeExchange !== 'undefined') ? GuaranteeExchange.getAll() : JSON.parse(localStorage.getItem(GuaranteeExchange.storageKey) || '[]'),
-            lastReceiptSale: localStorage.getItem(Business.key('pos_last_receipt_sale')),
-            reportHistory: localStorage.getItem(this.reportHistoryKey),
-            dayChangeKey: localStorage.getItem(ReportService.dayChangeKey)
+             bankData: AppStorage.getItem(BankData.storageKey),
+             shiftSession: AppStorage.getItem(Cut.storageKey),
+            shiftHistory: AppStorage.getItem(Cut.shiftHistoryKey),
+            heldSales: AppStorage.getItem(HeldSales.storageKey),
+            returns: (typeof Returns !== 'undefined') ? Returns.getAll() : JSON.parse(AppStorage.getItem(Returns.storageKey) || '[]'),
+            cashAdjustments: (typeof CashAdjustment !== 'undefined') ? CashAdjustment.getAll() : JSON.parse(AppStorage.getItem(CashAdjustment.storageKey) || '[]'),
+            guaranteeExchanges: (typeof GuaranteeExchange !== 'undefined') ? GuaranteeExchange.getAll() : JSON.parse(AppStorage.getItem(GuaranteeExchange.storageKey) || '[]'),
+            lastReceiptSale: AppStorage.getItem(Business.key('pos_last_receipt_sale')),
+            reportHistory: AppStorage.getItem(this.reportHistoryKey),
+            dayChangeKey: AppStorage.getItem(ReportService.dayChangeKey)
         };
     }
 
@@ -110,19 +112,21 @@ class Backup {
             ['pos_cash_adjustments', 'cashAdjustments', 'id', 'date', Array.isArray],
             ['pos_guarantee_exchanges', 'guaranteeExchanges', 'id', 'date', Array.isArray],
             ['pos_held_sales', 'heldSales', 'id', 'date', DataValidator.validateHeldSales],
-            ['pos_report_history', 'reportHistory', null, null, Array.isArray]
+            ['pos_report_history', 'reportHistory', null, null, Array.isArray],
+            ['pos_pending_reports', 'pendingReports', null, null, Array.isArray],
+            ['pos_email_send_log', 'emailSendLog', null, null, Array.isArray]
         ];
         const plan = [], before = {};
         let added = 0, conflicts = 0;
         try {
             const hasNoActivity = ['pos_sales', 'pos_sales_historical', 'pos_vip_customers', 'pos_shift_history', 'pos_returns', 'pos_cash_adjustments', 'pos_guarantee_exchanges']
-                .every(base => { const value = localStorage.getItem(Business.key(base)); return value === null || (Array.isArray(JSON.parse(value)) && JSON.parse(value).length === 0); });
+                .every(base => { const value = AppStorage.getItem(Business.key(base)); return value === null || (Array.isArray(JSON.parse(value)) && JSON.parse(value).length === 0); });
             for (const [base, field, id, date, validate] of specs) {
                 const value = source(base, field);
                 if (value == null) continue;
                 const incoming = typeof value === 'string' ? JSON.parse(value) : value;
                 if (!Array.isArray(incoming) || !validate.call(DataValidator, incoming)) throw new Error(`Revise el apartado ${field}; no se modificó ningún registro.`);
-                const key = Business.key(base), stored = localStorage.getItem(key);
+                const key = Business.key(base), stored = AppStorage.getItem(key);
                 let current = stored === null ? [] : JSON.parse(stored);
                 if (!Array.isArray(current) || !validate.call(DataValidator, current)) throw new Error(`El apartado actual ${field} requiere revisión; se conservó intacto.`);
                 // Sólo sustituir el catálogo de demostración exacto en un equipo
@@ -151,7 +155,7 @@ class Backup {
                 ['pos_volume_pricing', 'volumePricing']
             ]) {
                 const value = source(base, field), key = Business.key(base);
-                const existing = localStorage.getItem(key);
+                const existing = AppStorage.getItem(key);
                 const initialSettings = base === 'pos_settings' && hasNoActivity && existing === JSON.stringify(Settings.defaultSettings);
                 const initialVIP = base === 'pos_vip_config' && hasNoActivity && existing === JSON.stringify(VIPConfig.getDefaultConfig());
                 if (value == null || (existing !== null && !initialSettings && !initialVIP)) continue;
@@ -161,19 +165,12 @@ class Backup {
             }
             // Esta copia incluye la entrada completa y los valores previos exactos.
             await AutoBackup._dbOp('readwrite', s => s.put({ before, imported: data, at: new Date().toISOString() }, 'import-' + crypto.randomUUID()));
-            const written = [];
-            try {
+            await AppStorage.transaction(() => {
                 for (const [key, value] of plan) {
-                    if (localStorage.getItem(key) !== before[key]) throw new Error('Los datos cambiaron en otra pestaña. Cierre las otras pestañas y reintente.');
-                    SafeStorage.setItem(key, value); written.push(key);
+                    if (AppStorage.getItem(key) !== before[key]) throw new Error('Los datos cambiaron en otra pestaña. Cierre las otras pestañas y reintente.');
+                    SafeStorage.setItem(key, value);
                 }
-            } catch (err) {
-                for (const key of written.reverse()) {
-                    if (before[key] === null) localStorage.removeItem(key);
-                    else localStorage.setItem(key, before[key]);
-                }
-                throw err;
-            }
+            });
             return { success: true, message: `Recuperación completada: ${added} registros agregados. ${conflicts} diferencias conservaron el registro actual. El archivo completo quedó preservado en la base local.`, stats: { added, conflicts } };
         } catch (err) { return { success: false, error: 'No se completó la importación: ' + (err?.message || err) }; }
     }
@@ -363,71 +360,6 @@ class Backup {
         return { added, updated };
     }
 
-    static _factoryRestore(data) {
-        Business.ALL_NAMESPACED_KEYS.forEach(key => {
-            localStorage.removeItem(Business.key(key));
-        });
-        localStorage.removeItem(Business.BUSINESS_NAME_KEY);
-
-        const backupInventory = this._normalizeArray(data.inventory);
-        Inventory.saveProducts(backupInventory.length ? backupInventory : Inventory.defaultProducts);
-
-        const backupSales = this._normalizeArray(data.sales);
-        SaleService.save(backupSales);
-
-        if (data.historicalSales) {
-            const backupHistorical = this._normalizeArray(data.historicalSales);
-            SaleService.saveHistorical(backupHistorical);
-        }
-
-        if (data.settings) {
-            const backupSettings = this._normalizeObject(data.settings);
-            Settings.saveSettings(Object.keys(backupSettings).length ? backupSettings : Settings.defaultSettings);
-        }
-
-        if (data.bankData) {
-            const backupBank = this._normalizeObject(data.bankData);
-            if (Object.keys(backupBank).length > 0) BankData.saveBankData(backupBank);
-        }
-
-        if (data.store) Business.setBusinessName(data.store);
-
-        if (data.auth) {
-            const auth = this._normalizeObject(data.auth);
-            if (auth.adminPassword) localStorage.setItem(Auth.storageKeys.adminPassword, auth.adminPassword);
-            if (auth.guestKey) localStorage.setItem(Auth.storageKeys.guestKey, auth.guestKey);
-            if (auth.adminUsername) localStorage.setItem(Auth.adminUsernameKey, auth.adminUsername);
-        }
-
-        if (data.license) {
-            const license = this._normalizeObject(data.license);
-            if (license.expiration) localStorage.setItem(License.storageKeys.expiration, license.expiration);
-            if (license.lastUsage) localStorage.setItem(License.storageKeys.lastUsage, license.lastUsage);
-            if (license.tampered) localStorage.setItem(License.storageKeys.tampered, license.tampered);
-        }
-
-        if (data.shiftSession) localStorage.setItem(Cut.storageKey, data.shiftSession);
-        if (data.shiftHistory) localStorage.setItem(Cut.shiftHistoryKey, data.shiftHistory);
-        if (data.shift) localStorage.setItem(Business.key('pos_shift_opened'), data.shift);
-
-        const backupHeldSales = this._normalizeArray(data.heldSales);
-        localStorage.setItem(HeldSales.storageKey, JSON.stringify(backupHeldSales));
-
-        const backupReturns = this._normalizeArray(data.returns);
-        localStorage.setItem(Returns.storageKey, JSON.stringify(backupReturns));
-
-        const backupAdjustments = this._normalizeArray(data.cashAdjustments);
-        localStorage.setItem(CashAdjustment.storageKey, JSON.stringify(backupAdjustments));
-
-        const backupGuaranteeExchanges = this._normalizeArray(data.guaranteeExchanges);
-        localStorage.setItem(GuaranteeExchange.storageKey, JSON.stringify(backupGuaranteeExchanges));
-
-        if (data.lastReceiptSale) localStorage.setItem(Business.key('pos_last_receipt_sale'), data.lastReceiptSale);
-        if (data.reportHistory) localStorage.setItem(this.reportHistoryKey, data.reportHistory);
-        if (data.dayChangeKey) localStorage.setItem(ReportService.dayChangeKey, data.dayChangeKey);
-        if (data.emailConfig) localStorage.setItem(this.emailConfigKey, data.emailConfig);
-    }
-
     static getBackupInfo() {
         const stored = SafeStorage.getItem(this.backupKey);
         if (!stored) return null;
@@ -470,9 +402,9 @@ class Backup {
         try {
             const auxiliary = new Set(['pos_storage_snapshot', 'pos_backup', 'pos_local_recovery'].map(k => Business.key(k)));
             const rawStorage = {};
-            for (let i = 0; i < localStorage.length; i++) {
-                const key = localStorage.key(i);
-                if (!auxiliary.has(key)) rawStorage[key] = localStorage.getItem(key);
+            for (let i = 0; i < AppStorage.length; i++) {
+                const key = AppStorage.key(i);
+                if (!auxiliary.has(key)) rawStorage[key] = AppStorage.getItem(key);
             }
             const data = {
                 rawStorage,
@@ -488,8 +420,8 @@ class Backup {
                 returns: Returns.getAll(),
                 cashAdjustments: CashAdjustment.getAll(),
                 guaranteeExchanges: GuaranteeExchange.getAll(),
-                shiftSession: localStorage.getItem(Cut.storageKey),
-                shiftHistory: localStorage.getItem(Cut.shiftHistoryKey)
+                shiftSession: AppStorage.getItem(Cut.storageKey),
+                shiftHistory: AppStorage.getItem(Cut.shiftHistoryKey)
             };
             await SafeStorage.saveAuxiliary(this.localRecoveryKey, SafeJSON.stringify(data));
             this._localBackupFailed = false;
@@ -718,7 +650,7 @@ class Backup {
     // ============================================================
 
     static getEmailConfig() {
-        const stored = localStorage.getItem(this.emailConfigKey);
+        const stored = AppStorage.getItem(this.emailConfigKey);
         if (!stored) return null;
         try {
             return JSON.parse(stored);
@@ -728,7 +660,7 @@ class Backup {
     }
 
     static saveEmailConfig(config) {
-        localStorage.setItem(this.emailConfigKey, JSON.stringify(config));
+        SafeStorage.setItem(this.emailConfigKey, JSON.stringify(config));
     }
 
     static isEmailJSSet() {
@@ -825,24 +757,24 @@ class Backup {
                 const result = await this.sendViaEmailJS(report, email);
                 if (result.success) {
                     // Registrar envío exitoso en el historial
-                    this.saveEmailSendLog(report, email, 'emailjs', result.message);
+                    await AppStorage.transaction(() => this.saveEmailSendLog(report, email, 'emailjs', result.message));
                     return result;
                 }
                 // Si falla el envío directo, guardar localmente para reintentar después
-                this.savePendingReport(report, email);
+                await AppStorage.transaction(() => this.savePendingReport(report, email));
                 return { success: true, message: `Envío directo falló (${result.message}). Reporte guardado localmente y se intentará enviar cuando esté disponible.` };
             }
 
             // EmailJS no configurado: guardar localmente para envío manual explícito
-            this.savePendingReport(report, email);
+            await AppStorage.transaction(() => this.savePendingReport(report, email));
             return { success: true, message: 'EmailJS no configurado. Reporte guardado localmente para envío manual.' };
         } catch (err) {
             // Si falla el envío directo, guardar localmente para reintentar después
-            this.savePendingReport(report, recipient || Auth.getAdminEmail?.() || '');
+            await AppStorage.transaction(() => this.savePendingReport(report, recipient || Auth.getAdminEmail?.() || ''));
             return { success: false, message: 'Error inesperado al enviar el correo: ' + (err?.message || err) };
         } finally {
             // Siempre registrar el intento en el historial
-            this.saveReportToHistory(report);
+            await AppStorage.transaction(() => this.saveReportToHistory(report));
         }
     }
 
@@ -913,20 +845,20 @@ class Backup {
             if (this.isEmailJSSet()) {
                 const result = await this.sendViaEmailJS(report, email, subject, body);
                 if (result.success) {
-                    this.saveEmailSendLog(report, email, 'emailjs', result.message);
+                    await AppStorage.transaction(() => this.saveEmailSendLog(report, email, 'emailjs', result.message));
                     return result;
                 }
-                this.savePendingReport(report, email);
+                await AppStorage.transaction(() => this.savePendingReport(report, email));
                 return { success: true, message: `Envío directo falló (${result.message}). Registro guardado localmente.` };
             }
 
-            this.savePendingReport(report, email);
+            await AppStorage.transaction(() => this.savePendingReport(report, email));
             return { success: true, message: 'EmailJS no configurado. Registro guardado localmente para envío manual.' };
         } catch (err) {
-            this.savePendingReport(report, recipient || (Auth.getAdminEmail ? Auth.getAdminEmail() : ''));
+            await AppStorage.transaction(() => this.savePendingReport(report, recipient || (Auth.getAdminEmail ? Auth.getAdminEmail() : '')));
             return { success: false, message: 'Error inesperado al enviar el correo: ' + (err?.message || err) };
         } finally {
-            this.saveReportToHistory(report);
+            await AppStorage.transaction(() => this.saveReportToHistory(report));
         }
     }
 
@@ -943,11 +875,11 @@ class Backup {
             result: message,
             reportHash: this.hashReport(report)
         });
-        localStorage.setItem(this.emailSendLogKey, JSON.stringify(log));
+        SafeStorage.setItem(this.emailSendLogKey, JSON.stringify(log));
     }
 
     static getEmailSendLog() {
-        const stored = localStorage.getItem(this.emailSendLogKey);
+        const stored = AppStorage.getItem(this.emailSendLogKey);
         return stored ? JSON.parse(stored) : [];
     }
 
@@ -1074,18 +1006,18 @@ class Backup {
             email,
             savedAt: new Date().toISOString()
         });
-        localStorage.setItem(this.pendingReportsKey, JSON.stringify(pending));
+        SafeStorage.setItem(this.pendingReportsKey, JSON.stringify(pending));
     }
 
     static getPendingReports() {
-        const stored = localStorage.getItem(this.pendingReportsKey);
+        const stored = AppStorage.getItem(this.pendingReportsKey);
         return stored ? JSON.parse(stored) : [];
     }
 
     static clearPendingReport(index) {
         const pending = this.getPendingReports();
         pending.splice(index, 1);
-        localStorage.setItem(this.pendingReportsKey, JSON.stringify(pending));
+        SafeStorage.setItem(this.pendingReportsKey, JSON.stringify(pending));
     }
 
     // --- Procesar reportes pendientes al iniciar (online) ---
@@ -1102,7 +1034,7 @@ class Backup {
                 if (result.success) {
                     sent++;
                     const index = pending.indexOf(item);
-                    this.clearPendingReport(index);
+                    await AppStorage.transaction(() => this.clearPendingReport(index));
                 }
             }
 
@@ -1111,7 +1043,7 @@ class Backup {
             return { success: false, message: 'Error al procesar reportes pendientes: ' + (err?.message || err) };
         } finally {
             if (sent > 0) {
-                this.saveReportToHistory({ type: 'pending-batch', sent, date: new Date().toISOString() });
+                await AppStorage.transaction(() => this.saveReportToHistory({ type: 'pending-batch', sent, date: new Date().toISOString() }));
             }
         }
     }
@@ -1126,20 +1058,20 @@ class Backup {
         try {
             const now = new Date();
             const currentKey = `${now.getFullYear()}-${(now.getMonth() + 1)}`;
-            const lastSent = localStorage.getItem(this.monthlyReportKey);
+            const lastSent = AppStorage.getItem(this.monthlyReportKey);
 
             if (lastSent !== currentKey && Auth.isAdmin()) {
                 report = this.generateMonthlyReport();
                 const result = await this.sendReportEmail(report);
                 if (result.success) {
-                    localStorage.setItem(this.monthlyReportKey, currentKey);
+                    SafeStorage.setItem(this.monthlyReportKey, currentKey);
                 }
-                this.saveReportToHistory(report);
+                await AppStorage.transaction(() => this.saveReportToHistory(report));
                 return result;
             }
             return { success: false, message: 'Ya se envió el reporte mensual' };
         } catch (err) {
-            if (report) this.saveReportToHistory(report);
+            if (report) await AppStorage.transaction(() => this.saveReportToHistory(report));
             return { success: false, message: 'Error al enviar el reporte mensual: ' + (err?.message || err) };
         }
     }
@@ -1149,20 +1081,20 @@ class Backup {
         try {
             const now = new Date();
             const currentYear = now.getFullYear().toString();
-            const lastSent = localStorage.getItem(this.annualReportKey);
+            const lastSent = AppStorage.getItem(this.annualReportKey);
 
             if (lastSent !== currentYear && Auth.isAdmin()) {
                 report = this.generateAnnualReport(now.getFullYear());
                 const result = await this.sendReportEmail(report);
                 if (result.success) {
-                    localStorage.setItem(this.annualReportKey, currentYear);
+                    SafeStorage.setItem(this.annualReportKey, currentYear);
                 }
-                this.saveReportToHistory(report);
+                await AppStorage.transaction(() => this.saveReportToHistory(report));
                 return result;
             }
             return { success: false, message: 'Ya se envió el reporte anual' };
         } catch (err) {
-            if (report) this.saveReportToHistory(report);
+            if (report) await AppStorage.transaction(() => this.saveReportToHistory(report));
             return { success: false, message: 'Error al enviar el reporte anual: ' + (err?.message || err) };
         }
     }
@@ -1178,7 +1110,7 @@ class Backup {
     }
 
     static getReportHistory() {
-        const stored = localStorage.getItem(this.reportHistoryKey);
+        const stored = AppStorage.getItem(this.reportHistoryKey);
         return stored ? JSON.parse(stored) : [];
     }
 
@@ -1263,7 +1195,7 @@ class Backup {
     // valor por defecto (intervalo configurado) de forma silenciosa.
     static getIntervalBackupInfo() {
         const key = this.intervalBackupKey;
-        const stored = localStorage.getItem(key);
+        const stored = AppStorage.getItem(key);
         if (!stored) return null;
 
         let data;
@@ -1298,7 +1230,7 @@ class Backup {
     // Sobrescribir interval_backup con su valor por defecto (intervalo en ms).
     static resetIntervalBackup(key) {
         try {
-            localStorage.setItem(key, String(this.intervalBackupMs));
+            SafeStorage.setItem(key, String(this.intervalBackupMs));
         } catch (err) {
             console.warn('[Backup] No se pudo restablecer interval_backup:', err.message);
         }
@@ -1605,7 +1537,7 @@ class AutoBackup {
                 throw new Error('La copia no coincidió al verificarla. Conserve las copias anteriores y reintente.');
             }
             await this._dbOp('readwrite', s => s.put(data.autoBackup.savedAt, 'last-verified-save'));
-            try { localStorage.setItem(this.lastSaveKey, data.autoBackup.savedAt); } catch { /* sin espacio */ }
+            try { SafeStorage.setItem(this.lastSaveKey, data.autoBackup.savedAt); } catch { /* sin espacio */ }
             this._errorShown = false;
             this.renderStatus();
             return true;
@@ -1784,7 +1716,7 @@ class AutoBackup {
         if (!this.canChooseDirectory()) this.folderFeedback(this.folderUnavailableMessage());
 
         const handle = await this._loadHandle();
-        const last = await this._dbOp('readonly', s => s.get('last-verified-save')).catch(() => null) || localStorage.getItem(this.lastSaveKey);
+        const last = await this._dbOp('readonly', s => s.get('last-verified-save')).catch(() => null) || AppStorage.getItem(this.lastSaveKey);
         const lastText = last ? ` Último guardado: ${new Date(last).toLocaleString('es-MX')}.` : '';
 
         if (!handle) {

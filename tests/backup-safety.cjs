@@ -13,17 +13,19 @@ const { chromium } = require('playwright');
         const result = await page.evaluate(async () => {
             const sale = { id: 'HISTORICAL-ORIGINAL', date: '2026-01-01T12:00:00.000Z', total: 100, paymentMethod: 'cash', status: 'active', items: [{ barcode: 'ORIGINAL', quantity: 1, amount: 100 }] };
             const second = { ...sale, id: 'SECOND', date: '2026-02-01T12:00:00.000Z' };
-            localStorage.setItem(SaleService.storageKey, JSON.stringify([sale]));
-            localStorage.setItem(SaleService.historicalKey, JSON.stringify([sale]));
-            localStorage.setItem(VIPCustomer.storageKey, JSON.stringify([{ id: 'VIP-ORIGINAL', name: 'Cliente de prueba', phone: '0000000000', accumulatedPieces: 7, rewardHistory: [], createdAt: '2026-01-01T12:00:00.000Z' }]));
-            const products = JSON.parse(localStorage.getItem(Inventory.storageKey));
+            await AppStorage.transaction(() => {
+            AppStorage.setItem(SaleService.storageKey, JSON.stringify([sale]));
+            AppStorage.setItem(SaleService.historicalKey, JSON.stringify([sale]));
+            AppStorage.setItem(VIPCustomer.storageKey, JSON.stringify([{ id: 'VIP-ORIGINAL', name: 'Cliente de prueba', phone: '0000000000', accumulatedPieces: 7, rewardHistory: [], createdAt: '2026-01-01T12:00:00.000Z' }]));
+            const products = JSON.parse(AppStorage.getItem(Inventory.storageKey));
             products[0].stock = 3;
-            localStorage.setItem(Inventory.storageKey, JSON.stringify(products));
-            const before = Object.fromEntries(Object.entries(localStorage));
+            AppStorage.setItem(Inventory.storageKey, JSON.stringify(products));
+            });
+            const before = Object.fromEntries(AppStorage.keys().map(key => [key, AppStorage.getItem(key)]));
             await Backup.createLocalRecovery('test');
             await AutoBackup._queue;
-            const noOperationalChanges = Object.entries(before).every(([k, v]) => localStorage.getItem(k) === v);
-            const internalOutsideSmallStorage = localStorage.getItem(Backup.localRecoveryKey) === null && SafeStorage.getItem(Backup.localRecoveryKey).includes('HISTORICAL-ORIGINAL');
+            const noOperationalChanges = Object.entries(before).every(([k, v]) => AppStorage.getItem(k) === v);
+            const internalOutsideSmallStorage = AppStorage.getItem(Backup.localRecoveryKey) === null && SafeStorage.getItem(Backup.localRecoveryKey).includes('HISTORICAL-ORIGINAL');
             const full = Backup.buildBackupData();
             const base = Business.key('pos_sales');
             const hist = Business.key('pos_sales_historical');
@@ -31,17 +33,17 @@ const { chromium } = require('playwright');
             full.rawStorage[hist] = JSON.stringify([sale, second]);
             const imported = await Backup.importData(full);
             const importedAgain = await Backup.importData(full);
-            const current = JSON.parse(localStorage.getItem(base));
+            const current = JSON.parse(AppStorage.getItem(base));
             const exactHistory = JSON.stringify(current[0]) === JSON.stringify(sale) && current.length === 2;
             const conflictFile = structuredClone(full);
             conflictFile.rawStorage[base] = JSON.stringify([{ ...sale, total: 999 }]);
             await Backup.importData(conflictFile);
-            const conflictPreserved = JSON.parse(localStorage.getItem(base))[0].total === 100;
+            const conflictPreserved = JSON.parse(AppStorage.getItem(base))[0].total === 100;
             const malformed = structuredClone(full);
             malformed.rawStorage[hist] = '{bad JSON';
-            const prior = localStorage.getItem(base);
+            const prior = AppStorage.getItem(base);
             const rejected = await Backup.importData(malformed);
-            const preflightPreserved = !rejected.success && localStorage.getItem(base) === prior;
+            const preflightPreserved = !rejected.success && AppStorage.getItem(base) === prior;
 
             // Simular error después de escribir una de las dos tablas; revertir.
             const addition = { ...sale, id: 'ROLLBACK' };
@@ -54,7 +56,7 @@ const { chromium } = require('playwright');
             };
             const failed = await Backup.importData(full);
             SafeStorage.setItem = setItem;
-            const rollbackPreserved = !failed.success && localStorage.getItem(base) === prior;
+            const rollbackPreserved = !failed.success && AppStorage.getItem(base) === prior;
 
             // Manejadores simulados: verificar nombres únicos y contenido leído.
             const files = new Map();
@@ -91,10 +93,10 @@ const { chromium } = require('playwright');
         console.log('PASS:', JSON.stringify(result));
         await page.evaluate(() => {
             Auth.currentUser = { id: 1, username: 'admin', name: 'Administrador', role: 'admin' };
-            localStorage.setItem(Auth.current_userKey, JSON.stringify(Auth.currentUser));
+            AppStorage.setItem(Auth.current_userKey, JSON.stringify(Auth.currentUser));
             app.showApp(); app.switchSection('settings');
         });
-        const originalSales = await page.evaluate(() => localStorage.getItem(SaleService.storageKey));
+        const originalSales = await page.evaluate(() => AppStorage.getItem(SaleService.storageKey));
         await page.evaluate(async () => {
             window.__pickerDescriptors = ['showDirectoryPicker', 'showSaveFilePicker'].map(key => [key, Object.getOwnPropertyDescriptor(window, key)]);
             for (const [key] of window.__pickerDescriptors) Object.defineProperty(window, key, { value: undefined, configurable: true });
@@ -119,7 +121,7 @@ const { chromium } = require('playwright');
         await page.locator('#auto-backup-choose-btn').click();
         await page.waitForFunction(() => document.getElementById('auto-backup-feedback').textContent.includes('No se seleccionó'));
         assert.equal(await page.locator('#auto-backup-choose-btn').isEnabled(), true);
-        assert.equal(await page.evaluate(() => localStorage.getItem(SaleService.storageKey)), originalSales);
+        assert.equal(await page.evaluate(() => AppStorage.getItem(SaleService.storageKey)), originalSales);
         await page.evaluate(async () => {
             for (const [key, descriptor] of window.__pickerDescriptors) {
                 if (descriptor) Object.defineProperty(window, key, descriptor);
@@ -134,11 +136,11 @@ const { chromium } = require('playwright');
         const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#monthly-backup-btn').click()]);
         const json = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
         assert.ok(json.rawStorage && json.historicalSales && json.deviceId);
-        const beforeUIImport = await page.evaluate(() => localStorage.getItem(SaleService.storageKey));
+        const beforeUIImport = await page.evaluate(() => AppStorage.getItem(SaleService.storageKey));
         const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#auto-backup-import-btn').click()]);
         await chooser.setFiles({ name: 'respaldo.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(json)) });
         await page.waitForFunction(() => document.getElementById('backup-setting-success').textContent.includes('Recuperación completada'));
-        assert.equal(await page.evaluate(() => localStorage.getItem(SaleService.storageKey)), beforeUIImport);
+        assert.equal(await page.evaluate(() => AppStorage.getItem(SaleService.storageKey)), beforeUIImport);
         const manual = await page.evaluate(() => Backup.runScheduledBackup());
         assert.equal(manual.local, true);
         assert.equal(manual.external, null);
@@ -149,9 +151,9 @@ const { chromium } = require('playwright');
         const restored = await fresh.evaluate(async data => {
             const result = await Backup.importData(data);
             return { success: result.success,
-                historical: JSON.parse(localStorage.getItem(SaleService.historicalKey)),
-                vip: JSON.parse(localStorage.getItem(VIPCustomer.storageKey)),
-                inventory: JSON.parse(localStorage.getItem(Inventory.storageKey)) };
+                historical: JSON.parse(AppStorage.getItem(SaleService.historicalKey)),
+                vip: JSON.parse(AppStorage.getItem(VIPCustomer.storageKey)),
+                inventory: JSON.parse(AppStorage.getItem(Inventory.storageKey)) };
         }, json);
         assert.ok(restored.success);
         const originalHistorical = JSON.parse(json.rawStorage[`pos_sales_historical__biz_default__dev_${json.deviceId}`]);

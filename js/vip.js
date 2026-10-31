@@ -18,9 +18,8 @@ class VIPConfig {
     }
 
     static getConfig() {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) {
-            this.saveConfig(this.getDefaultConfig());
             return { ...this.getDefaultConfig() };
         }
         const parsed = SafeJSON.parse(stored, null, 'vip_config');
@@ -56,7 +55,7 @@ class VIPCustomer {
     static get storageKey() { return Business.key('pos_vip_customers'); }
 
     static getAll() {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) return [];
         const parsed = SafeJSON.parse(stored, [], 'vip_clientes');
         if (!DataValidator.validateVIPCustomers(parsed)) {

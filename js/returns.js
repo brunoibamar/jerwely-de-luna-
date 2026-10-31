@@ -17,7 +17,7 @@ class Returns {
     static get storageKey() { return Business.key('pos_returns'); }
 
     static getAll() {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) return [];
         const parsed = SafeJSON.parse(stored, [], 'devoluciones');
         if (!DataValidator.validateSimpleRecords(parsed) && !Array.isArray(parsed)) {
@@ -157,7 +157,7 @@ class CashAdjustment {
     static get storageKey() { return Business.key('pos_cash_adjustments'); }
 
     static getAll() {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) return [];
         const parsed = SafeJSON.parse(stored, [], 'ajustes_caja');
         if (!DataValidator.validateSimpleRecords(parsed) && !Array.isArray(parsed)) {
@@ -226,7 +226,7 @@ class CashAdjustment {
     }
 
     static clearAll() {
-        localStorage.removeItem(this.storageKey);
+        AppStorage.removeItem(this.storageKey);
     }
 }
 

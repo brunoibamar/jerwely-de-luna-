@@ -104,7 +104,7 @@ class Cart {
     // menor valor se marca como gratuita (precio = $0). La pieza gratis sigue
     // descontando inventario pero NO se cuenta como pieza vendida en métricas.
     isBuenFinActive() {
-        return localStorage.getItem('buenFinActive') === 'true';
+        return AppStorage.getItem('buenFinActive') === 'true';
     }
 
     applyBuenFinPromotion() {

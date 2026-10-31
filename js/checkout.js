@@ -10,6 +10,13 @@ class Checkout {
     // paymentDetails puede incluir: method, cashAmount, cardAmount, amountReceived, change, receivedBreakdown
     static checkout(cart, paymentDetails = { method: 'cash' }) {
         if (cart.isEmpty()) return { success: false, error: 'El carrito está vacío' };
+        if (!Cut.getActiveSession()?.isOpen) return { success: false, error: 'No hay un turno abierto válido. No se registró la venta.' };
+        for (const item of cart.getItems()) {
+            const product = Inventory.findByBarcode(item.barcode);
+            if (!product || !Number.isFinite(item.quantity) || item.quantity <= 0 || product.stock < item.quantity) {
+                return { success: false, error: 'El inventario cambió o no tiene existencias suficientes. Revise el carrito.' };
+            }
+        }
 
         const subtotal = cart.getSubtotal();
         const buenFinDiscount = cart.getBuenFinDiscount ? cart.getBuenFinDiscount() : 0;
@@ -44,31 +51,14 @@ class Checkout {
             vipCustomerName: paymentDetails.vipCustomerName || null
         };
 
-        // Guardar venta y descontar inventario como una sola operación:
-        // si el descuento de stock falla, se revierte la venta (incluyendo
-        // el historial maestro de ventas para mantener consistencia).
-        const previousSales = localStorage.getItem(SaleService.storageKey);
-        const previousHistorical = typeof SaleService.historicalKey !== 'undefined'
-            ? localStorage.getItem(SaleService.historicalKey)
-            : null;
+        // El llamador prepara venta, historial, inventario y puntos en una
+        // sola transacción de AppStorage. Un fallo descarta todos los cambios.
         SaleService.saveSale(sale);
-        try {
-            Inventory.updateStock(sale.items.map(i => ({ barcode: i.barcode, quantity: i.quantity })));
-        } catch (err) {
-            if (previousSales === null) {
-                localStorage.removeItem(SaleService.storageKey);
-            } else {
-                localStorage.setItem(SaleService.storageKey, previousSales);
-            }
-            // Revertir también el historial maestro para mantener consistencia
-            if (previousHistorical === null) {
-                localStorage.removeItem(SaleService.historicalKey);
-            } else {
-                localStorage.setItem(SaleService.historicalKey, previousHistorical);
-            }
-            throw err;
+        Inventory.updateStock(sale.items.map(i => ({ barcode: i.barcode, quantity: i.quantity })));
+        if (sale.vipCustomerId) {
+            const vip = VIPCustomer.addPurchase(sale.vipCustomerId, sale, `Venta ${sale.id}`);
+            if (!vip.success) throw new Error(vip.error || 'No se pudieron guardar los puntos VIP');
         }
-        cart.clear();
 
         return { success: true, sale };
     }

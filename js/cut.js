@@ -211,7 +211,7 @@ class Cut {
     static closeSession() {
         const session = this.getActiveSession();
         if (!session) return null;
-        const storedHistory = localStorage.getItem(this.shiftHistoryKey);
+        const storedHistory = AppStorage.getItem(this.shiftHistoryKey);
         if (storedHistory !== null) {
             const parsedHistory = SafeJSON.parse(storedHistory, null, 'historial_turnos');
             if (!Array.isArray(parsedHistory) || !DataValidator.validateSessionHistory(parsedHistory)) {
@@ -309,13 +309,13 @@ class Cut {
 
         // Cierre de sesión: se elimina SOLO la sesión activa.
         // Las ventas, el historial maestro y los cortes anteriores se conservan.
-        localStorage.removeItem(this.storageKey);
+        AppStorage.removeItem(this.storageKey);
         return session;
     }
 
     // Obtener la sesión activa
     static getActiveSession() {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) return null;
         const parsed = SafeJSON.parse(stored, null, 'sesion_activa');
         if (parsed && !DataValidator.validateSession(parsed)) {
@@ -327,12 +327,12 @@ class Cut {
 
     // Verificar si hay una sesión abierta
     static isShiftOpen() {
-        return localStorage.getItem(this.storageKey) !== null;
+        return AppStorage.getItem(this.storageKey) !== null;
     }
 
     // Obtener el historial de sesiones
     static getSessionHistory() {
-        const stored = localStorage.getItem(this.shiftHistoryKey);
+        const stored = AppStorage.getItem(this.shiftHistoryKey);
         if (!stored) return [];
         const parsed = SafeJSON.parse(stored, [], 'historial_turnos');
         if (!Array.isArray(parsed) || !DataValidator.validateSessionHistory(parsed)) {

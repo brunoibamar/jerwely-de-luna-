@@ -18,3 +18,11 @@ commands to verify code quality:
   and `SafeJSON` (reads with try/catch + fallback).
 - `DataValidator` validates schemas before data is consumed.
 - `StorageGuard.checkAll()` runs at app startup to audit all stores.
+- Operational records use `AppStorage` (IndexedDB); `localStorage` is accessed
+  directly only by its driver and test fixtures. Reads stay synchronous from
+  a verified committed view. Wrap synchronous business mutations in
+  `await AppStorage.transaction(() => { ... })` and show success only afterwards.
+- Never nest or await inside the transaction callback. Sale, history, stock,
+  and VIP points must commit together. Preserve original migration values.
+- Regression suites: `tests/indexed-storage.cjs`, `tests/backup-safety.cjs`, and
+  `tests/storage-full.cjs` (Node + Playwright in isolated Chromium profiles).

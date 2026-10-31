@@ -52,43 +52,43 @@ class Auth {
 
     // --- Getters dinámicos que leen de localStorage ---
     static getAdminPassword() {
-        return localStorage.getItem(this.storageKeys.adminPassword) || this.defaultAdminPassword;
+        return AppStorage.getItem(this.storageKeys.adminPassword) || this.defaultAdminPassword;
     }
 
     static getGuestKey() {
-        return localStorage.getItem(this.storageKeys.guestKey) || this.defaultGuestKey;
+        return AppStorage.getItem(this.storageKeys.guestKey) || this.defaultGuestKey;
     }
 
     static getAdminUsername() {
-        const stored = localStorage.getItem(this.adminUsernameKey);
+        const stored = AppStorage.getItem(this.adminUsernameKey);
         return stored || this.defaultAdminUsername;
     }
 
     // --- Fondo inicial de caja ---
     static setDrawerInitial(amount) {
-        localStorage.setItem(this.drawerStorageKey, parseFloat(amount).toFixed(2));
+        SafeStorage.setItem(this.drawerStorageKey, parseFloat(amount).toFixed(2));
     }
 
     static getDrawerInitial() {
-        const stored = localStorage.getItem(this.drawerStorageKey);
+        const stored = AppStorage.getItem(this.drawerStorageKey);
         return stored ? parseFloat(stored) : 0;
     }
 
     static clearDrawerInitial() {
-        localStorage.removeItem(this.drawerStorageKey);
+        AppStorage.removeItem(this.drawerStorageKey);
     }
 
     // --- Email del administrador ---
     static getAdminEmail() {
-        return localStorage.getItem(this.adminEmailKey) || this.adminProfile.email;
+        return AppStorage.getItem(this.adminEmailKey) || this.adminProfile.email;
     }
 
     static setAdminEmail(email) {
-        localStorage.setItem(this.adminEmailKey, email);
+        SafeStorage.setItem(this.adminEmailKey, email);
     }
 
     static init() {
-        const stored = localStorage.getItem(this.current_userKey);
+        const stored = AppStorage.getItem(this.current_userKey);
         if (stored) {
             const parsed = SafeJSON.parse(stored, null, 'usuario_actual');
             if (parsed && DataValidator.validateUser(parsed)) {
@@ -96,7 +96,7 @@ class Auth {
                 return true;
             }
             if (parsed !== null) {
-                localStorage.removeItem(this.current_userKey);
+                AppStorage.removeItem(this.current_userKey);
                 if (typeof Toast !== 'undefined' && Toast.warning) {
                     Toast.warning('Sesión inválida. Inicie sesión nuevamente.', 5000);
                 }
@@ -119,7 +119,7 @@ class Auth {
                 email: this.adminProfile.email,
                 securityQuestion: this.adminProfile.securityQuestion
             };
-            localStorage.setItem(this.current_userKey, SafeJSON.stringify(this.currentUser));
+            SafeStorage.setItem(this.current_userKey, SafeJSON.stringify(this.currentUser));
             return { success: true, user: this.currentUser };
         }
         return { success: false, error: 'Credenciales incorrectas' };
@@ -135,7 +135,7 @@ class Auth {
             email: null,
             securityQuestion: null
         };
-        localStorage.setItem(this.current_userKey, SafeJSON.stringify(this.currentUser));
+        SafeStorage.setItem(this.current_userKey, SafeJSON.stringify(this.currentUser));
         return { success: true, user: this.currentUser };
     }
 
@@ -162,7 +162,7 @@ class Auth {
         if (currentPassword !== this.getAdminPassword()) {
             return { success: false, error: 'La contraseña actual es incorrecta' };
         }
-        localStorage.setItem(this.storageKeys.adminPassword, newPassword);
+        SafeStorage.setItem(this.storageKeys.adminPassword, newPassword);
         return { success: true, message: 'Contraseña de administrador actualizada' };
     }
 
@@ -178,7 +178,7 @@ class Auth {
         if (currentKey !== this.getGuestKey()) {
             return { success: false, error: 'La clave actual es incorrecta' };
         }
-        localStorage.setItem(this.storageKeys.guestKey, newKey);
+        SafeStorage.setItem(this.storageKeys.guestKey, newKey);
         return { success: true, message: 'Clave de cajero actualizada' };
     }
 
@@ -215,7 +215,7 @@ class Auth {
                 email: user.email,
                 securityQuestion: user.securityQuestion
             };
-            localStorage.setItem(this.current_userKey, SafeJSON.stringify(this.currentUser));
+            SafeStorage.setItem(this.current_userKey, SafeJSON.stringify(this.currentUser));
             return { success: true, user: this.currentUser };
         }
         return { success: false, error: 'Respuesta incorrecta' };
@@ -223,7 +223,7 @@ class Auth {
 
     static logout() {
         this.currentUser = null;
-        localStorage.removeItem(this.current_userKey);
+        AppStorage.removeItem(this.current_userKey);
     }
 
     static getCurrentUser() {
@@ -359,7 +359,7 @@ class License {
 
     // --- Obtener la fecha de expiración ---
     static getExpirationDate() {
-        const stored = localStorage.getItem(this.storageKeys.expiration);
+        const stored = AppStorage.getItem(this.storageKeys.expiration);
         if (stored) {
             return new Date(stored);
         }
@@ -378,7 +378,7 @@ class License {
 
     // --- Establecer nueva fecha de expiración (al reactivar) ---
     static setExpiration(date) {
-        localStorage.setItem(this.storageKeys.expiration, date.toISOString());
+        SafeStorage.setItem(this.storageKeys.expiration, date.toISOString());
     }
 
     // --- Extender licencia al final del próximo mes ---
@@ -420,19 +420,19 @@ class License {
 
     // --- Último uso registrado en localStorage ---
     static getLastUsage() {
-        const stored = localStorage.getItem(this.storageKeys.lastUsage);
+        const stored = AppStorage.getItem(this.storageKeys.lastUsage);
         return stored ? new Date(stored) : null;
     }
 
     static setLastUsage(date) {
-        localStorage.setItem(this.storageKeys.lastUsage, date.toISOString());
+        SafeStorage.setItem(this.storageKeys.lastUsage, date.toISOString());
     }
 
     // --- Detectar manipulación de reloj (fecha retrocedida) ---
     static checkClockTampering(now) {
         const last = this.getLastUsage();
         if (last && now < last) {
-            localStorage.setItem(this.storageKeys.tampered, 'true');
+            SafeStorage.setItem(this.storageKeys.tampered, 'true');
             return true;
         }
         return false;
@@ -440,12 +440,12 @@ class License {
 
     // --- Verificar estado de manipulación ---
     static isTampered() {
-        return localStorage.getItem(this.storageKeys.tampered) === 'true';
+        return AppStorage.getItem(this.storageKeys.tampered) === 'true';
     }
 
     // --- Limpiar estado de manipulación (después de reactivación) ---
     static clearTamperFlag() {
-        localStorage.removeItem(this.storageKeys.tampered);
+        AppStorage.removeItem(this.storageKeys.tampered);
     }
 
     // --- Reactivar licencia con token ---
@@ -473,36 +473,36 @@ class License {
             businessId: Business.getCurrentBusinessId(),
             deviceId: Device.getId(),
             license: {
-                expiration: localStorage.getItem(this.storageKeys.expiration),
-                lastUsage: localStorage.getItem(this.storageKeys.lastUsage),
-                tampered: localStorage.getItem(this.storageKeys.tampered)
+                expiration: AppStorage.getItem(this.storageKeys.expiration),
+                lastUsage: AppStorage.getItem(this.storageKeys.lastUsage),
+                tampered: AppStorage.getItem(this.storageKeys.tampered)
             },
             auth: {
-                adminPassword: localStorage.getItem(Auth.storageKeys.adminPassword),
-                guestKey: localStorage.getItem(Auth.storageKeys.guestKey),
-                adminUsername: localStorage.getItem(Auth.adminUsernameKey)
+                adminPassword: AppStorage.getItem(Auth.storageKeys.adminPassword),
+                guestKey: AppStorage.getItem(Auth.storageKeys.guestKey),
+                adminUsername: AppStorage.getItem(Auth.adminUsernameKey)
             },
-            inventory: localStorage.getItem(Inventory.storageKey),
-            sales: localStorage.getItem(SaleService.storageKey),
+            inventory: AppStorage.getItem(Inventory.storageKey),
+            sales: AppStorage.getItem(SaleService.storageKey),
             historicalSales: typeof SaleService.historicalKey !== 'undefined'
-                ? localStorage.getItem(SaleService.historicalKey)
+                ? AppStorage.getItem(SaleService.historicalKey)
                 : null,
-            shiftClosures: localStorage.getItem(Business.key('pos_shift_closures')),
-            settings: localStorage.getItem(Settings.storageKey),
-            bankData: localStorage.getItem(BankData.storageKey),
-            shift: localStorage.getItem(Business.key('pos_shift_opened')),
-            shiftSession: localStorage.getItem(Cut.storageKey),
-            shiftHistory: localStorage.getItem(Cut.shiftHistoryKey),
-                heldSales: localStorage.getItem(HeldSales.storageKey),
-                returns: localStorage.getItem(Returns.storageKey),
-                cashAdjustments: localStorage.getItem(CashAdjustment.storageKey),
-                guaranteeExchanges: localStorage.getItem(GuaranteeExchange.storageKey),
-                vipCustomers: localStorage.getItem(VIPCustomer.storageKey),
-                vipConfig: localStorage.getItem(VIPConfig.storageKey),
-                reportHistory: localStorage.getItem(Backup.reportHistoryKey),
-            backup: localStorage.getItem(Backup.backupKey),
-            emailConfig: localStorage.getItem(Backup.emailConfigKey),
-            dayChangeKey: localStorage.getItem(ReportService.dayChangeKey)
+            shiftClosures: AppStorage.getItem(Business.key('pos_shift_closures')),
+            settings: AppStorage.getItem(Settings.storageKey),
+            bankData: AppStorage.getItem(BankData.storageKey),
+            shift: AppStorage.getItem(Business.key('pos_shift_opened')),
+            shiftSession: AppStorage.getItem(Cut.storageKey),
+            shiftHistory: AppStorage.getItem(Cut.shiftHistoryKey),
+                heldSales: AppStorage.getItem(HeldSales.storageKey),
+                returns: AppStorage.getItem(Returns.storageKey),
+                cashAdjustments: AppStorage.getItem(CashAdjustment.storageKey),
+                guaranteeExchanges: AppStorage.getItem(GuaranteeExchange.storageKey),
+                vipCustomers: AppStorage.getItem(VIPCustomer.storageKey),
+                vipConfig: AppStorage.getItem(VIPConfig.storageKey),
+                reportHistory: AppStorage.getItem(Backup.reportHistoryKey),
+            backup: AppStorage.getItem(Backup.backupKey),
+            emailConfig: AppStorage.getItem(Backup.emailConfigKey),
+            dayChangeKey: AppStorage.getItem(ReportService.dayChangeKey)
         };
 
         const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });

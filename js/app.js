@@ -6,7 +6,7 @@ class SaleService {
     static _migrateWarned = false;
 
     static getAll(includeCanceled = false) {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) return [];
         const all = SafeJSON.parse(stored, [], 'ventas');
         if (!Array.isArray(all)) return [];
@@ -49,8 +49,7 @@ class SaleService {
     // campos faltantes y se mapean nombres legados (fecha/timestamp→date).
     // El localStorage se preserva intacto; sólo se transforma la lectura.
     static getHistoricalSales() {
-        const stored = localStorage.getItem(this.historicalKey);
-        if (!stored) return [];
+        const stored = AppStorage.getItem(this.historicalKey);
         const parsed = SafeJSON.parse(stored, [], 'ventas_historico');
         if (!Array.isArray(parsed)) {
             console.warn('[SaleService] Historial maestro no es un arreglo; se preserva el estado.');
@@ -70,6 +69,12 @@ class SaleService {
             }
             const norm = SaleService.normalizeSale(s);
             if (norm != null) result.push(norm);
+        });
+        const seen = new Set(result.map(s => JSON.stringify([s.id, s.date])));
+        this.getAll(true).forEach(s => {
+            if (s && !seen.has(JSON.stringify([s.id, s.date]))) {
+                result.push(s); seen.add(JSON.stringify([s.id, s.date]));
+            }
         });
         return result;
     }
@@ -170,23 +175,12 @@ class SaleService {
     // Se invoca desde saveSale() y cancelSale() para garantizar
     // persistencia permanente e ininterrumpida.
     static appendToHistory(sale) {
-        if (!sale || typeof sale !== 'object') return;
-        try {
-            const history = this.getHistoricalSales();
-            const idx = history.findIndex(s => s && s.id === sale.id);
-            if (idx !== -1) {
-                history[idx] = { ...sale };
-            } else {
-                history.push({ ...sale });
-            }
-            this.saveHistorical(history);
-        } catch (err) {
-            if (SafeStorage.isQuotaError(err)) {
-                console.warn('[SaleService] Sin espacio en historial maestro; no se pudo anexar venta.');
-            } else {
-                console.error('[SaleService] Error al anexar al historial:', err?.message);
-            }
-        }
+        if (!sale || typeof sale !== 'object') throw new Error('La venta no es válida');
+        const history = this.recordsForWrite(this.historicalKey);
+        const index = history.findIndex(s => s && s.id === sale.id && s.date === sale.date);
+        if (index === -1) history.push({ ...sale });
+        else history[index] = { ...sale };
+        this.saveHistorical(history);
     }
 
     // Migrar ventas existentes al historial maestro (idempotente).
@@ -225,7 +219,7 @@ class SaleService {
         if (!session || !session.id) return;
         try {
             const key = Business.key('pos_shift_closures');
-            const stored = localStorage.getItem(key);
+            const stored = AppStorage.getItem(key);
             const closures = stored ? SafeJSON.parse(stored, [], 'cierres_turnos') : [];
             if (!Array.isArray(closures)) {
                 closures.length = 0;
@@ -271,11 +265,18 @@ class SaleService {
     }
 
     static saveSale(sale) {
-        const sales = this.getAll(true);
+        const sales = this.recordsForWrite(this.storageKey);
         sales.push(sale);
         this.save(sales);
         this.appendToHistory(sale);
         return sale;
+    }
+
+    static recordsForWrite(key) {
+        const stored = AppStorage.getItem(key);
+        const records = stored === null ? [] : JSON.parse(stored);
+        if (!Array.isArray(records)) throw new Error('Los registros originales requieren revisión; no se reemplazaron.');
+        return records;
     }
 
     static getById(saleId) {
@@ -304,8 +305,8 @@ class SaleService {
     // --- Anulación / Cancelación de venta (solo admin) ---
     // Marca una venta como cancelada y devuelve los datos para reversar stock y caja.
     static cancelSale(saleId, reason = '') {
-        const sales = this.getAll(true);
-        const index = sales.findIndex(s => s.id === saleId);
+        const sales = this.recordsForWrite(this.storageKey);
+        const index = sales.findIndex(s => s && s.id === saleId);
         if (index === -1) {
             return { success: false, error: 'Venta no encontrada' };
         }
@@ -432,9 +433,8 @@ class Settings {
     };
 
     static getSettings() {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) {
-            this.saveSettings(this.defaultSettings);
             return { ...this.defaultSettings };
         }
         const parsed = SafeJSON.parse(stored, null, 'settings');
@@ -478,7 +478,7 @@ class BankData {
     };
 
     static getBankData() {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) {
             return { ...this.defaultData };
         }
@@ -543,7 +543,7 @@ class App {
 
         // Los folios históricos se conservan tal como fueron registrados.
         // Migrar ventas existentes al historial maestro (idempotente)
-        SaleService.migrateToHistorical();
+        // Se preserva el historial; las ventas faltantes se combinan al leer.
 
         Inventory.init();
         Auth.init();
@@ -573,7 +573,7 @@ class App {
         this.bindCrossTabSync();
         this.bindBackupEvents();
 
-        this.initApp();
+        await this.initApp();
 
         this.isInitialized = true;
     }
@@ -594,10 +594,10 @@ class App {
     loadFromStorage() {
         const storageStatus = {
             businessName: Business.hasBusinessName(),
-            inventory: !!localStorage.getItem(Inventory.storageKey),
-            sales: !!localStorage.getItem(SaleService.storageKey),
-            settings: !!localStorage.getItem(Settings.storageKey),
-            currentUser: !!localStorage.getItem(Auth.current_userKey),
+            inventory: !!AppStorage.getItem(Inventory.storageKey),
+            sales: !!AppStorage.getItem(SaleService.storageKey),
+            settings: !!AppStorage.getItem(Settings.storageKey),
+            currentUser: !!AppStorage.getItem(Auth.current_userKey),
             shiftOpen: Cut.isShiftOpen()
         };
 
@@ -846,8 +846,8 @@ class App {
             importFile.value = '';
         });
         document.getElementById('monthly-backup-btn')?.addEventListener('click', () => { if (guard()) Backup.downloadMonthlyBackup(); });
-        document.getElementById('local-recovery-restore-btn')?.addEventListener('click', () => {
-            if (guard()) this.restoreFromAnyBackup();
+        document.getElementById('local-recovery-restore-btn')?.addEventListener('click', async () => {
+            if (guard()) await this.restoreFromAnyBackup();
         });
         document.getElementById('interval-backup-now-btn')?.addEventListener('click', async () => {
             if (!guard()) return;
@@ -883,8 +883,8 @@ class App {
         });
         // Disponible sin iniciar sesión: tras perder la información no hay turno
         // abierto. Solo FUSIONA datos del respaldo, nunca borra.
-        document.getElementById('login-restore-btn')?.addEventListener('click', () => {
-            this.restoreFromAnyBackup();
+        document.getElementById('login-restore-btn')?.addEventListener('click', async () => {
+            await this.restoreFromAnyBackup();
         });
         this.renderLocalRecoveryStatus();
     }
@@ -1120,8 +1120,8 @@ class App {
     bindCashEvents() {
         const confirmOpenBtn = document.getElementById('confirm-cash-open');
         if (confirmOpenBtn) {
-            confirmOpenBtn.addEventListener('click', () => {
-                this.openCashDrawer();
+            confirmOpenBtn.addEventListener('click', async () => {
+                await this.openCashDrawer();
             });
         }
 
@@ -1157,8 +1157,8 @@ class App {
 
         const confirmCloseBtn = document.getElementById('confirm-close-cash');
         if (confirmCloseBtn) {
-            confirmCloseBtn.addEventListener('click', () => {
-                this.closeCashDrawer();
+            confirmCloseBtn.addEventListener('click', async () => {
+                await this.closeCashDrawer();
             });
         }
 
@@ -1201,7 +1201,7 @@ class App {
         }
     }
 
-    openCashDrawer() {
+    async openCashDrawer() {
         const amountInput = document.getElementById('initial-amount');
         const amount = parseFloat(amountInput?.value);
 
@@ -1211,7 +1211,7 @@ class App {
         }
 
         Auth.setDrawerInitial(amount);
-        Cut.openSession(amount, Auth.getCurrentUser());
+        await AppStorage.transaction(() => Cut.openSession(amount, Auth.getCurrentUser()));
 
         const overlay = document.getElementById('cash-open-overlay');
         if (overlay) {
@@ -1251,11 +1251,12 @@ class App {
             } catch (spaceError) {
                 console.warn('[App] No se pudo trasladar el respaldo auxiliar:', spaceError?.message);
             }
-            session = Cut.closeSession();
+            session = await AppStorage.transaction(() => Cut.closeSession());
         } catch (err) {
             Toast.error('No se pudo guardar el corte. La caja sigue abierta. Descargue un respaldo en Configuración. ' + (err?.message || ''), 10000);
             return;
         }
+        if (!session) { Toast.info('No hay un turno abierto para cerrar.'); return; }
         const report = (session && session.report) ? session.report : Backup.generateDailyReport();
         this.currentReport = report;
 
@@ -1273,7 +1274,7 @@ class App {
 
         // Guardar copia en localStorage (historial interno)
         try {
-            Backup.saveReportToHistory(report);
+            await AppStorage.transaction(() => Backup.saveReportToHistory(report));
         } catch (err) {
             // El corte ya está persistido en pos_shift_history. Una copia
             // adicional fallida no debe ocultar el resumen ni simular un fallo.
@@ -2068,14 +2069,14 @@ class App {
         // Cambio = Monto Recibido - Total Venta
         const confirmCashBtn = document.getElementById('confirm-cash-btn');
         if (confirmCashBtn) {
-            confirmCashBtn.addEventListener('click', () => {
+            confirmCashBtn.addEventListener('click', async () => {
                 const total = this.cart.getTotal();
                 const pd = PaymentProcessor.calculateChange(this.receivedAmount, total);
                 if (pd.error) {
                     Toast.error(pd.error);
                     return;
                 }
-                this.completeCheckout({
+                await this.completeCheckout({
                     method: 'cash',
                     amountReceived: this.receivedAmount,
                     change: pd.change,
@@ -2087,8 +2088,8 @@ class App {
         // Confirmar pago con tarjeta
         const confirmCardBtn = document.getElementById('confirm-card-btn');
         if (confirmCardBtn) {
-            confirmCardBtn.addEventListener('click', () => {
-                this.completeCheckout({ method: 'card' });
+            confirmCardBtn.addEventListener('click', async () => {
+                await this.completeCheckout({ method: 'card' });
             });
         }
 
@@ -2103,7 +2104,7 @@ class App {
         // Confirmar pago mixto
         const confirmMixedBtn = document.getElementById('confirm-mixed-btn');
         if (confirmMixedBtn) {
-            confirmMixedBtn.addEventListener('click', () => {
+            confirmMixedBtn.addEventListener('click', async () => {
                 const total = this.cart.getTotal();
                 const cashAmount = parseFloat(mixedCashInput?.value) || 0;
                 const cardAmount = parseFloat(mixedCardInput?.value) || 0;
@@ -2113,7 +2114,7 @@ class App {
                     Toast.error('El monto ingresado es insuficiente');
                     return;
                 }
-                this.completeCheckout({
+                await this.completeCheckout({
                     method: 'mixed',
                     cashAmount: cashAmount,
                     cardAmount: cardAmount,
@@ -2146,15 +2147,15 @@ class App {
         // Boton Guardar Datos Bancarios (Transferencia)
         const saveBankDataBtn = document.getElementById('save-bank-data-btn');
         if (saveBankDataBtn) {
-            saveBankDataBtn.addEventListener('click', () => {
+            saveBankDataBtn.addEventListener('click', async () => {
                 const bankInput = document.getElementById('transfer-bank-input');
                 const clabeInput = document.getElementById('transfer-clabe-input');
                 const holderInput = document.getElementById('transfer-holder-input');
-                BankData.saveBankData({
+                await AppStorage.transaction(() => BankData.saveBankData({
                     bank: (bankInput?.value || '').trim(),
                     clabe: (clabeInput?.value || '').trim(),
                     holder: (holderInput?.value || '').trim()
-                });
+                }));
                 Toast.success('Datos bancarios guardados correctamente');
             });
         }
@@ -2162,7 +2163,7 @@ class App {
         // Confirmar pago con transferencia
         const confirmTransferBtn = document.getElementById('confirm-transfer-btn');
         if (confirmTransferBtn) {
-            confirmTransferBtn.addEventListener('click', () => {
+            confirmTransferBtn.addEventListener('click', async () => {
                 const bankInput = document.getElementById('transfer-bank-input');
                 const clabeInput = document.getElementById('transfer-clabe-input');
                 const holderInput = document.getElementById('transfer-holder-input');
@@ -2177,9 +2178,9 @@ class App {
                     return;
                 }
 
-                BankData.saveBankData({ bank, clabe, holder });
+                await AppStorage.transaction(() => BankData.saveBankData({ bank, clabe, holder }));
 
-                this.completeCheckout({
+                await this.completeCheckout({
                     method: 'transfer',
                     transferBank: bank,
                     transferClabe: clabe,
@@ -2396,11 +2397,7 @@ class App {
 
         // addPurchase acumula piezas, registra el monto y guarda el detalle
         // individual en el historial de compras y en rewardHistory (tipo 'venta').
-        const result = VIPCustomer.addPurchase(this.currentVipCustomer.id, sale, `Venta ${sale.id}`);
-        if (!result.success) {
-            console.warn('[VIP] No se pudieron registrar piezas y monto:', result.error);
-            return;
-        }
+        // Los puntos ya quedaron confirmados junto con la venta e inventario.
 
         Toast.success(`Se acumularon ${totalPieces} pieza(s) - $${totalAmount.toFixed(2)} al cliente ${this.currentVipCustomer.name}`);
 
@@ -2428,8 +2425,8 @@ class App {
         customerEl.textContent = `${customer.name} | ${customer.accumulatedPieces || 0} piezas acumuladas (meta ${threshold})`;
         alertEl.classList.remove('hidden');
 
-        const onRedeem = () => {
-            const result = VIPCustomer.redeemAndReset(customer.id, `Canje pos-venta ${customer.name}`);
+        const onRedeem = async () => {
+            const result = await AppStorage.transaction(() => VIPCustomer.redeemAndReset(customer.id, `Canje pos-venta ${customer.name}`));
             if (result.success) {
                 Toast.success('¡Joya Gratis canjeada! Contador reiniciado para ' + customer.name);
                 if (typeof AutoBackup !== 'undefined' && AutoBackup.save) AutoBackup.save('canje_vip');
@@ -2781,7 +2778,7 @@ class App {
 
         overlay.querySelector('#vip-quick-cancel-btn')?.addEventListener('click', cleanup);
 
-        overlay.querySelector('#vip-quick-form')?.addEventListener('submit', (e) => {
+        overlay.querySelector('#vip-quick-form')?.addEventListener('submit', async (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
             const name = formData.get('name').trim();
@@ -2793,7 +2790,7 @@ class App {
                 return;
             }
 
-            const result = VIPCustomer.add({ name, phone, notes });
+            const result = await AppStorage.transaction(() => VIPCustomer.add({ name, phone, notes }));
             if (result.success) {
                 Toast.success('Cliente VIP agregado');
                 this.selectVipInSales(result.customer);
@@ -2820,7 +2817,10 @@ class App {
         return details;
     }
 
-    completeCheckout(paymentDetails = { method: 'cash' }) {
+    async completeCheckout(paymentDetails = { method: 'cash' }) {
+        if (this._checkoutPending) return;
+        this._checkoutPending = true;
+        let confirmedSale = null;
         try {
             // Si la caja se cerró en otra pestaña, no registrar ventas fuera de turno
             if (!Cut.isShiftOpen()) {
@@ -2830,13 +2830,15 @@ class App {
             }
 
             // Guarda la venta y descuenta el inventario de forma atómica
-            const result = Checkout.checkout(
+            const result = await AppStorage.transaction(() => Checkout.checkout(
                 this.cart,
                 this.buildVipPaymentDetails(paymentDetails)
-            );
+            ));
 
             if (result.success) {
+                confirmedSale = result.sale;
                 // Acumular piezas para cliente VIP si está seleccionado
+                this.cart.clear();
                 this.processVipAccumulation(result.sale);
 
                 // Capa 1 (doble capa): snapshot silencioso en localStorage para recuperación local
@@ -2848,7 +2850,7 @@ class App {
 
                 // Guardar referencia a la venta recién completada para reimpresión rápida
                 try {
-                    this.saveLastPrintedSale(result.sale);
+                    await this.saveLastPrintedSale(result.sale);
                 } catch { /* no crítico */ }
 
                 setTimeout(() => {
@@ -2870,8 +2872,10 @@ class App {
                 Toast.error(result.error || 'Error al procesar la venta');
             }
         } catch (err) {
-            Toast.error('Error al procesar el pago: ' + (err?.message || err));
+            if (confirmedSale) Toast.warning(`La venta ${confirmedSale.id} ya quedó guardada. Falló un paso posterior; no repita el cobro. ` + (err?.message || err), 12000);
+            else Toast.error('No se confirmó la venta: ' + (err?.message || err));
         } finally {
+            this._checkoutPending = false;
             this.hidePaymentModal();
         }
     }
@@ -2881,13 +2885,13 @@ class App {
     static get lastReceiptKey() { return Business.key('pos_last_receipt_sale'); }
 
     // Guardar la última venta completada para reimpresión rápida
-    saveLastPrintedSale(sale) {
-        localStorage.setItem(App.lastReceiptKey, SafeJSON.stringify(sale));
+    async saveLastPrintedSale(sale) {
+        await AppStorage.transaction(() => SafeStorage.setItem(App.lastReceiptKey, SafeJSON.stringify(sale)));
     }
 
     // Obtener la última venta imprimida desde localStorage
     getLastPrintedSale() {
-        const stored = localStorage.getItem(App.lastReceiptKey);
+        const stored = AppStorage.getItem(App.lastReceiptKey);
         return stored ? SafeJSON.parse(stored, null, 'ultima_venta') : null;
     }
 
@@ -4274,21 +4278,21 @@ class App {
             });
 
             if (canDelete && card.querySelector('.delete-product-btn')) {
-                card.querySelector('.delete-product-btn').addEventListener('click', (e) => {
+                card.querySelector('.delete-product-btn').addEventListener('click', async (e) => {
                     e.stopPropagation();
-                    this.deleteProduct(product.barcode, product.description);
+                    await this.deleteProduct(product.barcode, product.description);
                 });
             }
         });
     }
 
-    deleteProduct(barcode, description) {
+    async deleteProduct(barcode, description) {
         if (!Auth.canModifyInventory()) {
             Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
             return;
         }
         if (confirm(`¿Estás seguro de borrar "${description}" del inventario? No se podrá recuperar.`)) {
-            const result = Inventory.remove(barcode);
+            const result = await AppStorage.transaction(() => Inventory.remove(barcode));
             if (result.success) {
                 this.renderInventoryResults(Inventory.search(''));
                 this.updateLowStockIndicator();
@@ -4360,7 +4364,7 @@ class App {
         });
 
         const form = overlay.querySelector('#add-product-form');
-        form?.addEventListener('submit', (e) => {
+        form?.addEventListener('submit', async (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
             const product = {
@@ -4373,7 +4377,7 @@ class App {
                 aplicaPromocion: e.target.aplicaPromocion.checked
             };
 
-            const result = Inventory.add(product);
+            const result = await AppStorage.transaction(() => Inventory.add(product));
             if (result.success) {
                 Toast.success('Producto agregado correctamente');
                 Inventory.renderCatalog();
@@ -4476,7 +4480,7 @@ class App {
         });
 
         const form = overlay.querySelector('#edit-product-form');
-        form?.addEventListener('submit', (e) => {
+        form?.addEventListener('submit', async (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
             const product = Inventory.findByBarcode(barcode);
@@ -4496,7 +4500,7 @@ class App {
                 aplicaPromocion: form.aplicaPromocion.checked
             };
 
-            const result = Inventory.update(barcode, updatedProduct);
+            const result = await AppStorage.transaction(() => Inventory.update(barcode, updatedProduct));
             if (result.success) {
                 Toast.success('Producto actualizado correctamente');
                 this.renderInventoryResults(Inventory.search(''));
@@ -4511,7 +4515,7 @@ class App {
     bindSettingsEvents() {
         const saveSettingsBtn = document.getElementById('save-settings-btn');
         if (saveSettingsBtn) {
-            saveSettingsBtn.addEventListener('click', () => {
+            saveSettingsBtn.addEventListener('click', async () => {
                 if (!Auth.canAccessConfig()) {
                     Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
                     return;
@@ -4544,11 +4548,11 @@ class App {
                    const transferClabeEl = document.getElementById('settings-transfer-clabe-input');
                    const transferHolderEl = document.getElementById('settings-transfer-holder-input');
                    if (transferBankEl || transferClabeEl || transferHolderEl) {
-                       BankData.saveBankData({
+                       await AppStorage.transaction(() => BankData.saveBankData({
                            bank: transferBankEl ? transferBankEl.value.trim() : '',
                            clabe: transferClabeEl ? transferClabeEl.value.trim() : '',
                            holder: transferHolderEl ? transferHolderEl.value.trim() : ''
-                       });
+                       }));
                        saved = true;
                    }
 
@@ -4573,11 +4577,11 @@ class App {
                  const buenFinEl = document.getElementById('buen-fin-active');
                  if (buenFinEl) {
                      settings.buenFinActive = buenFinEl.checked;
-                     localStorage.setItem('buenFinActive', buenFinEl.checked);
+                     SafeStorage.setItem('buenFinActive', buenFinEl.checked);
                      saved = true;
                  }
 
-                    Settings.saveSettings(settings);
+                    await AppStorage.transaction(() => Settings.saveSettings(settings));
                    Business.setBusinessName(settings.storeName);
 
                   // Guardar configuración de EmailJS
@@ -4757,10 +4761,10 @@ class App {
                 }
 
                 const reader = new FileReader();
-                reader.onload = (ev) => {
+                reader.onload = async (ev) => {
                     const logoData = ev.target.result;
                     try {
-                        Settings.update('storeLogo', logoData);
+                        await AppStorage.transaction(() => Settings.update('storeLogo', logoData));
                     } catch {
                         return; // SafeStorage ya mostró el aviso de espacio lleno
                     }
@@ -4772,8 +4776,8 @@ class App {
         }
 
         if (removeBtn) {
-            removeBtn.addEventListener('click', () => {
-                Settings.update('storeLogo', '');
+            removeBtn.addEventListener('click', async () => {
+                await AppStorage.transaction(() => Settings.update('storeLogo', ''));
                 this.renderLogoPreview('');
                 Toast.success('Logotipo eliminado');
             });
@@ -4912,12 +4916,12 @@ class App {
         }
 
         if (confirmBtn) {
-            confirmBtn.addEventListener('click', () => {
+            confirmBtn.addEventListener('click', async () => {
                 const noteInput = document.getElementById('pause-note-input');
                 const note = noteInput ? noteInput.value.trim() : '';
 
                 // Guardar los items del carrito como venta en espera
-                HeldSales.hold(this.cart.getCartData().items, note);
+                await AppStorage.transaction(() => HeldSales.hold(this.cart.getCartData().items, note));
                 this.cart.clear();
 
                 if (overlay) overlay.classList.add('hidden');
@@ -4991,18 +4995,18 @@ class App {
 
         // Vincular botones de recuperar
         list.querySelectorAll('[data-action="retrieve"]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            btn.addEventListener('click', async (e) => {
                 const id = e.currentTarget.dataset.id;
-                this.resumeHeldSale(id);
+                await this.resumeHeldSale(id);
             });
         });
 
         // Vincular botones de eliminar
         list.querySelectorAll('[data-action="remove"]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            btn.addEventListener('click', async (e) => {
                 const id = e.currentTarget.dataset.id;
                 if (confirm('¿Eliminar esta venta pausada? No se podrá recuperar.')) {
-                    HeldSales.remove(id);
+                    await AppStorage.transaction(() => HeldSales.remove(id));
                     this.renderHeldSales();
                     this.updateHeldSalesButton();
                 }
@@ -5037,8 +5041,8 @@ class App {
     }
 
     // Recuperar una venta pausada al carrito actual
-    resumeHeldSale(id) {
-        const held = HeldSales.retrieve(id);
+    async resumeHeldSale(id) {
+        const held = await AppStorage.transaction(() => HeldSales.retrieve(id));
         if (!held) return;
 
         // Si el carrito no está vacío, pedir confirmación
@@ -5099,8 +5103,8 @@ class App {
 
         const confirmReturnBtn = document.getElementById('confirm-return-btn');
         if (confirmReturnBtn) {
-            confirmReturnBtn.addEventListener('click', () => {
-                this.processReturn();
+            confirmReturnBtn.addEventListener('click', async () => {
+                await this.processReturn();
             });
         }
 
@@ -5147,8 +5151,8 @@ class App {
 
         const confirmCancelBtn = document.getElementById('confirm-cancel-btn');
         if (confirmCancelBtn) {
-            confirmCancelBtn.addEventListener('click', () => {
-                this.cancelSaleConfirm();
+            confirmCancelBtn.addEventListener('click', async () => {
+                await this.cancelSaleConfirm();
             });
         }
 
@@ -5346,7 +5350,7 @@ class App {
         if (confirmBtn) confirmBtn.disabled = total <= 0;
     }
 
-    processReturn() {
+    async processReturn() {
         const sale = this.selectedReturnSale;
         if (!sale) {
             Toast.error('No has seleccionado una venta');
@@ -5386,29 +5390,33 @@ class App {
         const note = noteInput ? noteInput.value.trim() : '';
 
         try {
-            // Reabastecer stock
-            Inventory.increaseStock(itemsToReturn.map(i => ({
-                barcode: i.barcode,
-                quantity: i.quantity
-            })));
+            const returnRecord = await AppStorage.transaction(() => {
+                // Reabastecer stock
+                Inventory.increaseStock(itemsToReturn.map(i => ({
+                    barcode: i.barcode,
+                    quantity: i.quantity
+                })));
 
-            // Registrar la devolución
-            const returnRecord = Returns.add({
-                saleId: sale.id,
-                items: itemsToReturn,
-                refundAmount: refundAmount,
-                refundMethod: method,
-                note: note
-            });
+                // Registrar la devolución
+                const returnRecord = Returns.add({
+                    saleId: sale.id,
+                    items: itemsToReturn,
+                    refundAmount: refundAmount,
+                    refundMethod: method,
+                    note: note
+                });
 
-            // Registrar ajuste en caja
-            CashAdjustment.add({
-                type: 'return',
-                amount: -refundAmount,
-                description: `Devolución parcial - Venta ${sale.id}`,
-                paymentMethod: method,
-                relatedSaleId: sale.id,
-                note: note
+                // Registrar ajuste en caja
+                CashAdjustment.add({
+                    type: 'return',
+                    amount: -refundAmount,
+                    description: `Devolución parcial - Venta ${sale.id}`,
+                    paymentMethod: method,
+                    relatedSaleId: sale.id,
+                    note: note
+                });
+
+                return returnRecord;
             });
 
             // Notificar devolución por Telegram
@@ -5559,7 +5567,7 @@ class App {
         }
     }
 
-    cancelSaleConfirm() {
+    async cancelSaleConfirm() {
         const sale = this.selectedCancelSale;
         if (!sale) {
             Toast.error('No has seleccionado una venta');
@@ -5580,28 +5588,30 @@ class App {
         }
 
         try {
-            // Anular la venta en SaleService
-            const result = SaleService.cancelSale(sale.id, reason);
-            if (!result.success) {
-                Toast.error(result.error || 'Error al anular la venta');
-                return;
-            }
+            const result = await AppStorage.transaction(() => {
+                // Anular la venta en SaleService
+                const result = SaleService.cancelSale(sale.id, reason);
+                if (!result.success) return result;
 
-            // Reabastecer stock de los productos involucrados
-            Inventory.increaseStock(sale.items.map(i => ({
-                barcode: i.barcode,
-                quantity: i.quantity
-            })));
+                // Reabastecer stock de los productos involucrados
+                Inventory.increaseStock(sale.items.map(i => ({
+                    barcode: i.barcode,
+                    quantity: i.quantity
+                })));
 
-            // Registrar ajuste en caja (revertir montos del día)
-            CashAdjustment.add({
-                type: 'cancel',
-                amount: -sale.total,
-                description: `Anulación de venta ${sale.id}`,
-                paymentMethod: sale.paymentMethod,
-                relatedSaleId: sale.id,
-                note: reason
+                // Registrar ajuste en caja (revertir montos del día)
+                CashAdjustment.add({
+                    type: 'cancel',
+                    amount: -sale.total,
+                    description: `Anulación de venta ${sale.id}`,
+                    paymentMethod: sale.paymentMethod,
+                    relatedSaleId: sale.id,
+                    note: reason
+                });
+
+                return result;
             });
+            if (!result.success) { Toast.error(result.error); return; }
 
             Backup.createLocalRecovery('anulación');
 
@@ -5649,8 +5659,8 @@ class App {
 
         const confirmBtn = document.getElementById('guarantee-confirm-btn');
         if (confirmBtn) {
-            confirmBtn.addEventListener('click', () => {
-                this.processGuaranteeExchange();
+            confirmBtn.addEventListener('click', async () => {
+                await this.processGuaranteeExchange();
             });
         }
 
@@ -6056,7 +6066,7 @@ class App {
         container.innerHTML = html;
     }
 
-    processGuaranteeExchange() {
+    async processGuaranteeExchange() {
         const sale = this.selectedGuaranteeSale;
         if (!sale) {
             Toast.error('No has seleccionado una venta');
@@ -6112,17 +6122,21 @@ class App {
         const note = noteInput ? noteInput.value.trim() : '';
 
         try {
-            // Deduct replacement pieces from inventory stock
-            Inventory.updateStock(stockUpdates);
+            const exchangeRecord = await AppStorage.transaction(() => {
+                // Deduct replacement pieces from inventory stock
+                Inventory.updateStock(stockUpdates);
 
-            // Guardar el intercambio por garantía (sin movimiento de caja)
-            const exchangeRecord = GuaranteeExchange.add({
-                saleId: sale.id,
-                itemsReceived: defectiveItems,
-                itemsDelivered: replacementItems,
-                note: note,
-                amount: 0,
-                cashAdjustment: false
+                // Guardar el intercambio por garantía (sin movimiento de caja)
+                const exchangeRecord = GuaranteeExchange.add({
+                    saleId: sale.id,
+                    itemsReceived: defectiveItems,
+                    itemsDelivered: replacementItems,
+                    note: note,
+                    amount: 0,
+                    cashAdjustment: false
+                });
+
+                return exchangeRecord;
             });
 
             // Notificar cambio por garantía a Telegram
@@ -6168,8 +6182,8 @@ class App {
 
         const confirmBtn = document.getElementById('withdrawal-confirm-btn');
         if (confirmBtn) {
-            confirmBtn.addEventListener('click', () => {
-                this.processWithdrawal();
+            confirmBtn.addEventListener('click', async () => {
+                await this.processWithdrawal();
             });
         }
 
@@ -6230,7 +6244,7 @@ class App {
         confirmBtn.disabled = isNaN(amount) || amount <= 0;
     }
 
-    processWithdrawal() {
+    async processWithdrawal() {
         if (!Auth.canRegisterExpenses()) {
             Toast.error('Permiso denegado: esta acción no está disponible para tu rol');
             return;
@@ -6249,14 +6263,14 @@ class App {
 
         try {
             const cashierName = Auth.getCurrentUser()?.name || 'Invitado';
-            CashAdjustment.add({
+            await AppStorage.transaction(() => CashAdjustment.add({
                 type: 'expense',
                 amount: -amount,
                 description: 'Retiro para Depósito',
                 paymentMethod: 'cash',
                 relatedSaleId: null,
                 note: note
-            });
+            }));
 
             if (typeof notificarTelegram === 'function' && typeof TelegramNotify !== 'undefined') {
                 TelegramNotify.notificarRetiroEfectivo({
@@ -6307,25 +6321,25 @@ class App {
 
         // Vincular botones de eliminar rango
         container.querySelectorAll('.remove-tier-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            btn.addEventListener('click', async (e) => {
                 const index = parseInt(e.currentTarget.dataset.index);
-                this.removeVolumeTier(index);
+                await this.removeVolumeTier(index);
             });
         });
     }
 
     // Agregar un nuevo rango de volumen
-    addVolumeTier() {
+    async addVolumeTier() {
         const tiers = VolumePricing.getTiers();
         const lastTier = tiers[tiers.length - 1];
         const newMin = lastTier.max !== null ? lastTier.max + 1 : lastTier.min + 1;
         tiers.push({ min: newMin, max: null, price: 0 });
-        VolumePricing.saveTiers(tiers);
+        await AppStorage.transaction(() => VolumePricing.saveTiers(tiers));
         this.renderVolumePricingTiers();
     }
 
     // Eliminar un rango de volumen (mínimo 1)
-    removeVolumeTier(index) {
+    async removeVolumeTier(index) {
         const tiers = VolumePricing.getTiers();
         if (tiers.length <= 1) {
             Toast.warning('Debe haber al menos un rango de precio');
@@ -6338,12 +6352,12 @@ class App {
             tier.min = currentMin;
             currentMin = (tier.max === null ? currentMin + 1 : tier.max + 1);
         }
-        VolumePricing.saveTiers(tiers);
+        await AppStorage.transaction(() => VolumePricing.saveTiers(tiers));
         this.renderVolumePricingTiers();
     }
 
     // Guardar los rangos de volumen desde los inputs del admin
-    saveVolumePricing() {
+    async saveVolumePricing() {
         const container = document.getElementById('volume-tiers');
         if (!container) return;
 
@@ -6368,7 +6382,7 @@ class App {
         // Ordenar por min antes de validar
         tiers.sort((a, b) => a.min - b.min);
 
-        const result = VolumePricing.updateTiers(tiers);
+        const result = await AppStorage.transaction(() => VolumePricing.updateTiers(tiers));
         if (result.success) {
             Toast.success(result.message);
             // Re-renderizar para reflejar el orden
@@ -6381,20 +6395,20 @@ class App {
     bindVolumePricingEvents() {
         const saveBtn = document.getElementById('save-volume-pricing-btn');
         if (saveBtn) {
-            saveBtn.addEventListener('click', () => {
+            saveBtn.addEventListener('click', async () => {
                 if (!Auth.canAccessConfig()) {
                     Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
                     return;
                 }
-                this.saveVolumePricing();
+                await this.saveVolumePricing();
             });
         }
 
         const resetBtn = document.getElementById('reset-volume-pricing-btn');
         if (resetBtn) {
-            resetBtn.addEventListener('click', () => {
+            resetBtn.addEventListener('click', async () => {
                 if (confirm('¿Restablecer precios de volumen por defecto?')) {
-                    VolumePricing.resetToDefault();
+                    await AppStorage.transaction(() => VolumePricing.resetToDefault());
                     this.renderVolumePricingTiers();
                     Toast.info('Precios de volumen restablecidos por defecto');
                 }
@@ -6403,12 +6417,12 @@ class App {
 
         const addBtn = document.getElementById('add-tier-btn');
         if (addBtn) {
-            addBtn.addEventListener('click', () => {
+            addBtn.addEventListener('click', async () => {
                 if (!Auth.canAccessConfig()) {
                     Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
                     return;
                 }
-                this.addVolumeTier();
+                await this.addVolumeTier();
             });
         }
 
@@ -6444,11 +6458,11 @@ class App {
 
         const piecesInput = document.getElementById('vip-pieces-for-free-input');
         if (piecesInput) {
-            piecesInput.addEventListener('change', () => {
+            piecesInput.addEventListener('change', async () => {
                 if (!Auth.canAccessConfig()) return;
                 const value = parseInt(piecesInput.value);
                 if (!isNaN(value) && value >= 1) {
-                    VIPConfig.savePiecesForFreeJewel(value);
+                    await AppStorage.transaction(() => VIPConfig.savePiecesForFreeJewel(value));
                 } else {
                     piecesInput.value = VIPConfig.getPiecesForFreeJewel();
                 }
@@ -6581,16 +6595,16 @@ class App {
         });
 
         tbody.querySelectorAll('[data-action="redeem"]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            btn.addEventListener('click', async (e) => {
                 const id = e.currentTarget.dataset.id;
-                this.redeemVIPReward(id);
+                await this.redeemVIPReward(id);
             });
         });
 
         tbody.querySelectorAll('[data-action="delete"]').forEach(btn => {
-            btn.addEventListener('click', (e) => {
+            btn.addEventListener('click', async (e) => {
                 const id = e.currentTarget.dataset.id;
-                this.deleteVIPCustomer(id);
+                await this.deleteVIPCustomer(id);
             });
         });
 
@@ -6651,7 +6665,7 @@ class App {
             document.body.removeChild(overlay);
         });
 
-        overlay.querySelector('#vip-form')?.addEventListener('submit', (e) => {
+        overlay.querySelector('#vip-form')?.addEventListener('submit', async (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
             const phone = formData.get('phone').trim();
@@ -6664,14 +6678,14 @@ class App {
             }
 
             if (isEdit) {
-                const result = VIPCustomer.update(id, { name, phone, notes });
+                const result = await AppStorage.transaction(() => VIPCustomer.update(id, { name, phone, notes }));
                 if (result.success) {
                     Toast.success('Cliente VIP actualizado');
                 } else {
                     Toast.error(result.error);
                 }
             } else {
-                const result = VIPCustomer.add({ name, phone, notes });
+                const result = await AppStorage.transaction(() => VIPCustomer.add({ name, phone, notes }));
                 if (result.success) {
                     Toast.success('Cliente VIP agregado');
                 } else {
@@ -6708,7 +6722,7 @@ class App {
                     if (isNaN(pieces) || pieces <= 0) return 'Ingresa un número válido de piezas mayor a 0';
                     return null;
                 },
-                action: (pieces, note) => VIPCustomer.addPieces(id, pieces, note),
+                action: async (pieces, note) => await AppStorage.transaction(() => VIPCustomer.addPieces(id, pieces, note)),
                 successVerb: 'agregadas'
             },
             remove: {
@@ -6723,7 +6737,7 @@ class App {
                     if (pieces > current) return `Solo hay ${current} pieza(s) disponible(s) para restar`;
                     return null;
                 },
-                action: (pieces, note) => VIPCustomer.removePieces(id, pieces, note),
+                action: async (pieces, note) => await AppStorage.transaction(() => VIPCustomer.removePieces(id, pieces, note)),
                 successVerb: 'restadas'
             },
             set: {
@@ -6737,7 +6751,7 @@ class App {
                     if (isNaN(pieces) || pieces < 0) return 'Ingresa un número válido de piezas (0 o mayor)';
                     return null;
                 },
-                action: (pieces, note) => VIPCustomer.setPieces(id, pieces, note),
+                action: async (pieces, note) => await AppStorage.transaction(() => VIPCustomer.setPieces(id, pieces, note)),
                 successVerb: 'ajustadas'
             }
         };
@@ -6783,7 +6797,7 @@ class App {
             document.body.removeChild(overlay);
         });
 
-        overlay.querySelector('#vip-adjust-form')?.addEventListener('submit', (e) => {
+        overlay.querySelector('#vip-adjust-form')?.addEventListener('submit', async (e) => {
             e.preventDefault();
             const formData = new FormData(e.target);
             const pieces = parseInt(formData.get('pieces'));
@@ -6795,7 +6809,7 @@ class App {
                 return;
             }
 
-            const result = config.action(pieces, note);
+            const result = await config.action(pieces, note);
             if (result.success) {
                 Toast.success(`${pieces} pieza(s) ${config.successVerb} al cliente ${customer.name}`);
                 this.renderVIPTable();
@@ -6811,7 +6825,7 @@ class App {
         });
     }
 
-    redeemVIPReward(id) {
+    async redeemVIPReward(id) {
         const customer = VIPCustomer.findById(id);
         if (!customer) return;
 
@@ -6824,7 +6838,7 @@ class App {
 
         const noteInput = prompt('Nota del canje (opcional):', '');
         if (noteInput !== null) {
-            const result = VIPCustomer.redeemReward(id, noteInput || '');
+            const result = await AppStorage.transaction(() => VIPCustomer.redeemReward(id, noteInput || ''));
             if (result.success) {
                 Toast.success(`Joya Gratis canjeada - ${customer.name} | ${threshold} piezas descontadas`);
                 this.renderVIPTable();
@@ -6839,7 +6853,7 @@ class App {
         }
     }
 
-    deleteVIPCustomer(id) {
+    async deleteVIPCustomer(id) {
         const customer = VIPCustomer.findById(id);
         if (!customer) return;
 
@@ -6847,7 +6861,7 @@ class App {
             return;
         }
 
-        VIPCustomer.remove(id);
+        await AppStorage.transaction(() => VIPCustomer.remove(id));
         Toast.success('Cliente VIP eliminado');
         this.renderVIPTable();
 
@@ -6960,7 +6974,7 @@ class App {
         const buenFinEl = document.getElementById('buen-fin-active');
         if (buenFinEl) {
             buenFinEl.checked = settings.buenFinActive === true;
-            localStorage.setItem('buenFinActive', String(settings.buenFinActive === true));
+            SafeStorage.setItem('buenFinActive', String(settings.buenFinActive === true));
         }
 
         const showCashierEl = document.getElementById('receipt-show-cashier');
@@ -7025,12 +7039,15 @@ document.addEventListener('DOMContentLoaded', ErrorBoundary.wrap('app-init', asy
     // acceso a localStorage. Si se llamara a loadFromStorage() antes,
     // Inventory.init() / Settings.getSettings() crearían valores por
     // defecto en la nueva clave, bloqueando la migración de datos existentes.
+    await AppStorage.init();
     try {
         await SafeStorage.prepareSpace();
     } catch (err) {
         console.warn('[App] No se pudo preparar espacio; los datos originales se conservan:', err?.message);
     }
-    Business.migrateExistingData();
-    app.loadFromStorage();
+    await AppStorage.transaction(() => {
+        Business.migrateExistingData();
+        app.loadFromStorage();
+    });
     await app.init();
 }));

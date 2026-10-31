@@ -2,7 +2,7 @@
 //  Business: Mononegocio Unificado (Jewerly De Luna)
 //  El sistema opera bajo un único negocio fijo. Todos los
 //  datos de inventario, ventas y cortes de caja se guardan
-//  en localStorage bajo un namespace compuesto por el ID del
+//  en la base local (AppStorage / IndexedDB) bajo un namespace del
 //  negocio y el ID del DISPOSITIVO (pos_<clave>__biz_default__dev_<deviceId>).
 //  Cada navegador/computadora genera y persiste un device_id
 //  único; ese ID encadena toda la información a la instancia
@@ -92,7 +92,7 @@ class Business {
 
     // --- Nombre del negocio (clave fija global) ---
     static getBusinessName() {
-        const stored = localStorage.getItem(this.BUSINESS_NAME_KEY);
+        const stored = AppStorage.getItem(this.BUSINESS_NAME_KEY);
         // Validación defensiva: la clave pos_business_name guarda un string plano,
         // no un objeto JSON. Si el valor no es una cadena válida no vacía, se
         // restablece silenciosamente al valor por defecto sin bloquear la interfaz.
@@ -103,7 +103,7 @@ class Business {
         // el nombre predeterminado del negocio ("Jewerly De Luna")
         if (stored !== null) {
             try {
-                localStorage.setItem(this.BUSINESS_NAME_KEY, this.BUSINESS_NAME);
+                AppStorage.setItem(this.BUSINESS_NAME_KEY, this.BUSINESS_NAME);
             } catch (err) {
                 console.warn('[Business] No se pudo restablecer pos_business_name:', err.message);
             }
@@ -113,12 +113,12 @@ class Business {
 
     static setBusinessName(name) {
         if (name && name.trim()) {
-            localStorage.setItem(this.BUSINESS_NAME_KEY, name.trim());
+            AppStorage.setItem(this.BUSINESS_NAME_KEY, name.trim());
         }
     }
 
     static hasBusinessName() {
-        return localStorage.getItem(this.BUSINESS_NAME_KEY) !== null;
+        return AppStorage.getItem(this.BUSINESS_NAME_KEY) !== null;
     }
 
     // --- Nombre de la tienda (alias, mantiene compatibilidad con backup.js, cut.js, etc.) ---
@@ -164,11 +164,11 @@ class Business {
         // por device_id. Se traslada a 'pos_business_name__biz_default__dev_<deviceId>'.
         const legacyNameKey = this.BUSINESS_NAME_LEGACY_KEY;
         const namespacedNameKey = this.key('pos_business_name');
-        if (localStorage.getItem(namespacedNameKey) === null) {
-            const legacyData = localStorage.getItem(legacyNameKey);
+        if (AppStorage.getItem(namespacedNameKey) === null) {
+            const legacyData = AppStorage.getItem(legacyNameKey);
             if (legacyData !== null) {
                 SafeStorage.setItem(namespacedNameKey, legacyData);
-                localStorage.removeItem(legacyNameKey);
+                AppStorage.removeItem(legacyNameKey);
                 migrated.push({ key: 'pos_business_name', from: 'legacy_business_name', to: 'device_namespaced' });
             }
         }
@@ -178,30 +178,30 @@ class Business {
             const oldBizKey = this.oldKey(baseKey);
 
             // --- Fase 3: nueva clave ya tiene datos → limpiar formatos antiguos ---
-            if (localStorage.getItem(newKey) !== null) {
-                if (localStorage.getItem(oldBizKey) !== null) {
-                    localStorage.removeItem(oldBizKey);
+            if (AppStorage.getItem(newKey) !== null) {
+                if (AppStorage.getItem(oldBizKey) !== null) {
+                    AppStorage.removeItem(oldBizKey);
                 }
-                if (localStorage.getItem(baseKey) !== null) {
-                    localStorage.removeItem(baseKey);
+                if (AppStorage.getItem(baseKey) !== null) {
+                    AppStorage.removeItem(baseKey);
                 }
                 return;
             }
 
             // --- Fase 2: migrar desde pos_<clave>__biz_default ---
-            let data = localStorage.getItem(oldBizKey);
+            let data = AppStorage.getItem(oldBizKey);
             if (data !== null) {
                 SafeStorage.setItem(newKey, data);
-                localStorage.removeItem(oldBizKey);
+                AppStorage.removeItem(oldBizKey);
                 migrated.push({ key: baseKey, from: 'biz_namespaced', to: 'device_namespaced' });
                 return;
             }
 
             // --- Fase 1: migrar desde pos_<clave> (legacy, no namespace) ---
-            data = localStorage.getItem(baseKey);
+            data = AppStorage.getItem(baseKey);
             if (data !== null) {
                 SafeStorage.setItem(newKey, data);
-                localStorage.removeItem(baseKey);
+                AppStorage.removeItem(baseKey);
                 migrated.push({ key: baseKey, from: 'legacy', to: 'device_namespaced' });
             }
         });
@@ -226,8 +226,8 @@ class Business {
 
         // Recolectar todos los device_ids huérfanos y sus claves
         const orphansByDevice = new Map();
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
+        for (let i = 0; i < AppStorage.length; i++) {
+            const key = AppStorage.key(i);
             if (!key || !key.startsWith('pos_')) continue;
 
             const idx = key.indexOf(marker);
@@ -242,7 +242,7 @@ class Business {
             if (!orphansByDevice.has(oldDeviceId)) {
                 orphansByDevice.set(oldDeviceId, []);
             }
-            orphansByDevice.get(oldDeviceId).push({ key, baseKey, value: localStorage.getItem(key) });
+            orphansByDevice.get(oldDeviceId).push({ key, baseKey, value: AppStorage.getItem(key) });
         }
 
         if (orphansByDevice.size === 0) {
@@ -267,12 +267,12 @@ class Business {
             if (value === null) continue;
 
             const newKey = this.key(baseKey);
-            const existing = localStorage.getItem(newKey);
+            const existing = AppStorage.getItem(newKey);
 
             if (existing === null) {
                 // No hay nada en el namespace actual → restaurar directamente
                 SafeStorage.setItem(newKey, value);
-                localStorage.removeItem(key);
+                AppStorage.removeItem(key);
                 restored.push(baseKey);
             } else if (baseKey === 'pos_settings') {
                 // Settings: fusionar (los huérfanos completan valores perdidos)
@@ -283,15 +283,15 @@ class Business {
                     typeof newSettings === 'object' && !Array.isArray(newSettings)) {
                     const combined = { ...oldSettings, ...newSettings };
                     SafeStorage.setItem(newKey, SafeJSON.stringify(combined));
-                    localStorage.removeItem(key);
+                    AppStorage.removeItem(key);
                     merged.push(baseKey);
                 } else {
                     // No se pudo fusionar; preservar lo existente y limpiar huérfano
-                    localStorage.removeItem(key);
+                    AppStorage.removeItem(key);
                 }
             } else {
                 // Otros datos: preservar actual, limpiar huérfano
-                localStorage.removeItem(key);
+                AppStorage.removeItem(key);
             }
         }
 
@@ -299,7 +299,7 @@ class Business {
         for (const [oldId, entries] of orphansByDevice) {
             if (oldId === bestOldId) continue;
             for (const { key } of entries) {
-                localStorage.removeItem(key);
+                AppStorage.removeItem(key);
             }
         }
 
@@ -448,11 +448,11 @@ class Device {
     static getId() {
         if (this._cachedId !== null) return this._cachedId
 
-        let id = localStorage.getItem(this.STORAGE_KEY)
+        let id = AppStorage.getItem(this.STORAGE_KEY)
         if (!id) {
             id = this.generateId()
             try {
-                localStorage.setItem(this.STORAGE_KEY, id)
+                AppStorage.setItem(this.STORAGE_KEY, id)
             } catch {
                 // sin espacio: el ID se regenera en cada carga, pero
                 // aún así aísla datos dentro de una sola sesión de ventana
@@ -482,7 +482,7 @@ class Device {
     // Verificar si el device_id ya está persistido (usado por el
     // asistente de migración y para auditoría).
     static isInitialized() {
-        return localStorage.getItem(this.STORAGE_KEY) !== null
+        return AppStorage.getItem(this.STORAGE_KEY) !== null
     }
 }
 
@@ -527,7 +527,7 @@ class SafeStorage {
                 request.onerror = () => reject(request.error);
                 request.onblocked = () => reject(new Error('Respaldo local ocupado'));
             });
-            const previous = localStorage.getItem(key);
+            const previous = AppStorage.getItem(key);
             try {
                 await new Promise((resolve, reject) => {
                     const tx = db.transaction('copies', 'readwrite');
@@ -555,7 +555,7 @@ class SafeStorage {
                 });
                 if (verified?.[key] !== value) throw new Error('No se pudo verificar el respaldo local');
                 this.archivedCopies = verified;
-                if (previous !== null && localStorage.getItem(key) === previous) localStorage.removeItem(key);
+                if (previous !== null && AppStorage.getItem(key) === previous) AppStorage.removeItem(key);
                 return true;
             } finally { db.close(); }
         };
@@ -565,7 +565,7 @@ class SafeStorage {
     }
 
     static getItem(key) {
-        return localStorage.getItem(key) ?? this.archivedCopies[key] ?? null;
+        return AppStorage.getItem(key) ?? this.archivedCopies[key] ?? null;
     }
 
     // Traslada sólo copias auxiliares, nunca las tablas de operación.
@@ -592,10 +592,10 @@ class SafeStorage {
             this.archivedCopies = (await transact('readonly', store => store.get('latest'))) || {};
             // La reserva es temporal; no toca ninguna clave del negocio.
             const probe = '__jdl_space_probe__';
-            if (localStorage.getItem(probe) !== null) return;
+            if (AppStorage.getItem(probe) !== null) return;
             try {
-                localStorage.setItem(probe, ' '.repeat(256 * 1024));
-                localStorage.removeItem(probe);
+                AppStorage.setItem(probe, ' '.repeat(256 * 1024));
+                AppStorage.removeItem(probe);
                 return;
             } catch (err) {
                 if (!this.isQuotaError(err)) throw err;
@@ -603,7 +603,7 @@ class SafeStorage {
             const copies = {};
             for (const base of ['pos_storage_snapshot', 'pos_backup', 'pos_local_recovery']) {
                 const key = Business.key(base);
-                const value = localStorage.getItem(key);
+                const value = AppStorage.getItem(key);
                 if (value !== null) copies[key] = value;
             }
             if (!Object.keys(copies).length) return;
@@ -624,7 +624,7 @@ class SafeStorage {
             this.archivedCopies = verified;
             for (const [key, value] of Object.entries(copies)) {
                 // Otra pestaña pudo actualizar la copia mientras se guardaba.
-                if (localStorage.getItem(key) === value) localStorage.removeItem(key);
+                if (AppStorage.getItem(key) === value) AppStorage.removeItem(key);
             }
         } finally { db.close(); }
     }
@@ -639,7 +639,7 @@ class SafeStorage {
 
     static setItem(key, value) {
         try {
-            localStorage.setItem(key, value);
+            AppStorage.setItem(key, value);
         } catch (err) {
             if (this.isQuotaError(err)) {
                 const msg = 'El almacenamiento del navegador está lleno. Descargue un respaldo desde Configuración. No borre los datos del sitio ni restablezca el navegador.';
@@ -841,11 +841,11 @@ class SchemaMigration {
     }
 
     static getVersion(baseKey) {
-        return localStorage.getItem(this.versionKey(baseKey)) || '0';
+        return AppStorage.getItem(this.versionKey(baseKey)) || '0';
     }
 
     static setVersion(baseKey) {
-        localStorage.setItem(this.versionKey(baseKey), this.SCHEMA_VERSION);
+        AppStorage.setItem(this.versionKey(baseKey), this.SCHEMA_VERSION);
     }
 
     static needsMigration(baseKey) {
@@ -858,7 +858,7 @@ class SchemaMigration {
             return null;
         }
 
-        const raw = localStorage.getItem(Business.key(baseKey));
+        const raw = AppStorage.getItem(Business.key(baseKey));
         if (raw === null) {
             this.setVersion(baseKey);
             return null;
@@ -928,8 +928,8 @@ class StorageGuard {
         const legacyBizSuffix = `__biz_${Business.FIXED_BIZ_ID}`;
         const suspicious = [];
 
-        for (let i = 0; i < localStorage.length; i++) {
-            const key = localStorage.key(i);
+        for (let i = 0; i < AppStorage.length; i++) {
+            const key = AppStorage.key(i);
             if (!key || !key.startsWith('pos_')) continue;
 
             const namespacedKey = Business.ALL_NAMESPACED_KEYS.find(bk => key === Business.key(bk));
@@ -944,14 +944,14 @@ class StorageGuard {
             }
         }
 
-        if (localStorage.getItem(Business.BUSINESS_NAME_LEGACY_KEY) !== null) {
+        if (AppStorage.getItem(Business.BUSINESS_NAME_LEGACY_KEY) !== null) {
             suspicious.push({ key: Business.BUSINESS_NAME_LEGACY_KEY, issue: 'legacy_business_name_key' });
         }
 
         return {
             deviceId,
             expectedSuffix,
-            totalKeys: localStorage.length,
+            totalKeys: AppStorage.length,
             suspiciousKeys: suspicious
         };
     }
@@ -963,7 +963,7 @@ class StorageGuard {
 
         this.STORES.forEach(({ key, validate, fallback, isObject, defaultValue }) => {
             const storageKey = Business.key(key);
-            const stored = localStorage.getItem(storageKey);
+            const stored = AppStorage.getItem(storageKey);
             report.checked++;
 
             if (!stored) {
@@ -996,7 +996,7 @@ class StorageGuard {
                     });
                     console.warn(`[StorageGuard] Valor inválido en "${storageKey}":`, parsed, '→ restablecido');
                     try {
-                        localStorage.setItem(storageKey, defaultValue);
+                        AppStorage.setItem(storageKey, defaultValue);
                     } catch (err) {
                         console.warn(`[StorageGuard] No se pudo restablecer el valor por defecto para "${storageKey}":`, err.message);
                     }
@@ -1048,7 +1048,7 @@ class StorageGuard {
         };
         this.STORES.forEach(({ key }) => {
             const storageKey = Business.key(key);
-            const stored = localStorage.getItem(storageKey);
+            const stored = AppStorage.getItem(storageKey);
             if (stored !== null) {
                 snapshot.stores[storageKey] = stored;
             }
@@ -1067,7 +1067,7 @@ class StorageGuard {
 
     // Restaurar desde un snapshot temporal (usado por ErrorBoundary
     // o por el asistente de recuperación cuando los datos se corrompen).
-    static restoreSnapshot() {
+    static async restoreSnapshot() {
         const snapshotKey = Business.key('pos_storage_snapshot');
         const stored = SafeStorage.getItem(snapshotKey);
         if (!stored) return { success: false, error: 'No hay instantánea disponible' };
@@ -1078,13 +1078,15 @@ class StorageGuard {
         }
 
         let restored = 0;
-        Object.entries(snapshot.stores).forEach(([key, value]) => {
-            if (value !== null) {
-                localStorage.setItem(key, value);
-                restored++;
-            }
+        await AppStorage.transaction(() => {
+            Object.entries(snapshot.stores).forEach(([key, value]) => {
+                if (value !== null) {
+                    AppStorage.setItem(key, value);
+                    restored++;
+                }
+            });
         });
-        localStorage.removeItem(snapshotKey);
+        AppStorage.removeItem(snapshotKey);
         return { success: true, restored };
     }
 }

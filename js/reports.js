@@ -47,7 +47,7 @@ class ReportService {
         if (typeof SaleService !== 'undefined' && SaleService.getHistoricalSales) {
             return SaleService.getHistoricalSales();
         }
-        const stored = localStorage.getItem(Business.key('pos_sales_historical'));
+        const stored = AppStorage.getItem(Business.key('pos_sales_historical'));
         if (!stored) return [];
         const parsed = SafeJSON.parse(stored, [], 'ventas_historico');
         return Array.isArray(parsed) ? parsed : [];
@@ -582,11 +582,11 @@ class ReportService {
     // ============================================================
 
     static getLastKnownDate() {
-        return localStorage.getItem(this.dayChangeKey) || this.getDailyDate();
+        return AppStorage.getItem(this.dayChangeKey) || this.getDailyDate();
     }
 
     static setLastKnownDate(date) {
-        localStorage.setItem(this.dayChangeKey, date);
+        SafeStorage.setItem(this.dayChangeKey, date);
     }
 
     static checkDayChange() {

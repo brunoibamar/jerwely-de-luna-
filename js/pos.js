@@ -28,21 +28,19 @@ class VolumePricing {
     ];
 
     static getTiers() {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) {
-            this.saveTiers(this.defaultTiers);
             return [...this.defaultTiers];
         }
         const parsed = SafeJSON.parse(stored, null, 'volumen_precios');
         if (parsed === null || !DataValidator.validateVolumeTiers(parsed) || parsed.length === 0) {
-            this.saveTiers(this.defaultTiers);
             return [...this.defaultTiers];
         }
         return parsed;
     }
 
     static saveTiers(tiers) {
-        localStorage.setItem(this.storageKey, SafeJSON.stringify(tiers));
+        SafeStorage.setItem(this.storageKey, SafeJSON.stringify(tiers));
     }
 
     // Obtener el precio unitario según la cantidad
@@ -112,7 +110,7 @@ class HeldSales {
     static get storageKey() { return Business.key('pos_held_sales'); }
 
     static getAll() {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) return [];
         const parsed = SafeJSON.parse(stored, [], 'ventas_pausadas');
         if (!DataValidator.validateHeldSales(parsed)) {
@@ -161,7 +159,7 @@ class HeldSales {
     }
 
     static clearAll() {
-        localStorage.removeItem(this.storageKey);
+        AppStorage.removeItem(this.storageKey);
     }
 
     static getCount() {

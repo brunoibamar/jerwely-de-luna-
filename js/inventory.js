@@ -25,14 +25,14 @@ class Inventory {
     ];
 
     static init() {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) {
             this.saveProducts(this.defaultProducts);
         }
     }
 
     static getAll() {
-        const stored = localStorage.getItem(this.storageKey);
+        const stored = AppStorage.getItem(this.storageKey);
         if (!stored) return [];
         const parsed = SafeJSON.parse(stored, [], 'inventario');
         if (!DataValidator.validateInventory(parsed)) {
