@@ -24,6 +24,7 @@ class Backup {
         return {
             rawStorage,
             version: '1.3',
+            deviceId: Device.getId(),
             timestamp: new Date().toISOString(),
             store: Business.getStoreName(),
             businessName: Business.getBusinessName(),
@@ -65,7 +66,119 @@ class Backup {
         return { success: true, message: 'Respaldo descargado correctamente' };
     }
 
-    static exportToLocalStorage() {
+    static async downloadMonthlyBackup() {
+        const result = this.createBackup();
+        // Descargar no permite confirmar que el usuario conservó el archivo.
+        if (result.success && confirm('¿El archivo JSON terminó de descargarse y ya lo guardó en una carpeta segura?')) {
+            await AutoBackup._dbOp('readwrite', s => s.put(new Date().toISOString(), 'monthly-confirmed'));
+            this.renderMonthlyReminder();
+        }
+    }
+
+    static async renderMonthlyReminder() {
+        const el = document.getElementById('monthly-backup-status');
+        if (!el) return;
+        const last = await AutoBackup._dbOp('readonly', s => s.get('monthly-confirmed')).catch(() => null);
+        const month = d => `${d.getFullYear()}-${d.getMonth()}`;
+        const due = !last || month(new Date(last)) !== month(new Date());
+        el.textContent = due
+            ? 'Pendiente: guarde una copia completa de este mes. Incluye todo el historial, no solo las ventas mensuales.'
+            : `Copia mensual confirmada el ${new Date(last).toLocaleString('es-MX')}. Conserve las copias de meses anteriores.`;
+        if (due && Auth.isAdmin() && !this._monthlyNotified) {
+            this._monthlyNotified = true;
+            Toast.warning('Respaldo mensual pendiente. Abra Configuración → Respaldos para descargar toda su información.', 12000);
+        }
+    }
+
+    // Primero conserva archivo y estado previo en IndexedDB. Después agrega
+    // registros faltantes sin renombrar ni actualizar registros existentes.
+    static async importPreserving(data) {
+        const raw = data.rawStorage || {};
+        const sourceDevice = data.deviceId || raw.jewelry_deluna_device_id;
+        const source = (base, field) => {
+            const key = sourceDevice ? `${base}__biz_default__dev_${sourceDevice}` : null;
+            return key && Object.hasOwn(raw, key) ? raw[key] : data[field];
+        };
+        const specs = [
+            ['pos_sales', 'sales', 'id', 'date', DataValidator.validateSales],
+            ['pos_sales_historical', 'historicalSales', 'id', 'date', DataValidator.validateSales],
+            ['pos_inventory', 'inventory', 'barcode', null, DataValidator.validateInventory],
+            ['pos_vip_customers', 'vipCustomers', 'id', null, DataValidator.validateVIPCustomers],
+            ['pos_shift_history', 'shiftHistory', 'id', 'openedAt', DataValidator.validateSessionHistory],
+            ['pos_shift_closures', 'shiftClosures', 'sessionId', 'closedAt', Array.isArray],
+            ['pos_returns', 'returns', 'id', 'date', Array.isArray],
+            ['pos_cash_adjustments', 'cashAdjustments', 'id', 'date', Array.isArray],
+            ['pos_guarantee_exchanges', 'guaranteeExchanges', 'id', 'date', Array.isArray],
+            ['pos_held_sales', 'heldSales', 'id', 'date', DataValidator.validateHeldSales],
+            ['pos_report_history', 'reportHistory', null, null, Array.isArray]
+        ];
+        const plan = [], before = {};
+        let added = 0, conflicts = 0;
+        try {
+            const hasNoActivity = ['pos_sales', 'pos_sales_historical', 'pos_vip_customers', 'pos_shift_history', 'pos_returns', 'pos_cash_adjustments', 'pos_guarantee_exchanges']
+                .every(base => { const value = localStorage.getItem(Business.key(base)); return value === null || (Array.isArray(JSON.parse(value)) && JSON.parse(value).length === 0); });
+            for (const [base, field, id, date, validate] of specs) {
+                const value = source(base, field);
+                if (value == null) continue;
+                const incoming = typeof value === 'string' ? JSON.parse(value) : value;
+                if (!Array.isArray(incoming) || !validate.call(DataValidator, incoming)) throw new Error(`Revise el apartado ${field}; no se modificó ningún registro.`);
+                const key = Business.key(base), stored = localStorage.getItem(key);
+                let current = stored === null ? [] : JSON.parse(stored);
+                if (!Array.isArray(current) || !validate.call(DataValidator, current)) throw new Error(`El apartado actual ${field} requiere revisión; se conservó intacto.`);
+                // Sólo sustituir el catálogo de demostración exacto en un equipo
+                // sin actividad. Un inventario editado nunca se sobrescribe.
+                const demoInventory = base === 'pos_inventory' && incoming.length > 0 && hasNoActivity && JSON.stringify(current) === JSON.stringify(Inventory.defaultProducts);
+                if (demoInventory) current = [];
+                const merged = current.slice();
+                const exacts = new Set(current.map(item => JSON.stringify(item)));
+                const identity = item => id && item?.[id] != null ? JSON.stringify([item[id], date ? item[date] : null]) : null;
+                const identities = new Set(current.map(identity).filter(v => v !== null));
+                for (const item of incoming) {
+                    const serialized = JSON.stringify(item), recordId = identity(item);
+                    if (exacts.has(serialized)) continue;
+                    if (recordId !== null && identities.has(recordId)) { conflicts++; continue; }
+                    merged.push(item); added++;
+                    exacts.add(serialized);
+                    if (recordId !== null) identities.add(recordId);
+                }
+                before[key] = stored;
+                if (demoInventory || merged.length !== current.length) plan.push([key, JSON.stringify(merged)]);
+            }
+            // Datos de configuración/sesión: rellenar sólo claves ausentes.
+            for (const [base, field] of [
+                ['pos_settings', 'settings'], ['pos_vip_config', 'vipConfig'],
+                ['pos_datos_bancarios', 'bankData'], ['pos_shift_session', 'shiftSession'],
+                ['pos_volume_pricing', 'volumePricing']
+            ]) {
+                const value = source(base, field), key = Business.key(base);
+                const existing = localStorage.getItem(key);
+                const initialSettings = base === 'pos_settings' && hasNoActivity && existing === JSON.stringify(Settings.defaultSettings);
+                const initialVIP = base === 'pos_vip_config' && hasNoActivity && existing === JSON.stringify(VIPConfig.getDefaultConfig());
+                if (value == null || (existing !== null && !initialSettings && !initialVIP)) continue;
+                const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+                JSON.parse(serialized);
+                before[key] = existing; plan.push([key, serialized]);
+            }
+            // Esta copia incluye la entrada completa y los valores previos exactos.
+            await AutoBackup._dbOp('readwrite', s => s.put({ before, imported: data, at: new Date().toISOString() }, 'import-' + crypto.randomUUID()));
+            const written = [];
+            try {
+                for (const [key, value] of plan) {
+                    if (localStorage.getItem(key) !== before[key]) throw new Error('Los datos cambiaron en otra pestaña. Cierre las otras pestañas y reintente.');
+                    SafeStorage.setItem(key, value); written.push(key);
+                }
+            } catch (err) {
+                for (const key of written.reverse()) {
+                    if (before[key] === null) localStorage.removeItem(key);
+                    else localStorage.setItem(key, before[key]);
+                }
+                throw err;
+            }
+            return { success: true, message: `Recuperación completada: ${added} registros agregados. ${conflicts} diferencias conservaron el registro actual. El archivo completo quedó preservado en la base local.`, stats: { added, conflicts } };
+        } catch (err) { return { success: false, error: 'No se completó la importación: ' + (err?.message || err) }; }
+    }
+
+    static async exportToLocalStorage() {
         const data = {
             timestamp: new Date().toISOString(),
             inventory: Inventory.getAll(),
@@ -78,26 +191,16 @@ class Backup {
             cashAdjustments: (typeof CashAdjustment !== 'undefined') ? CashAdjustment.getAll() : [],
             guaranteeExchanges: (typeof GuaranteeExchange !== 'undefined') ? GuaranteeExchange.getAll() : []
         };
-        localStorage.setItem(this.backupKey, JSON.stringify(data));
-        return { success: true, message: 'Respaldo guardado en localStorage' };
+        await SafeStorage.saveAuxiliary(this.backupKey, JSON.stringify(data));
+        return { success: true, message: 'Respaldo guardado y verificado en la base local' };
     }
 
-    static restoreFromLocalStorage() {
+    static async restoreFromLocalStorage() {
         const stored = SafeStorage.getItem(this.backupKey);
         if (!stored) return { success: false, error: 'No hay respaldo disponible' };
-
-        const data = JSON.parse(stored);
-        Inventory.saveProducts(data.inventory || Inventory.defaultProducts);
-        SaleService.save(data.sales || []);
-        if (data.historicalSales) SaleService.saveHistorical(data.historicalSales);
-        Settings.saveSettings(data.settings || {});
-        if (data.bankData) BankData.saveBankData(data.bankData);
-        if (data.heldSales) localStorage.setItem(HeldSales.storageKey, JSON.stringify(data.heldSales));
-        if (data.returns) localStorage.setItem(Returns.storageKey, JSON.stringify(data.returns));
-        if (data.cashAdjustments) localStorage.setItem(CashAdjustment.storageKey, JSON.stringify(data.cashAdjustments));
-        if (data.guaranteeExchanges) localStorage.setItem(GuaranteeExchange.storageKey, JSON.stringify(data.guaranteeExchanges));
-
-        return { success: true, message: 'Datos restaurados correctamente' };
+        const data = SafeJSON.parse(stored, null, 'respaldo_local');
+        if (!data) return { success: false, error: 'El respaldo local no se puede leer' };
+        return this.importPreserving(data);
     }
 
     static importFromFile(file, options = {}) {
@@ -123,126 +226,11 @@ class Backup {
     // Importa un respaldo ya leído (archivo manual o respaldo automático).
     // Por defecto fusiona por folio/ID sin borrar nada de lo local.
     static importData(data, options = {}) {
-        const { factoryRestore = false } = options;
-        if (!data.version || !data.store) {
+        if (options.factoryRestore) return { success: false, error: 'La restauración que borra registros está desactivada.' };
+        if (!data || typeof data !== 'object' || (!data.rawStorage && (!data.version || !data.store))) {
             return { success: false, error: 'Archivo de respaldo inválido' };
         }
-
-        if (factoryRestore) {
-            this._factoryRestore(data);
-            return {
-                success: true,
-                message: 'Restauración de fábrica completada. Recargue la página para aplicar los cambios.',
-                factoryRestore: true
-            };
-        }
-
-        const stats = { added: 0, updated: 0, unchanged: 0 };
-
-        const backupSales = this._normalizeArray(data.sales);
-        if (backupSales.length > 0) {
-            const result = this._mergeById(
-                SaleService.getAll(true),
-                backupSales,
-                'id',
-                'date'
-            );
-            SaleService.save(result.merged);
-            stats.added += result.added;
-            stats.updated += result.updated;
-            stats.unchanged += result.skipped;
-        }
-
-        const backupReturns = this._normalizeArray(data.returns);
-        if (backupReturns.length > 0) {
-            const result = this._mergeById(
-                Returns.getAll(),
-                backupReturns,
-                'id',
-                'date'
-            );
-            Returns.save(result.merged);
-            stats.added += result.added;
-            stats.updated += result.updated;
-            stats.unchanged += result.skipped;
-        }
-
-        const backupAdjustments = this._normalizeArray(data.cashAdjustments);
-        if (backupAdjustments.length > 0) {
-            const result = this._mergeById(
-                CashAdjustment.getAll(),
-                backupAdjustments,
-                'id',
-                'date'
-            );
-            CashAdjustment.save(result.merged);
-            stats.added += result.added;
-            stats.updated += result.updated;
-            stats.unchanged += result.skipped;
-        }
-
-        const backupGuaranteeExchanges = this._normalizeArray(data.guaranteeExchanges);
-        if (typeof GuaranteeExchange !== 'undefined' && backupGuaranteeExchanges.length > 0) {
-            const result = this._mergeById(
-                GuaranteeExchange.getAll(),
-                backupGuaranteeExchanges,
-                'id',
-                'date'
-            );
-            GuaranteeExchange.save(result.merged);
-            stats.added += result.added;
-            stats.updated += result.updated;
-            stats.unchanged += result.skipped;
-        }
-
-        const backupHeldSales = this._normalizeArray(data.heldSales);
-        if (backupHeldSales.length > 0) {
-            const result = this._mergeById(
-                HeldSales.getAll(),
-                backupHeldSales,
-                'id',
-                'date'
-            );
-            HeldSales.save(result.merged);
-            stats.added += result.added;
-            stats.updated += result.updated;
-            stats.unchanged += result.skipped;
-        }
-
-        const backupInventory = this._normalizeArray(data.inventory);
-        if (backupInventory.length > 0) {
-            const invResult = this._mergeInventory(backupInventory);
-            stats.added += invResult.added;
-            stats.updated += invResult.updated;
-        }
-
-        if (data.settings) {
-            const backupSettings = this._normalizeObject(data.settings);
-            if (Object.keys(backupSettings).length > 0) {
-                const current = Settings.getSettings();
-                Settings.saveSettings({ ...current, ...backupSettings });
-            }
-        }
-
-        // No reemplazar un turno abierto en este momento
-        if (data.shiftSession && !Cut.isShiftOpen()) localStorage.setItem(Cut.storageKey, data.shiftSession);
-        // Historial de cortes: fusionar en lugar de sobrescribir
-        const backupHistory = this._normalizeArray(data.shiftHistory);
-        if (backupHistory.length > 0) {
-            const result = this._mergeById(Cut.getSessionHistory(), backupHistory, 'id', 'openedAt');
-            SafeStorage.setItem(Cut.shiftHistoryKey, JSON.stringify(result.merged));
-        }
-        if (data.shift) localStorage.setItem(Business.key('pos_shift_opened'), data.shift);
-        if (data.lastReceiptSale) localStorage.setItem(Business.key('pos_last_receipt_sale'), data.lastReceiptSale);
-        if (data.reportHistory) localStorage.setItem(this.reportHistoryKey, data.reportHistory);
-        if (data.dayChangeKey) localStorage.setItem(ReportService.dayChangeKey, data.dayChangeKey);
-        if (data.emailConfig) localStorage.setItem(this.emailConfigKey, data.emailConfig);
-
-        return {
-            success: true,
-            message: 'Datos importados correctamente. Agregadas: ' + stats.added + ', actualizadas: ' + stats.updated + ', sin cambios: ' + stats.unchanged + '.',
-            stats
-        };
+        return this.importPreserving(data);
     }
 
     static _normalizeArray(value) {
@@ -441,7 +429,7 @@ class Backup {
     }
 
     static getBackupInfo() {
-        const stored = localStorage.getItem(this.backupKey);
+        const stored = SafeStorage.getItem(this.backupKey);
         if (!stored) return null;
         const data = JSON.parse(stored);
         return {
@@ -478,9 +466,17 @@ class Backup {
 
     // Crear un snapshot de recuperación local con los datos críticos.
     // No lanza excepciones: un fallo del respaldo no debe bloquear la caja.
-    static createLocalRecovery(reason = 'manual') {
+    static async createLocalRecovery(reason = 'manual') {
         try {
+            const auxiliary = new Set(['pos_storage_snapshot', 'pos_backup', 'pos_local_recovery'].map(k => Business.key(k)));
+            const rawStorage = {};
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (!auxiliary.has(key)) rawStorage[key] = localStorage.getItem(key);
+            }
             const data = {
+                rawStorage,
+                deviceId: Device.getId(),
                 savedAt: new Date().toISOString(),
                 reason: reason,
                 inventory: Inventory.getAll(),
@@ -495,40 +491,30 @@ class Backup {
                 shiftSession: localStorage.getItem(Cut.storageKey),
                 shiftHistory: localStorage.getItem(Cut.shiftHistoryKey)
             };
-            SafeStorage.setItem(this.localRecoveryKey, SafeJSON.stringify(data));
+            await SafeStorage.saveAuxiliary(this.localRecoveryKey, SafeJSON.stringify(data));
+            this._localBackupFailed = false;
             return { savedAt: data.savedAt, reason: data.reason };
         } catch (err) {
             console.warn('[Backup] No se pudo crear el snapshot de recuperación local:', err?.message);
+            if (!this._localBackupFailed && typeof Toast !== 'undefined') {
+                this._localBackupFailed = true;
+                Toast.warning('El movimiento se registró, pero no se confirmó la copia local. Descargue un respaldo desde Configuración y revise el espacio disponible.', 12000);
+            }
             return null;
+        } finally {
+            // La copia externa debe intentarse aun si falla el respaldo interno.
+            if (typeof AutoBackup !== 'undefined') AutoBackup.save(reason);
         }
     }
 
     // Restaurar datos desde el snapshot de recuperación local.
     // Nunca borra datos: fusiona el estado guardado sobre el actual.
-    static restoreLocalRecovery() {
+    static async restoreLocalRecovery() {
         const stored = SafeStorage.getItem(this.localRecoveryKey);
-        if (!stored) return { success: false, error: 'No hay snapshot de recuperación local disponible' };
-
+        if (!stored) return { success: false, error: 'No hay copia local disponible' };
         const data = SafeJSON.parse(stored, null, 'local_recovery');
-        if (!data) return { success: false, error: 'El snapshot de recuperación local está corrupto' };
-
-        try {
-            if (data.inventory) Inventory.saveProducts(data.inventory);
-            if (data.sales) SaleService.save(data.sales);
-            if (data.historicalSales) SaleService.saveHistorical(data.historicalSales);
-            if (data.settings) Settings.saveSettings(data.settings);
-            if (data.bankData) BankData.saveBankData(data.bankData);
-            if (data.heldSales) SafeStorage.setItem(HeldSales.storageKey, SafeJSON.stringify(data.heldSales));
-            if (data.returns) SafeStorage.setItem(Returns.storageKey, SafeJSON.stringify(data.returns));
-            if (data.cashAdjustments) SafeStorage.setItem(CashAdjustment.storageKey, SafeJSON.stringify(data.cashAdjustments));
-            if (data.guaranteeExchanges) SafeStorage.setItem(GuaranteeExchange.storageKey, SafeJSON.stringify(data.guaranteeExchanges));
-            if (data.shiftSession) localStorage.setItem(Cut.storageKey, data.shiftSession);
-            if (data.shiftHistory) localStorage.setItem(Cut.shiftHistoryKey, JSON.stringify(data.shiftHistory));
-
-            return { success: true, message: 'Datos restaurados desde el snapshot local de recuperación' };
-        } catch (err) {
-            return { success: false, error: 'Error al restaurar el snapshot: ' + (err?.message || err) };
-        }
+        if (!data) return { success: false, error: 'La copia local no se puede leer' };
+        return this.importPreserving(data);
     }
 
     // ============================================================
@@ -1334,14 +1320,16 @@ class Backup {
     }
 
     // Ejecutar un respaldo programado: exportar a localStorage + crear snapshot local.
-    static runScheduledBackup() {
+    static async runScheduledBackup() {
         try {
-            this.exportToLocalStorage();
+            await this.exportToLocalStorage();
             const now = new Date().toISOString();
             SafeStorage.setItem(this.intervalBackupKey, JSON.stringify({ lastRun: now }));
-            this.createLocalRecovery('programado');
+            const result = await this.createLocalRecovery('programado');
+            return { success: !!result };
         } catch (err) {
             console.warn('[Backup] Error al ejecutar respaldo programado:', err?.message);
+            return { success: false, error: err?.message };
         }
     }
 
@@ -1430,8 +1418,11 @@ class AutoBackup {
             return await new Promise((resolve, reject) => {
                 const tx = db.transaction(this.STORE, mode);
                 const req = fn(tx.objectStore(this.STORE));
-                req.onsuccess = () => resolve(req.result);
-                req.onerror = () => reject(req.error);
+                let result;
+                req.onsuccess = () => { result = req.result; };
+                tx.oncomplete = () => resolve(result);
+                tx.onerror = () => reject(tx.error);
+                tx.onabort = () => reject(tx.error || new Error('Guardado cancelado'));
             });
         } finally {
             db.close();
@@ -1456,6 +1447,24 @@ class AutoBackup {
         return 'prompt';
     }
 
+    static async chooseDirectory() {
+        if (typeof window.showDirectoryPicker !== 'function') {
+            Toast.warning('Use Chrome o Edge en computadora para elegir una carpeta. También puede descargar el respaldo manual.');
+            return false;
+        }
+        try {
+            const handle = await window.showDirectoryPicker({ id: 'jdl-backup-folder', mode: 'readwrite', startIn: 'documents' });
+            await this._dbOp('readwrite', s => s.put(handle, this.HANDLE_ID));
+            this._handle = handle;
+            const saved = await this.save('configuración de carpeta');
+            if (saved) Toast.success('Carpeta activada. Cada respaldo nuevo conservará los archivos anteriores.');
+            return saved;
+        } catch (err) {
+            if (err?.name !== 'AbortError') Toast.error('No se pudo activar la carpeta: ' + (err?.message || err));
+            return false;
+        } finally { this.renderStatus(); }
+    }
+
     // --- Acciones del administrador ---
     static async chooseFile() {
         if (!this.isSupported()) {
@@ -1470,7 +1479,7 @@ class AutoBackup {
             await this._dbOp('readwrite', s => s.put(handle, this.HANDLE_ID));
             this._handle = handle;
             this._errorShown = false;
-            await this.saveNow('configuración');
+            if (!await this.save('configuración')) return false;
             Toast.success('Respaldo automático activado: ' + handle.name);
             return true;
         } catch (err) {
@@ -1489,7 +1498,7 @@ class AutoBackup {
             const perm = await this._permission(handle, true);
             if (perm === 'granted') {
                 this._errorShown = false;
-                await this.saveNow('reactivación');
+                if (!await this.save('reactivación')) return false;
                 Toast.success('Respaldo automático reactivado');
                 return true;
             }
@@ -1518,7 +1527,7 @@ class AutoBackup {
         // Si ya hay un guardado en espera, ese tomará los datos más recientes
         if (this._pending) return this._queue;
         this._pending = true;
-        this._queue = this._queue.then(() => {
+        this._queue = this._queue.catch(() => false).then(() => {
             this._pending = false;
             return this.saveNow(reason);
         });
@@ -1535,7 +1544,7 @@ class AutoBackup {
             }
             // Candado: si el archivo tiene ventas que este navegador ya no tiene
             // (se perdió información), NO sobrescribirlo; ofrecer restaurar.
-            const existing = await this._readFile(handle);
+            const existing = handle.kind === 'directory' ? null : await this._readFile(handle);
             const missing = existing ? this._countMissingSales(existing) : 0;
             if (missing > 0) {
                 this.notifyBlocked(missing);
@@ -1545,9 +1554,22 @@ class AutoBackup {
 
             const data = Backup.buildBackupData();
             data.autoBackup = { savedAt: new Date().toISOString(), reason, device: Device.getId() };
-            const writable = await handle.createWritable();
-            await writable.write(JSON.stringify(data, null, 2));
+            // Archivos únicos: nunca se elimina ni sustituye una copia anterior.
+            let target = handle;
+            if (handle.kind === 'directory') {
+                const day = Backup.formatDateStamp().slice(0, 8);
+                const folder = await handle.getDirectoryHandle(day, { create: true });
+                const name = `JDL_${Backup.formatDateStamp()}_${crypto.randomUUID()}.json`;
+                target = await folder.getFileHandle(name, { create: true });
+            }
+            const serialized = JSON.stringify(data, null, 2);
+            const writable = await target.createWritable();
+            await writable.write(serialized);
             await writable.close();
+            if (await (await target.getFile()).text() !== serialized) {
+                throw new Error('La copia no coincidió al verificarla. Conserve las copias anteriores y reintente.');
+            }
+            await this._dbOp('readwrite', s => s.put(data.autoBackup.savedAt, 'last-verified-save'));
             try { localStorage.setItem(this.lastSaveKey, data.autoBackup.savedAt); } catch { /* sin espacio */ }
             this._errorShown = false;
             this.renderStatus();
@@ -1568,16 +1590,18 @@ class AutoBackup {
             const file = await handle.getFile();
             const text = await file.text();
             if (!text.trim()) return null;
-            return JSON.parse(text);
-        } catch {
-            return null;
+            const parsed = JSON.parse(text);
+            if (!parsed || (!parsed.rawStorage && (!parsed.version || !parsed.store))) throw new Error('Formato de respaldo desconocido');
+            return parsed;
+        } catch (err) {
+            throw new Error('No se puede leer el respaldo anterior; no se sobrescribirá. ' + (err?.message || err));
         }
     }
 
     // Ventas del archivo que no existen en este navegador (mismo folio y fecha,
     // o renombradas con sufijo -R al fusionar)
     static _countMissingSales(fileData) {
-        const fileSales = Backup._normalizeArray(fileData.sales);
+        const fileSales = [...Backup._normalizeArray(fileData.sales), ...Backup._normalizeArray(fileData.historicalSales)];
         if (fileSales.length === 0) return 0;
         const local = new Set();
         SaleService.getAll(true).forEach(s => {
@@ -1585,6 +1609,7 @@ class AutoBackup {
             local.add(`${s.id}|${s.date}`);
             if (s.originalId) local.add(`${s.originalId}|${s.date}`);
         });
+        SaleService.getHistoricalSales().forEach(s => { if (s) local.add(`${s.id}|${s.date}`); });
         return fileSales.filter(s => s && s.id != null && !local.has(`${s.id}|${s.date}`)).length;
     }
 
@@ -1603,6 +1628,7 @@ class AutoBackup {
         }
         try {
             let handle = await this._loadHandle();
+            if (handle?.kind === 'directory') handle = null;
             if (handle && await this._permission(handle, true) !== 'granted') handle = null;
 
             if (!handle) {
@@ -1613,8 +1639,7 @@ class AutoBackup {
                     return { success: false };
                 }
                 handle = picked;
-                await this._dbOp('readwrite', s => s.put(handle, this.HANDLE_ID));
-                this._handle = handle;
+                // Importar una copia no cambia la carpeta automática configurada.
             }
 
             const data = await this._readFile(handle);
@@ -1623,7 +1648,7 @@ class AutoBackup {
                 return { success: false };
             }
 
-            const result = Backup.importData(data);
+            const result = await Backup.importData(data);
             if (!result.success) {
                 Toast.error(result.error || 'No se pudo restaurar el respaldo');
                 return result;
@@ -1691,13 +1716,15 @@ class AutoBackup {
             const handle = await this._loadHandle();
             if (handle && await this._permission(handle) !== 'granted') {
                 this.notifyNeedsPermission();
-            } else if (handle) {
+            } else if (handle && handle.kind !== 'directory') {
                 // Detectar pérdida de información al abrir el programa
                 const existing = await this._readFile(handle);
                 const missing = existing ? this._countMissingSales(existing) : 0;
                 if (missing > 0) this.notifyBlocked(missing);
             }
-        } catch { /* ignorar */ }
+        } catch (err) {
+            Toast.warning('Revise el respaldo automático: ' + (err?.message || err));
+        }
         this.renderStatus();
     }
 
@@ -1715,12 +1742,12 @@ class AutoBackup {
         }
 
         const handle = await this._loadHandle();
-        const last = localStorage.getItem(this.lastSaveKey);
+        const last = await this._dbOp('readonly', s => s.get('last-verified-save')).catch(() => null) || localStorage.getItem(this.lastSaveKey);
         const lastText = last ? ` Último guardado: ${new Date(last).toLocaleString('es-MX')}.` : '';
 
         if (!handle) {
             statusEl.textContent = 'Respaldo automático DESACTIVADO.';
-            if (chooseBtn) chooseBtn.textContent = 'Elegir archivo de respaldo automático';
+            if (chooseBtn) chooseBtn.textContent = 'Elegir carpeta de respaldos';
             reauthBtn?.classList.add('hidden');
             disableBtn?.classList.add('hidden');
             return;
@@ -1728,10 +1755,10 @@ class AutoBackup {
 
         let perm = 'prompt';
         try { perm = await this._permission(handle); } catch { /* archivo inaccesible */ }
-        if (chooseBtn) chooseBtn.textContent = 'Cambiar archivo';
+        if (chooseBtn) chooseBtn.textContent = 'Cambiar carpeta de respaldos';
         disableBtn?.classList.remove('hidden');
         if (perm === 'granted') {
-            statusEl.textContent = `Respaldo automático ACTIVO en "${handle.name}".${lastText}`;
+            statusEl.textContent = `Respaldo automático ACTIVO en ${handle.kind === 'directory' ? 'la carpeta' : 'el archivo'} "${handle.name}".${lastText}`;
             reauthBtn?.classList.add('hidden');
         } else {
             statusEl.textContent = `Respaldo automático EN PAUSA ("${handle.name}"): presione "Reactivar".${lastText}`;

@@ -1251,25 +1251,37 @@
 
 
                            <div class="form-divider">
-                               <h3 class="form-divider-title">Respaldo de Doble Capa (Automático)</h3>
+                               <h3 class="form-divider-title">Respaldos del negocio</h3>
                            </div>
                            <div class="admin-only" id="local-recovery-section">
                                <p class="volume-help-text-small">
-                                   <strong>Capa 1 — Eventual (por venta):</strong> Genera un snapshot silencioso
-                                   en LocalStorage cada vez que se confirma una venta, anulación, devolución,
-                                   cambio por garantía o cierre de caja. Permite recuperar el estado si la página
-                                   se reinicia inesperadamente.
+                                   <strong>Copia local:</strong> Guarda una copia de recuperación al terminar una venta,
+                                   devolución o corte, sin duplicarla en el espacio pequeño usado por las ventas.
+                                   Esta copia sigue dependiendo de esta computadora y este navegador.
                                </p>
                                <p class="volume-help-text-small">
-                                   <strong>Capa 2 — Programado (cada 1 hora):</strong> Un temporizador de fondo
-                                   compila el estado actual del POS (ventas, productos, cortes) en formato JSON
-                                   y ejecuta el guardado automático correspondiente (capa local + archivo en disco).
+                                   <strong>Carpeta en su computadora:</strong> Elija una carpeta para guardar archivos JSON
+                                   completos después de los movimientos y cada hora mientras el programa esté abierto.
+                                   Los archivos se organizan por día y conservan los anteriores. Si Chrome pausa el permiso,
+                                   presione Reactivar. Guarde también una copia en otro dispositivo o una unidad externa.
                                </p>
                                <div class="backup-actions">
                                    <button type="button" id="local-recovery-restore-btn" class="btn btn-outline">Restaurar respaldo local</button>
                                    <button type="button" id="interval-backup-now-btn" class="btn btn-outline">Ejecutar ahora (1 hora)</button>
+                                   <button type="button" id="auto-backup-choose-btn" class="btn btn-outline">Elegir carpeta de respaldos</button>
+                                   <button type="button" id="auto-backup-reauth-btn" class="btn btn-outline hidden">Reactivar permiso</button>
+                                   <button type="button" id="auto-backup-disable-btn" class="btn btn-outline hidden">Pausar respaldo automático</button>
+                                   <button type="button" id="monthly-backup-btn" class="btn btn-primary">Descargar copia completa del mes</button>
+                                   <button type="button" id="auto-backup-import-btn" class="btn btn-outline">Importar respaldo conservando registros</button>
                                </div>
                                <p id="local-recovery-status" class="volume-help-text-small"></p>
+                               <p id="auto-backup-status" class="volume-help-text-small"></p>
+                               <p id="monthly-backup-status" class="volume-help-text-small"></p>
+                               <p class="volume-help-text-small">La copia mensual incluye todo el historial acumulado,
+                                   inventario, clientes y cortes. Importar agrega lo que falta; las diferencias conservan
+                                   los datos actuales. Antes de importar, cierre las otras pestañas del punto de venta y termine
+                                   cualquier cobro pendiente. Se preserva una copia del archivo importado antes de aplicar cambios.
+                                   Para recuperar un archivo grande, mantenga libre espacio en disco y en el navegador.</p>
                            </div>
 
                            <div class="form-divider admin-only">
@@ -1288,12 +1300,8 @@
                                    <button type="button" id="import-backup-setting-btn" class="btn btn-outline">Importar / Cargar Base de Datos (.json)</button>
                                    <input type="file" id="import-backup-setting-file" accept="application/json,.json" style="display: none;">
                                </div>
-                               <div class="checkbox-group">
-                                   <input type="checkbox" id="factory-restore-checkbox" style="margin-right: 8px;">
-                                   <label for="factory-restore-checkbox" style="position: static; transform: none; background: none; padding: 0; display: inline;">
-                                       Restauración de Fábrica (limpiar todo y reemplazar completo)
-                                   </label>
-                               </div>
+                               <p class="volume-help-text-small">La importación conserva los registros actuales.
+                                   No se ofrece una restauración que borre el negocio.</p>
                                <div id="backup-setting-error" class="login-error"></div>
                                <div id="backup-setting-success" class="success-message"></div>
                            </div>
@@ -1341,23 +1349,23 @@
            Las etiquetas de texto NO aparecen sobre las barras; los montos ($ y piezas)
            se muestran únicamente en el tooltip al pasar el ratón. -->
      <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js"></script>
-     <script src="js/business.js?v=20261030-rescue2"></script>
+     <script src="js/business.js?v=20261030-backups3"></script>
      <!-- Capturador global de errores (Error Boundary) -->
-     <script src="js/errorBoundary.js?v=20261030-rescue2"></script>
-     <script src="js/auth.js?v=20261030-rescue2"></script>
+     <script src="js/errorBoundary.js?v=20261030-backups3"></script>
+     <script src="js/auth.js?v=20261030-backups3"></script>
      <!-- Módulo POS: VolumePricing, HeldSales, BarcodeScanner, PaymentProcessor -->
-     <script src="js/pos.js?v=20261030-rescue2"></script>
-     <script src="js/cart.js?v=20261030-rescue2"></script>
-     <script src="js/checkout.js?v=20261030-rescue2"></script>
-     <script src="js/inventory.js?v=20261030-rescue2"></script>
-     <script src="js/vip.js?v=20261030-rescue2"></script>
-     <script src="js/cut.js?v=20261030-rescue2"></script>
-     <script src="js/reports.js?v=20261030-rescue2"></script>
-     <script src="js/print.js?v=20261030-rescue2"></script>
-     <script src="js/backup.js?v=20261030-rescue2"></script>
-     <script src="js/returns.js?v=20261030-rescue2"></script>
-      <script src="js/guarantee.js?v=20261030-rescue2"></script>
-      <script src="js/telegram-notify.js?v=20261030-rescue2"></script>
-      <script src="js/app.js?v=20261030-rescue2"></script>
+     <script src="js/pos.js?v=20261030-backups3"></script>
+     <script src="js/cart.js?v=20261030-backups3"></script>
+     <script src="js/checkout.js?v=20261030-backups3"></script>
+     <script src="js/inventory.js?v=20261030-backups3"></script>
+     <script src="js/vip.js?v=20261030-backups3"></script>
+     <script src="js/cut.js?v=20261030-backups3"></script>
+     <script src="js/reports.js?v=20261030-backups3"></script>
+     <script src="js/print.js?v=20261030-backups3"></script>
+     <script src="js/backup.js?v=20261030-backups3"></script>
+     <script src="js/returns.js?v=20261030-backups3"></script>
+      <script src="js/guarantee.js?v=20261030-backups3"></script>
+      <script src="js/telegram-notify.js?v=20261030-backups3"></script>
+      <script src="js/app.js?v=20261030-backups3"></script>
 </body>
 </html>

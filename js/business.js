@@ -516,6 +516,53 @@ window.Folio = Folio;
 // ============================================================
 class SafeStorage {
     static archivedCopies = {};
+    static auxiliaryQueue = Promise.resolve();
+
+    static saveAuxiliary(key, value) {
+        const save = async () => {
+            const db = await new Promise((resolve, reject) => {
+                const request = indexedDB.open('jdl_preserved_backups', 1);
+                request.onupgradeneeded = () => request.result.createObjectStore('copies');
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+                request.onblocked = () => reject(new Error('Respaldo local ocupado'));
+            });
+            const previous = localStorage.getItem(key);
+            try {
+                await new Promise((resolve, reject) => {
+                    const tx = db.transaction('copies', 'readwrite');
+                    const store = tx.objectStore('copies');
+                    const read = store.get('latest');
+                    read.onsuccess = () => {
+                        const copies = read.result || {};
+                        // Conservar la primera copia anterior sin reemplazarla.
+                        const baseline = store.get('original-' + key);
+                        baseline.onsuccess = () => {
+                            if (baseline.result === undefined) store.put(previous ?? copies[key] ?? value, 'original-' + key);
+                        };
+                        store.put({ ...copies, [key]: value }, 'latest');
+                    };
+                    tx.oncomplete = resolve;
+                    tx.onerror = () => reject(tx.error);
+                    tx.onabort = () => reject(tx.error || new Error('No se guardó la copia local'));
+                });
+                const verified = await new Promise((resolve, reject) => {
+                    const tx = db.transaction('copies', 'readonly');
+                    const read = tx.objectStore('copies').get('latest');
+                    tx.oncomplete = () => resolve(read.result);
+                    tx.onerror = () => reject(tx.error);
+                    tx.onabort = () => reject(tx.error || new Error('Verificación interrumpida'));
+                });
+                if (verified?.[key] !== value) throw new Error('No se pudo verificar el respaldo local');
+                this.archivedCopies = verified;
+                if (previous !== null && localStorage.getItem(key) === previous) localStorage.removeItem(key);
+                return true;
+            } finally { db.close(); }
+        };
+        const result = this.auxiliaryQueue.then(save);
+        this.auxiliaryQueue = result.catch(() => {});
+        return result;
+    }
 
     static getItem(key) {
         return localStorage.getItem(key) ?? this.archivedCopies[key] ?? null;
@@ -994,7 +1041,7 @@ class StorageGuard {
     // Preservar datos críticos creando un snapshot temporal antes
     // de que cualquier operación pueda modificarlos. Útil antes de
     // migraciones o restauraciones forzosas.
-    static createSnapshot() {
+    static async createSnapshot() {
         const snapshot = {
             timestamp: new Date().toISOString(),
             stores: {}
@@ -1007,15 +1054,12 @@ class StorageGuard {
             }
         });
         const snapshotKey = Business.key('pos_storage_snapshot');
-        // No volver a ocupar el espacio recién liberado con otro duplicado.
-        if (this === StorageGuard && SafeStorage.archivedCopies[snapshotKey] !== undefined) return snapshotKey;
         try {
-            SafeStorage.setItem(snapshotKey, SafeJSON.stringify(snapshot));
+            await SafeStorage.saveAuxiliary(snapshotKey, SafeJSON.stringify(snapshot));
         } catch (err) {
-            if (!SafeStorage.isQuotaError(err)) throw err;
             // El respaldo anterior y todos los registros permanecen intactos.
             // Una copia auxiliar no debe impedir abrir la caja para exportarlos.
-            console.warn('[StorageGuard] Sin espacio para actualizar la instantánea; se conserva la anterior.');
+            console.warn('[StorageGuard] No se actualizó la instantánea; se conserva la anterior:', err?.message);
             return null;
         }
         return snapshotKey;

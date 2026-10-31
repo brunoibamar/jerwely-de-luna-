@@ -19,15 +19,17 @@ const { chromium } = require('playwright');
         await page.waitForTimeout(1500);
         assert.deepEqual(errors, [], 'Browser load errors');
         console.log('Chromium load warnings:', warnings);
-        const result = await page.evaluate(() => {
+        const result = await page.evaluate(async () => {
             const before = Object.fromEntries(Object.entries(localStorage));
             const backup = Backup.buildBackupData();
-            const exactBackup = JSON.stringify(before) === JSON.stringify(backup.rawStorage);
+            const exactBackup = Object.entries(before).every(([k, v]) => backup.rawStorage[k] === v);
             const original = Storage.prototype.setItem;
             Storage.prototype.setItem = function () { throw new DOMException('Test quota', 'QuotaExceededError'); };
             let snapshot, quotaRecognized = false, closed = false;
+            const saveAuxiliary = SafeStorage.saveAuxiliary;
+            SafeStorage.saveAuxiliary = async () => { throw new Error('Test database unavailable'); };
             try {
-                snapshot = StorageGuard.createSnapshot();
+                snapshot = await StorageGuard.createSnapshot();
                 try { SafeStorage.setItem('test', 'value'); } catch (err) { quotaRecognized = SafeStorage.isQuotaError(err); }
                 // Create a valid session with the native method solely in this isolated profile.
                 original.call(localStorage, Cut.storageKey, JSON.stringify({
@@ -39,7 +41,7 @@ const { chromium } = require('playwright');
                 try { Cut.closeSession(); closed = true; } catch (err) { /* expected */ }
                 const preserved = active === localStorage.getItem(Cut.storageKey) && history === localStorage.getItem(Cut.shiftHistoryKey);
                 return { exactBackup, snapshot, quotaRecognized, closed, preserved };
-            } finally { Storage.prototype.setItem = original; }
+            } finally { Storage.prototype.setItem = original; SafeStorage.saveAuxiliary = saveAuxiliary; }
         });
         assert.deepEqual(result, { exactBackup: true, snapshot: null, quotaRecognized: true, closed: false, preserved: true });
         console.log('PASS: raw backup, nonblocking snapshot, quota identity, failed cut preserves active session/history');

@@ -516,7 +516,7 @@ class App {
         this.dailySalesChartInstance = null;
     }
 
-     init() {
+     async init() {
         if (this.isInitialized) return;
 
         const migrationResult = Business.migrateExistingData();
@@ -539,9 +539,9 @@ class App {
 
         // Instantánea de seguridad: si algo falla durante la reparación,
         // los datos originales pueden ser restaurados vía StorageGuard.restoreSnapshot().
-        StorageGuard.createSnapshot();
+        await StorageGuard.createSnapshot();
 
-        SaleService.repairDuplicateIds();
+        // Los folios históricos se conservan tal como fueron registrados.
         // Migrar ventas existentes al historial maestro (idempotente)
         SaleService.migrateToHistorical();
 
@@ -835,6 +835,11 @@ class App {
             }
             return true;
         };
+        document.getElementById('auto-backup-choose-btn')?.addEventListener('click', () => { if (guard()) AutoBackup.chooseDirectory(); });
+        document.getElementById('auto-backup-reauth-btn')?.addEventListener('click', () => { if (guard()) AutoBackup.reauthorize(); });
+        document.getElementById('auto-backup-disable-btn')?.addEventListener('click', () => { if (guard()) AutoBackup.disable(); });
+        document.getElementById('auto-backup-import-btn')?.addEventListener('click', () => { if (guard()) AutoBackup.restore(); });
+        document.getElementById('monthly-backup-btn')?.addEventListener('click', () => { if (guard()) Backup.downloadMonthlyBackup(); });
         document.getElementById('local-recovery-restore-btn')?.addEventListener('click', () => {
             if (guard()) this.restoreFromAnyBackup();
         });
@@ -848,10 +853,14 @@ class App {
             }
             try {
                 if (typeof Backup !== 'undefined' && typeof Backup.runScheduledBackup === 'function') {
-                    await Backup.runScheduledBackup();
+                    const result = await Backup.runScheduledBackup();
+                    if (!result?.success) throw new Error(result?.error || 'No se pudo verificar el respaldo local');
                 }
             } catch (err) {
                 console.warn('[App] Error en respaldo programado manual:', err?.message);
+                Toast.error('No se confirmó el respaldo: ' + err.message);
+                if (intervalBackupNowBtn) { intervalBackupNowBtn.disabled = false; intervalBackupNowBtn.textContent = original; }
+                return;
             }
             this.renderLocalRecoveryStatus();
             if (intervalBackupNowBtn) {
@@ -870,7 +879,7 @@ class App {
 
     // Restaurar desde el snapshot local de recuperación (capa 1).
     // Nunca borra datos locales: siempre fusiona por folio/ID.
-    restoreFromAnyBackup() {
+    async restoreFromAnyBackup() {
         const localInfo = (typeof Backup !== 'undefined' && typeof Backup.getLocalRecoveryInfo === 'function')
             ? Backup.getLocalRecoveryInfo()
             : null;
@@ -878,7 +887,7 @@ class App {
             const savedAt = new Date(localInfo.savedAt).toLocaleString('es-MX');
             if (confirm(`¿Restaurar desde el respaldo local de recuperación?\nÚltimo guardado: ${savedAt} (${localInfo.reason || 'manual'}).\n\nSe fusionarán los datos sin borrar lo actual.`)) {
                 const result = (typeof Backup !== 'undefined' && typeof Backup.restoreLocalRecovery === 'function')
-                    ? Backup.restoreLocalRecovery()
+                    ? await Backup.restoreLocalRecovery()
                     : { success: false, error: 'Módulo de respaldo no disponible' };
                 if (result.success) {
                     Toast.success(result.message + ' Recargue la página para aplicar los cambios.');
@@ -914,6 +923,8 @@ class App {
             : `Programado (cada 1 hora): último ${new Date(intervalInfo.lastRun).toLocaleString('es-MX')}, próximo ${new Date(intervalInfo.nextRun).toLocaleString('es-MX')}.`;
 
         statusEl.textContent = `${localText} ${intervalText}`;
+        AutoBackup.renderStatus();
+        Backup.renderMonthlyReminder();
     }
 
     // Mostrar / ocultar la pista de recuperación local en la pantalla
@@ -960,6 +971,8 @@ class App {
     }
 
     showApp() {
+        AutoBackup.checkOnStartup();
+        Backup.renderMonthlyReminder();
         document.getElementById('login-screen')?.classList.add('hidden');
         document.getElementById('pos-app')?.classList.remove('hidden');
         const userNameEl = document.getElementById('user-name');
@@ -7057,5 +7070,5 @@ document.addEventListener('DOMContentLoaded', ErrorBoundary.wrap('app-init', asy
     }
     Business.migrateExistingData();
     app.loadFromStorage();
-    app.init();
+    await app.init();
 }));
