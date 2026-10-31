@@ -211,6 +211,13 @@ class Cut {
     static closeSession() {
         const session = this.getActiveSession();
         if (!session) return null;
+        const storedHistory = localStorage.getItem(this.shiftHistoryKey);
+        if (storedHistory !== null) {
+            const parsedHistory = SafeJSON.parse(storedHistory, null, 'historial_turnos');
+            if (!Array.isArray(parsedHistory) || !DataValidator.validateSessionHistory(parsedHistory)) {
+                throw new Error('No se puede actualizar el historial de cortes: requiere revisión. Los datos originales se conservaron.');
+            }
+        }
 
         const now = new Date();
         session.closedAt = now.toISOString();
@@ -312,8 +319,7 @@ class Cut {
         if (!stored) return null;
         const parsed = SafeJSON.parse(stored, null, 'sesion_activa');
         if (parsed && !DataValidator.validateSession(parsed)) {
-            console.warn('[Cut] Esquema de sesión inválido; se ignora y se requiere nueva apertura.');
-            localStorage.removeItem(this.storageKey);
+            console.warn('[Cut] Esquema de sesión inválido; se conserva para recuperación.');
             return null;
         }
         return parsed;

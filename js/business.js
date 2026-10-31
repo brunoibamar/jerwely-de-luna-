@@ -515,6 +515,73 @@ window.Folio = Folio;
 //  el almacenamiento del navegador está lleno.
 // ============================================================
 class SafeStorage {
+    static archivedCopies = {};
+
+    static getItem(key) {
+        return localStorage.getItem(key) ?? this.archivedCopies[key] ?? null;
+    }
+
+    // Traslada sólo copias auxiliares, nunca las tablas de operación.
+    // Cada versión se conserva en IndexedDB y se verifica antes de liberar
+    // su duplicado. Una transacción fallida deja localStorage intacto.
+    static async prepareSpace() {
+        const db = await new Promise((resolve, reject) => {
+            const request = indexedDB.open('jdl_preserved_backups', 1);
+            request.onupgradeneeded = () => request.result.createObjectStore('copies');
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+            request.onblocked = () => reject(new Error('Almacenamiento de respaldo ocupado'));
+        });
+        const transact = (mode, run) => new Promise((resolve, reject) => {
+            const tx = db.transaction('copies', mode);
+            let result;
+            const request = run(tx.objectStore('copies'));
+            request.onsuccess = () => { result = request.result; };
+            tx.oncomplete = () => resolve(result);
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error || new Error('No se completó el respaldo'));
+        });
+        try {
+            this.archivedCopies = (await transact('readonly', store => store.get('latest'))) || {};
+            // La reserva es temporal; no toca ninguna clave del negocio.
+            const probe = '__jdl_space_probe__';
+            if (localStorage.getItem(probe) !== null) return;
+            try {
+                localStorage.setItem(probe, ' '.repeat(256 * 1024));
+                localStorage.removeItem(probe);
+                return;
+            } catch (err) {
+                if (!this.isQuotaError(err)) throw err;
+            }
+            const copies = {};
+            for (const base of ['pos_storage_snapshot', 'pos_backup', 'pos_local_recovery']) {
+                const key = Business.key(base);
+                const value = localStorage.getItem(key);
+                if (value !== null) copies[key] = value;
+            }
+            if (!Object.keys(copies).length) return;
+            const preserved = { ...this.archivedCopies, ...copies };
+            await new Promise((resolve, reject) => {
+                const tx = db.transaction('copies', 'readwrite');
+                const store = tx.objectStore('copies');
+                store.put(copies, `version-${Date.now()}-${Math.random()}`);
+                store.put(preserved, 'latest');
+                tx.oncomplete = resolve;
+                tx.onerror = () => reject(tx.error);
+                tx.onabort = () => reject(tx.error || new Error('Respaldo cancelado'));
+            });
+            const verified = await transact('readonly', store => store.get('latest'));
+            if (!Object.entries(preserved).every(([key, value]) => verified?.[key] === value)) {
+                throw new Error('No se pudo verificar la copia; se conserva el almacenamiento original');
+            }
+            this.archivedCopies = verified;
+            for (const [key, value] of Object.entries(copies)) {
+                // Otra pestaña pudo actualizar la copia mientras se guardaba.
+                if (localStorage.getItem(key) === value) localStorage.removeItem(key);
+            }
+        } finally { db.close(); }
+    }
+
     static isQuotaError(err) {
         return err && (
             err.name === 'QuotaExceededError' ||
@@ -528,9 +595,12 @@ class SafeStorage {
             localStorage.setItem(key, value);
         } catch (err) {
             if (this.isQuotaError(err)) {
-                const msg = 'El almacenamiento del navegador está lleno. Exporte un respaldo y libere espacio (por ejemplo, quite el logo de la tienda).';
+                const msg = 'El almacenamiento del navegador está lleno. Descargue un respaldo desde Configuración. No borre los datos del sitio ni restablezca el navegador.';
                 if (typeof Toast !== 'undefined') Toast.error(msg, 8000);
-                throw new Error(msg);
+                const quotaError = new Error(msg);
+                quotaError.name = 'QuotaExceededError';
+                quotaError.cause = err;
+                throw quotaError;
             }
             throw err;
         }
@@ -937,7 +1007,15 @@ class StorageGuard {
             }
         });
         const snapshotKey = Business.key('pos_storage_snapshot');
-        SafeStorage.setItem(snapshotKey, SafeJSON.stringify(snapshot));
+        try {
+            SafeStorage.setItem(snapshotKey, SafeJSON.stringify(snapshot));
+        } catch (err) {
+            if (!SafeStorage.isQuotaError(err)) throw err;
+            // El respaldo anterior y todos los registros permanecen intactos.
+            // Una copia auxiliar no debe impedir abrir la caja para exportarlos.
+            console.warn('[StorageGuard] Sin espacio para actualizar la instantánea; se conserva la anterior.');
+            return null;
+        }
         return snapshotKey;
     }
 
@@ -945,7 +1023,7 @@ class StorageGuard {
     // o por el asistente de recuperación cuando los datos se corrompen).
     static restoreSnapshot() {
         const snapshotKey = Business.key('pos_storage_snapshot');
-        const stored = localStorage.getItem(snapshotKey);
+        const stored = SafeStorage.getItem(snapshotKey);
         if (!stored) return { success: false, error: 'No hay instantánea disponible' };
 
         const snapshot = SafeJSON.parse(stored, null, 'storage_snapshot');

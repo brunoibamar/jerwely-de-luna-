@@ -13,7 +13,16 @@ class Backup {
 
     // Datos completos del respaldo (usado por la descarga manual y el respaldo automático)
     static buildBackupData() {
+        // Copia literal de todas las claves: incluye clientes VIP, identidad del
+        // dispositivo y datos antiguos que los lectores normalizados omitirían.
+        // Sólo lee; la descarga funciona aunque no quede espacio para escribir.
+        const rawStorage = { ...SafeStorage.archivedCopies };
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            rawStorage[key] = localStorage.getItem(key);
+        }
         return {
+            rawStorage,
             version: '1.3',
             timestamp: new Date().toISOString(),
             store: Business.getStoreName(),
@@ -22,6 +31,8 @@ class Backup {
             inventory: Inventory.getAll(),
             sales: SaleService.getAll(true),
             historicalSales: SaleService.getHistoricalSales(),
+            vipCustomers: localStorage.getItem(VIPCustomer.storageKey),
+            vipConfig: localStorage.getItem(VIPConfig.storageKey),
             users: Auth.adminProfile,
              settings: Settings.getSettings(),
              bankData: localStorage.getItem(BankData.storageKey),
@@ -72,7 +83,7 @@ class Backup {
     }
 
     static restoreFromLocalStorage() {
-        const stored = localStorage.getItem(this.backupKey);
+        const stored = SafeStorage.getItem(this.backupKey);
         if (!stored) return { success: false, error: 'No hay respaldo disponible' };
 
         const data = JSON.parse(stored);
@@ -455,7 +466,7 @@ class Backup {
     // Consultar el estado del snapshot de recuperación local en LocalStorage.
     // Devuelve null si no existe o está corrupto.
     static getLocalRecoveryInfo() {
-        const stored = localStorage.getItem(this.localRecoveryKey);
+        const stored = SafeStorage.getItem(this.localRecoveryKey);
         if (!stored) return null;
         const data = SafeJSON.parse(stored, null, 'local_recovery');
         if (!data || !data.savedAt) return null;
@@ -495,7 +506,7 @@ class Backup {
     // Restaurar datos desde el snapshot de recuperación local.
     // Nunca borra datos: fusiona el estado guardado sobre el actual.
     static restoreLocalRecovery() {
-        const stored = localStorage.getItem(this.localRecoveryKey);
+        const stored = SafeStorage.getItem(this.localRecoveryKey);
         if (!stored) return { success: false, error: 'No hay snapshot de recuperación local disponible' };
 
         const data = SafeJSON.parse(stored, null, 'local_recovery');
@@ -1177,7 +1188,7 @@ class Backup {
             report,
             savedAt: new Date().toISOString()
         });
-        localStorage.setItem(this.reportHistoryKey, JSON.stringify(history));
+        SafeStorage.setItem(this.reportHistoryKey, SafeJSON.stringify(history));
     }
 
     static getReportHistory() {
@@ -1338,7 +1349,8 @@ class Backup {
     static downloadCutBackup(report) {
         try {
             const data = {
-                version: '1.2',
+                ...this.buildBackupData(),
+                version: '1.3',
                 type: 'cut_backup',
                 timestamp: new Date().toISOString(),
                 store: Business.getStoreName(),

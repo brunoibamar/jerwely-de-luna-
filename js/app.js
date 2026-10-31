@@ -1219,7 +1219,18 @@ class App {
         this.hideCloseConfirmation();
 
         // Cerrar la sesión de caja y generar reporte de corte por turno
-        const session = Cut.closeSession();
+        let session;
+        try {
+            try {
+                await SafeStorage.prepareSpace();
+            } catch (spaceError) {
+                console.warn('[App] No se pudo trasladar el respaldo auxiliar:', spaceError?.message);
+            }
+            session = Cut.closeSession();
+        } catch (err) {
+            Toast.error('No se pudo guardar el corte. La caja sigue abierta. Descargue un respaldo en Configuración. ' + (err?.message || ''), 10000);
+            return;
+        }
         const report = (session && session.report) ? session.report : Backup.generateDailyReport();
         this.currentReport = report;
 
@@ -1236,7 +1247,14 @@ class App {
         }
 
         // Guardar copia en localStorage (historial interno)
-        Backup.saveReportToHistory(report);
+        try {
+            Backup.saveReportToHistory(report);
+        } catch (err) {
+            // El corte ya está persistido en pos_shift_history. Una copia
+            // adicional fallida no debe ocultar el resumen ni simular un fallo.
+            console.warn('[App] No se pudo guardar la copia adicional del reporte:', err?.message);
+            Toast.error('El corte está guardado en el historial de turnos, pero falló la copia adicional del reporte. Conserve el respaldo descargado.', 10000);
+        }
         Backup.createLocalRecovery('corte');
 
         // Notificar corte de caja por Telegram (en segundo plano, sin
@@ -7018,7 +7036,7 @@ class App {
 const app = new App();
 window.app = app;
 
-document.addEventListener('DOMContentLoaded', ErrorBoundary.wrap('app-init', () => {
+document.addEventListener('DOMContentLoaded', ErrorBoundary.wrap('app-init', async () => {
     // --- Validación de seguridad: verificar que business.js se haya cargado ---
     // Si Business no está definido, el sistema no puede acceder a las claves
     // namespaced por device_id y no puede inicializarse. Se evita el colapso
@@ -7032,6 +7050,11 @@ document.addEventListener('DOMContentLoaded', ErrorBoundary.wrap('app-init', () 
     // acceso a localStorage. Si se llamara a loadFromStorage() antes,
     // Inventory.init() / Settings.getSettings() crearían valores por
     // defecto en la nueva clave, bloqueando la migración de datos existentes.
+    try {
+        await SafeStorage.prepareSpace();
+    } catch (err) {
+        console.warn('[App] No se pudo preparar espacio; los datos originales se conservan:', err?.message);
+    }
     Business.migrateExistingData();
     app.loadFromStorage();
     app.init();
