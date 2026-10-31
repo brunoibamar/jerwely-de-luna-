@@ -1259,18 +1259,7 @@ class App {
         if (!session) { Toast.info('No hay un turno abierto para cerrar.'); return; }
         const report = (session && session.report) ? session.report : Backup.generateDailyReport();
         this.currentReport = report;
-
-        // Generar y descargar el archivo JSON de respaldo (respaldo_pos_[FECHA].json)
-        // con el estado completo del sistema: historial maestro de ventas,
-        // cortes anteriores, catálogo e inventario, y movimientos de caja.
-        try {
-            const downloadResult = Backup.downloadCutBackup(report);
-            if (downloadResult.success) {
-                Toast.success(downloadResult.message, 5000);
-            }
-        } catch (err) {
-            console.warn('[App] No se pudo generar el respaldo JSON de corte:', err?.message);
-        }
+        Toast.info('Corte guardado. Preparando el respaldo JSON; espere la confirmación.', 10000);
 
         // Guardar copia en localStorage (historial interno)
         try {
@@ -1281,7 +1270,27 @@ class App {
             console.warn('[App] No se pudo guardar la copia adicional del reporte:', err?.message);
             Toast.error('El corte está guardado en el historial de turnos, pero falló la copia adicional del reporte. Conserve el respaldo descargado.', 10000);
         }
-        Backup.createLocalRecovery('corte');
+        await Backup.createLocalRecovery('corte', { external: false });
+
+        const folderResult = await AutoBackup.saveCut(report);
+        let backupMessage;
+        if (folderResult.success) {
+            backupMessage = `Corte guardado. JSON completo verificado en ${folderResult.kind === 'directory' ? 'la carpeta' : 'el archivo'} “${folderResult.target}”.`;
+            Toast.success(backupMessage, 8000);
+        } else {
+            const fallback = Backup.downloadCutBackup(report);
+            const explanation = folderResult.reason === 'unconfigured'
+                ? 'No hay una carpeta automática configurada.'
+                : folderResult.reason === 'permission'
+                    ? 'El navegador requiere reactivar el permiso de la carpeta.'
+                    : 'No se pudo verificar el archivo de la carpeta.';
+            backupMessage = 'El corte sí quedó guardado en este navegador. ' + explanation + (fallback.success
+                ? ' Se solicitó una descarga JSON de seguridad; compruebe que terminó y conserve el archivo.'
+                : ' Tampoco se pudo solicitar la descarga JSON. Conserve esta pantalla e informe al administrador.');
+            Toast.warning(backupMessage, 14000);
+        }
+        const backupStatus = document.getElementById('cut-backup-status');
+        if (backupStatus) backupStatus.textContent = backupMessage;
 
         // Notificar corte de caja por Telegram (en segundo plano, sin
         // interrumpir el proceso de cierre ni guardado en localStorage).
@@ -1468,14 +1477,11 @@ class App {
         if (downloadBtn) {
             downloadBtn.addEventListener('click', () => {
                 if (this.currentReport) {
-                    if (Auth.isGuest()) {
-                        // Invitado: registro de sesión simplificado
-                        Backup.exportGuestSession(this.currentReport);
-                    } else {
-                        // Administrador: reporte completo + respaldo JSON (respaldo_pos_[FECHA].json)
-                        Backup.exportReportFile(this.currentReport);
-                        Backup.downloadCutBackup(this.currentReport);
-                    }
+                    // La misma copia completa que el corte ya descargaba
+                    // automáticamente para ambos roles, disponible para reintentar.
+                    const result = Backup.downloadCutBackup(this.currentReport);
+                    if (result.success) Toast.info(result.message, 8000);
+                    else Toast.error(result.error, 10000);
                 }
             });
         }

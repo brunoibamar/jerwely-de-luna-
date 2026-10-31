@@ -30,6 +30,12 @@ El sitio no puede habilitar por su cuenta una función que el navegador bloquea.
 esperando que aparezcan los mismos registros: los datos locales no se transfieren automáticamente.
 
 Se crean archivos JSON completos y distintos, en subcarpetas por día. No se eliminan las copias anteriores.
+Al cerrar caja, el sistema espera el guardado de un archivo `JDL_Corte_...json` que contiene todo el negocio
+y el reporte del turno recién cerrado. El resumen confirma la carpeta sólo después de leer y comparar
+el archivo. Funciona también al cerrar como empleada, sin permitirle cambiar la carpeta configurada.
+Si falta carpeta, permiso o espacio, el corte queda guardado internamente y se intenta descargar un JSON
+de seguridad. Comprobar que la descarga terminó; el resumen explica el resultado y permite reintentar
+con **Descargar JSON del corte**. No repetir el corte para reintentar el respaldo.
 El programa intenta respaldar después de ventas, devoluciones, garantías, movimientos VIP y cortes, y cada hora
 mientras esté abierto. Los cambios de inventario o configuración también se incluyen en la siguiente copia
 completa; para guardarlos inmediatamente, pulsar **Respaldar ahora**.
@@ -87,6 +93,8 @@ Pruebas en perfiles de Chromium aislados, con Node y Playwright disponibles:
 - `tests/indexed-storage.cjs`: migración con almacenamiento lleno, comparación literal y originales,
   venta e inventario VIP atómicos, fallo y doble envío de cobro, dos pestañas concurrentes, corte fallido,
   recuperación completa, interrupción de migración, comprobación de integridad y movimientos del negocio.
+- `tests/cut-backup.cjs`: cierre como empleada, cola de respaldos, archivo completo del corte, lectura
+  verificada y descarga de seguridad ante carpeta no configurada, permisos, disco o verificación fallidos.
 
 Las pruebas no acceden a los datos del cliente. La carpeta elegida por el cliente se configura únicamente
 desde su propia computadora; los manejadores de archivos usados en las pruebas son simulados.

@@ -398,7 +398,7 @@ class Backup {
 
     // Crear un snapshot de recuperación local con los datos críticos.
     // No lanza excepciones: un fallo del respaldo no debe bloquear la caja.
-    static async createLocalRecovery(reason = 'manual') {
+    static async createLocalRecovery(reason = 'manual', options = {}) {
         try {
             const auxiliary = new Set(['pos_storage_snapshot', 'pos_backup', 'pos_local_recovery'].map(k => Business.key(k)));
             const rawStorage = {};
@@ -435,7 +435,7 @@ class Backup {
             return null;
         } finally {
             // La copia externa debe intentarse aun si falla el respaldo interno.
-            if (typeof AutoBackup !== 'undefined') AutoBackup.save(reason);
+            if (options.external !== false && typeof AutoBackup !== 'undefined') AutoBackup.save(reason);
         }
     }
 
@@ -1272,20 +1272,13 @@ class Backup {
     }
 
     // Descargar un respaldo JSON con el estado completo del sistema + reporte de corte.
+    static buildCutBackup(report) {
+        return { ...this.buildBackupData(), type: 'cut_backup', report: structuredClone(report) };
+    }
+
     static downloadCutBackup(report) {
         try {
-            const data = {
-                ...this.buildBackupData(),
-                version: '1.3',
-                type: 'cut_backup',
-                timestamp: new Date().toISOString(),
-                store: Business.getStoreName(),
-                businessName: Business.getBusinessName(),
-                businessId: Business.getCurrentBusinessId(),
-                inventory: Inventory.getAll(),
-                sales: SaleService.getAll(true),
-                report: report
-            };
+            const data = this.buildCutBackup(report);
             const backupStr = JSON.stringify(data, null, 2);
             const blob = new Blob([backupStr], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
@@ -1298,7 +1291,7 @@ class Backup {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
 
-            return { success: true, message: 'Respalado de corte descargado correctamente' };
+            return { success: true, message: 'Se solicitó la descarga del respaldo de corte. Compruebe que el archivo terminó de descargarse.' };
         } catch (err) {
             return { success: false, error: 'Error al descargar el respaldo: ' + (err?.message || err) };
         }
@@ -1501,7 +1494,29 @@ class AutoBackup {
         return this._queue;
     }
 
-    static async saveNow(reason = '') {
+    // Cada corte tiene su propio trabajo en cola y su reporte completo.
+    // No se fusiona con un respaldo pendiente de otra venta o corte.
+    static saveCut(report) {
+        let snapshot;
+        try { snapshot = Backup.buildCutBackup(report); }
+        catch (err) { return Promise.resolve({ success: false, reason: 'snapshot', error: err?.message }); }
+        const job = this._queue.catch(() => false).then(async () => {
+            try {
+                const handle = await this._loadHandle();
+                if (!handle) return { success: false, reason: 'unconfigured' };
+                if (await this._permission(handle) !== 'granted') {
+                    this.notifyNeedsPermission();
+                    return { success: false, reason: 'permission' };
+                }
+                const success = await this.saveNow('corte', snapshot);
+                return { success, reason: success ? 'saved' : 'failed', target: handle.name, kind: handle.kind };
+            } catch (err) { return { success: false, reason: 'failed', error: err?.message }; }
+        });
+        this._queue = job.then(result => result.success);
+        return job;
+    }
+
+    static async saveNow(reason = '', snapshot = null) {
         try {
             const handle = await this._loadHandle();
             if (!handle) return false;
@@ -1519,14 +1534,14 @@ class AutoBackup {
                 return false;
             }
 
-            const data = Backup.buildBackupData();
+            const data = snapshot || Backup.buildBackupData();
             data.autoBackup = { savedAt: new Date().toISOString(), reason, device: Device.getId() };
             // Archivos únicos: nunca se elimina ni sustituye una copia anterior.
             let target = handle;
             if (handle.kind === 'directory') {
                 const day = Backup.formatDateStamp().slice(0, 8);
                 const folder = await handle.getDirectoryHandle(day, { create: true });
-                const name = `JDL_${Backup.formatDateStamp()}_${crypto.randomUUID()}.json`;
+                const name = `JDL_${reason === 'corte' ? 'Corte_' : ''}${Backup.formatDateStamp()}_${crypto.randomUUID()}.json`;
                 target = await folder.getFileHandle(name, { create: true });
             }
             const serialized = JSON.stringify(data, null, 2);
