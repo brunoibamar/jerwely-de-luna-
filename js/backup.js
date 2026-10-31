@@ -1322,11 +1322,17 @@ class Backup {
     // Ejecutar un respaldo programado: exportar a localStorage + crear snapshot local.
     static async runScheduledBackup() {
         try {
-            await this.exportToLocalStorage();
-            const now = new Date().toISOString();
-            SafeStorage.setItem(this.intervalBackupKey, JSON.stringify({ lastRun: now }));
+            try { await this.exportToLocalStorage(); }
+            catch (err) { console.warn('[Backup] No se actualizó la copia auxiliar; se intentarán las otras copias:', err?.message); }
             const result = await this.createLocalRecovery('programado');
-            return { success: !!result };
+            const handle = await AutoBackup._loadHandle();
+            const external = handle ? !!await AutoBackup._queue : null;
+            if (result || external) {
+                try {
+                    SafeStorage.setItem(this.intervalBackupKey, JSON.stringify({ lastRun: new Date().toISOString() }));
+                } catch (err) { console.warn('[Backup] Copia verificada; no se actualizó la fecha auxiliar:', err?.message); }
+            }
+            return { success: !!result || external === true, local: !!result, external };
         } catch (err) {
             console.warn('[Backup] Error al ejecutar respaldo programado:', err?.message);
             return { success: false, error: err?.message };

@@ -838,7 +838,13 @@ class App {
         document.getElementById('auto-backup-choose-btn')?.addEventListener('click', () => { if (guard()) AutoBackup.chooseDirectory(); });
         document.getElementById('auto-backup-reauth-btn')?.addEventListener('click', () => { if (guard()) AutoBackup.reauthorize(); });
         document.getElementById('auto-backup-disable-btn')?.addEventListener('click', () => { if (guard()) AutoBackup.disable(); });
-        document.getElementById('auto-backup-import-btn')?.addEventListener('click', () => { if (guard()) AutoBackup.restore(); });
+        const importFile = document.getElementById('import-backup-setting-file');
+        document.getElementById('auto-backup-import-btn')?.addEventListener('click', () => { if (guard()) importFile?.click(); });
+        importFile?.addEventListener('change', async e => {
+            if (!guard()) { importFile.value = ''; return; }
+            await this.importBackupFile(e.target.files[0]);
+            importFile.value = '';
+        });
         document.getElementById('monthly-backup-btn')?.addEventListener('click', () => { if (guard()) Backup.downloadMonthlyBackup(); });
         document.getElementById('local-recovery-restore-btn')?.addEventListener('click', () => {
             if (guard()) this.restoreFromAnyBackup();
@@ -851,9 +857,10 @@ class App {
                 intervalBackupNowBtn.disabled = true;
                 intervalBackupNowBtn.textContent = 'Guardando...';
             }
+            let result;
             try {
                 if (typeof Backup !== 'undefined' && typeof Backup.runScheduledBackup === 'function') {
-                    const result = await Backup.runScheduledBackup();
+                    result = await Backup.runScheduledBackup();
                     if (!result?.success) throw new Error(result?.error || 'No se pudo verificar el respaldo local');
                 }
             } catch (err) {
@@ -867,7 +874,10 @@ class App {
                 intervalBackupNowBtn.disabled = false;
                 intervalBackupNowBtn.textContent = original;
             }
-            Toast.success('Respaldo programado ejecutado correctamente');
+            if (result.local && result.external === true) Toast.success('Copia del navegador y archivo de la carpeta guardados y verificados.');
+            else if (result.local && result.external === null) Toast.info('Copia del navegador verificada. Elija una carpeta o descargue el JSON para tener una copia fuera del navegador.', 8000);
+            else if (result.local) Toast.warning('Copia del navegador verificada. No se confirmó el archivo de la carpeta; revise el permiso y el espacio en disco.', 10000);
+            else Toast.warning('Archivo de la carpeta verificado, pero falló la copia del navegador. Conserve el archivo.', 10000);
         });
         // Disponible sin iniciar sesión: tras perder la información no hay turno
         // abierto. Solo FUSIONA datos del respaldo, nunca borra.
@@ -915,8 +925,8 @@ class App {
             : null;
 
         const localText = localInfo
-            ? `Último snapshot local: ${new Date(localInfo.savedAt).toLocaleString('es-MX')} (${localInfo.reason || 'manual'}).`
-            : 'No hay snapshot local de recuperación disponible.';
+            ? `Última copia de este navegador: ${new Date(localInfo.savedAt).toLocaleString('es-MX')} (${localInfo.reason || 'manual'}).`
+            : 'No hay una copia de recuperación de este navegador disponible.';
 
         const intervalText = !intervalInfo || !intervalInfo.lastRun
             ? 'Programado (cada 1 hora): pendiente de ejecución.'
@@ -4642,48 +4652,6 @@ class App {
                 });
             }
 
-          // --- Respaldo y Restauración (Exportar / Importar .json) ---
-          // Módulo 1: sincronización remota y recuperación ante fallos.
-          // Requiere privilegios de administrador (Configuración).
-          const exportBackupSettingBtn = document.getElementById('export-backup-setting-btn');
-          if (exportBackupSettingBtn) {
-              exportBackupSettingBtn.addEventListener('click', () => {
-                  if (!Auth.canAccessConfig()) {
-                      Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
-                      return;
-                  }
-                  const result = Backup.createBackup();
-                  Toast.success(result.message);
-              });
-          }
-
-          const importBackupSettingBtn = document.getElementById('import-backup-setting-btn');
-          const importBackupSettingFile = document.getElementById('import-backup-setting-file');
-          const factoryRestoreCheckbox = document.getElementById('factory-restore-checkbox');
-          if (importBackupSettingBtn && importBackupSettingFile) {
-              importBackupSettingBtn.addEventListener('click', () => {
-                  if (!Auth.canAccessConfig()) {
-                      Toast.warning('Permiso denegado: Esta acción requiere privilegios de administrador');
-                      return;
-                  }
-                  importBackupSettingFile.click();
-              });
-              importBackupSettingFile.addEventListener('change', (e) => {
-                  this.importBackupFile(e.target.files[0]);
-                  e.target.value = '';
-              });
-          }
-
-          if (factoryRestoreCheckbox) {
-              factoryRestoreCheckbox.addEventListener('change', () => {
-                  if (importBackupSettingBtn) {
-                      importBackupSettingBtn.textContent = factoryRestoreCheckbox.checked
-                          ? 'Restaurar (Fábrica)'
-                          : 'Importar / Cargar Base de Datos (.json)';
-                  }
-              });
-          }
-
          }
 
      // Importar una copia de seguridad .json exportada por el sistema
@@ -4695,25 +4663,15 @@ class App {
         if (errorEl) errorEl.textContent = '';
         if (successEl) successEl.textContent = '';
 
-        const factoryCheckbox = document.getElementById('factory-restore-checkbox');
-        const factoryRestore = factoryCheckbox ? factoryCheckbox.checked : false;
-
-        if (factoryRestore) {
-            if (!confirm('¿Estás seguro? La Restauración de Fábrica borrará TODOS los datos locales y los reemplazará con los del archivo. Este proceso no se puede deshacer.')) {
-                if (factoryCheckbox) factoryCheckbox.checked = false;
-                return;
-            }
-        }
+        const importBtn = document.getElementById('auto-backup-import-btn');
+        if (importBtn?.disabled) return;
+        if (importBtn) importBtn.disabled = true;
 
         try {
-            const result = await Backup.importFromFile(file, { factoryRestore: factoryRestore });
+            const result = await Backup.importFromFile(file);
             if (result.success) {
-                const baseMsg = result.factoryRestore
-                    ? 'Restauración de fábrica completada.'
-                    : 'Datos importados con fusión inteligente por folio/ID.';
-                if (successEl) successEl.textContent = baseMsg + ' Recargue la página para aplicar los cambios.';
-                Toast.success(result.message + '. Recargue la página para aplicar los cambios.');
-                if (factoryCheckbox) factoryCheckbox.checked = false;
+                if (successEl) successEl.textContent = result.message + ' Recargue la página para aplicar los cambios.';
+                Toast.success(result.message + ' Recargue la página para aplicar los cambios.');
             } else {
                 if (errorEl) errorEl.textContent = result.error;
                 Toast.error(result.error);
@@ -4722,6 +4680,8 @@ class App {
             const msg = 'Error al leer el archivo: ' + (err?.message || err);
             if (errorEl) errorEl.textContent = msg;
             Toast.error(msg);
+         } finally {
+            if (importBtn) importBtn.disabled = false;
          }
      }
 

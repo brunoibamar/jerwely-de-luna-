@@ -89,11 +89,26 @@ const { chromium } = require('playwright');
         });
         assert.ok(Object.values(result).every(Boolean), JSON.stringify(result));
         console.log('PASS:', JSON.stringify(result));
+        await page.evaluate(() => {
+            Auth.currentUser = { id: 1, username: 'admin', name: 'Administrador', role: 'admin' };
+            localStorage.setItem(Auth.current_userKey, JSON.stringify(Auth.currentUser));
+            app.showApp(); app.switchSection('settings');
+        });
+        assert.equal(await page.locator('#backup-restore-section, #export-backup-setting-btn, #import-backup-setting-btn').count(), 0);
         // Ejercitar la descarga mensual con confirmación explícita del archivo.
         page.on('dialog', dialog => dialog.accept());
-        const [download] = await Promise.all([page.waitForEvent('download'), page.evaluate(() => Backup.downloadMonthlyBackup())]);
+        const [download] = await Promise.all([page.waitForEvent('download'), page.locator('#monthly-backup-btn').click()]);
         const json = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
         assert.ok(json.rawStorage && json.historicalSales && json.deviceId);
+        const beforeUIImport = await page.evaluate(() => localStorage.getItem(SaleService.storageKey));
+        const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.locator('#auto-backup-import-btn').click()]);
+        await chooser.setFiles({ name: 'respaldo.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(json)) });
+        await page.waitForFunction(() => document.getElementById('backup-setting-success').textContent.includes('Recuperación completada'));
+        assert.equal(await page.evaluate(() => localStorage.getItem(SaleService.storageKey)), beforeUIImport);
+        const manual = await page.evaluate(() => Backup.runScheduledBackup());
+        assert.equal(manual.local, true);
+        assert.equal(manual.external, null);
+        console.log('PASS: one download and JSON import flow; importing via UI preserves sales; manual backup distinguishes unconfigured external folder');
         const fresh = await browser.newPage();
         await fresh.goto(pathToFileURL(path.resolve('index.html')).href);
         await fresh.waitForFunction(() => window.app?.isInitialized);

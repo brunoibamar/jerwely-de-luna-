@@ -10,7 +10,7 @@
 Se crean archivos JSON completos y distintos, en subcarpetas por día. No se eliminan las copias anteriores.
 El programa intenta respaldar después de ventas, devoluciones, garantías, movimientos VIP y cortes, y cada hora
 mientras esté abierto. Los cambios de inventario o configuración también se incluyen en la siguiente copia
-completa; para guardarlos inmediatamente, pulsar **Ejecutar ahora**.
+completa; para guardarlos inmediatamente, pulsar **Respaldar ahora**.
 
 La copia del navegador y la carpeta dependen de esa computadora. Conservar también un archivo en una unidad
 externa u otro equipo, especialmente al terminar el mes. Si se llena el disco o se pierde el permiso, revisar
@@ -18,7 +18,7 @@ el aviso: una copia fallida no se marca como verificada.
 
 ## Archivo mensual
 
-Pulsar **Descargar copia completa del mes**. Incluye todo el historial acumulado, no únicamente las ventas
+Pulsar **Descargar respaldo completo (JSON)**. Incluye todo el historial acumulado, no únicamente las ventas
 mensuales. Confirmar el recordatorio sólo después de comprobar que el archivo terminó de descargarse y
 se guardó correctamente. El aviso vuelve a quedar pendiente al comenzar otro mes. Conservar archivos anteriores.
 
@@ -29,7 +29,7 @@ una carpeta controlada por el administrador.
 
 1. Conservar el JSON original; no editarlo ni cargarlo con opciones de borrado del navegador.
 2. Terminar cualquier cobro pendiente y cerrar las otras pestañas del punto de venta.
-3. Abrir **Importar respaldo conservando registros** y seleccionar el JSON deseado.
+3. Abrir **Importar archivo JSON** y seleccionar el JSON deseado.
 4. Revisar el resultado antes de recargar: se agregan registros faltantes. Si hay diferencias para un mismo
    registro, se conserva el actual y el mensaje informa cuántas diferencias hubo. No se renumeran folios.
 
