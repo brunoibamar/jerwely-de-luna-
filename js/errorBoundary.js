@@ -71,8 +71,8 @@ class ErrorBoundary {
 
         this.errorCount += 1
         if (this.errorCount > 10) {
-            console.warn('[ErrorBoundary] Demasiados errores consecutivos. Recargando página.')
-            location.reload()
+            console.warn('[ErrorBoundary] Recuperación automática detenida; conservar datos y descargar respaldo.')
+            this.renderErrorBanner(info)
             return
         }
 
@@ -83,6 +83,9 @@ class ErrorBoundary {
         }
 
         this.showAlert(info)
+
+        // Una recarga no resuelve la cuota y puede encadenar fallos de arranque.
+        if (!window.app?.isInitialized || /almacenamiento|quota/i.test(info.message || '')) return
 
         // Intentar recuperar el componente afectado tras un breve retardo
         setTimeout(() => {
@@ -125,6 +128,7 @@ class ErrorBoundary {
                     <div class="error-banner-message">${safeMessage}</div>
                 </div>
                 <div class="error-banner-actions">
+                    <button type="button" id="error-backup-btn" class="btn btn-primary btn-sm">Descargar respaldo de emergencia</button>
                     <button type="button" id="error-retry-btn" class="btn btn-primary btn-sm">Recargar componente</button>
                     <button type="button" id="error-dismiss-btn" class="btn btn-outline btn-sm">Descartar</button>
                 </div>
@@ -136,6 +140,7 @@ class ErrorBoundary {
 
         const retryBtn = banner.querySelector('#error-retry-btn')
         const dismissBtn = banner.querySelector('#error-dismiss-btn')
+        banner.querySelector('#error-backup-btn')?.addEventListener('click', () => this.downloadEmergencyBackup())
 
         retryBtn?.addEventListener('click', () => {
             this.removeErrorBanner()
@@ -145,6 +150,28 @@ class ErrorBoundary {
         dismissBtn?.addEventListener('click', () => {
             this.removeErrorBanner()
         })
+    }
+
+    static downloadEmergencyBackup() {
+        // No usa lectores de inventario/ventas ni escribe en almacenamiento.
+        // Incluye datos sin transformar aunque el arranque esté incompleto.
+        const rawStorage = { ...(window.SafeStorage?.archivedCopies || {}) }
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i)
+            rawStorage[key] = localStorage.getItem(key)
+        }
+        const blob = new Blob([JSON.stringify({
+            type: 'emergency_raw_backup', version: '1.0',
+            timestamp: new Date().toISOString(), rawStorage
+        }, null, 2)], { type: 'application/json' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `JDL_respaldo_emergencia_${Date.now()}.json`
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        setTimeout(() => URL.revokeObjectURL(url), 30000)
     }
 
     static recover(info) {
@@ -169,10 +196,7 @@ class ErrorBoundary {
             }
         } catch (recoveryError) {
             console.error('[ErrorBoundary] Falló la recuperación:', recoveryError)
-            try {
-                Toast.error('No se pudo recuperar el componente. Recargando página...')
-            } catch (e) {}
-            setTimeout(() => location.reload(), 1500)
+            this.renderErrorBanner({ message: 'No se pudo abrir la pantalla. Descargue el respaldo de emergencia; los datos guardados no se borraron.' })
         } finally {
             this.isRecovering = false
             this.currentComponent = null

@@ -80,6 +80,35 @@ const { chromium } = require('playwright');
         });
         assert.ok(Object.values(recovery).every(Boolean), JSON.stringify(recovery));
         console.log('PASS: full storage recovered, failed archive preserves originals, archived copies reload/export, today sales retained and cut saved');
+        await page.reload();
+        await page.waitForFunction(() => window.app?.isInitialized);
+        const afterReload = await page.evaluate(() => ({
+            archived: !!SafeStorage.archivedCopies[Business.key('pos_storage_snapshot')],
+            notRecreated: localStorage.getItem(Business.key('pos_storage_snapshot')) === null,
+            cutRetained: Cut.getSessionHistory().some(s => s.id === 'TEST' && s.report.totalSales === 150)
+        }));
+        assert.ok(Object.values(afterReload).every(Boolean), JSON.stringify(afterReload));
+        let navigations = 0;
+        page.on('framenavigated', () => navigations++);
+        await page.evaluate(() => {
+            app.isInitialized = false;
+            for (let i = 0; i < 12; i++) {
+                ErrorBoundary.errorCooldown = 0;
+                ErrorBoundary.handleError({ message: 'El almacenamiento del navegador está lleno.' });
+            }
+        });
+        await page.waitForTimeout(2000);
+        assert.equal(navigations, 0, 'No automatic reload loop');
+        const [download] = await Promise.all([
+            page.waitForEvent('download'),
+            page.locator('#error-backup-btn').click()
+        ]);
+        const emergency = JSON.parse(fs.readFileSync(await download.path(), 'utf8'));
+        assert.ok(emergency.rawStorage);
+        assert.ok(Object.values(emergency.rawStorage).some(v => v.includes('TODAY-TEST')));
+        const literalMatch = await page.evaluate(raw => Object.keys(localStorage).every(k => raw[k] === localStorage.getItem(k)), emergency.rawStorage);
+        assert.ok(literalMatch, 'Emergency backup keeps every localStorage value verbatim');
+        console.log('PASS: reload retains closed cut and archived copies; repeated startup errors stay stable; emergency download preserves raw data');
         for (const name of fs.readdirSync('js').filter(n => n.endsWith('.js'))) {
             new (require('node:vm').Script)(fs.readFileSync(path.join('js', name), 'utf8'), { filename: name });
         }

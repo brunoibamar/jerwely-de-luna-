@@ -1007,6 +1007,8 @@ class StorageGuard {
             }
         });
         const snapshotKey = Business.key('pos_storage_snapshot');
+        // No volver a ocupar el espacio recién liberado con otro duplicado.
+        if (this === StorageGuard && SafeStorage.archivedCopies[snapshotKey] !== undefined) return snapshotKey;
         try {
             SafeStorage.setItem(snapshotKey, SafeJSON.stringify(snapshot));
         } catch (err) {
