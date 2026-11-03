@@ -1,5 +1,12 @@
 # Respaldos de Joyería de Luna
 
+La versión `20261102-compact2` agrupa “Crear sólo copia por meses”, “Pausar
+respaldo automático” y “Recuperar copia de este navegador” en “Opciones
+avanzadas”. Todas las acciones siguen disponibles. “Guardar respaldo ahora”
+ejecuta el respaldo habitual y además intenta crear una copia mensual
+verificada. “Reactivar permiso” permanece visible fuera del grupo cuando hace
+falta. Ninguno de estos cambios retira registros del navegador.
+
 ## Traslado automático del almacenamiento
 
 Al cargar esta versión en la misma computadora y perfil del navegador, el sistema copia los registros

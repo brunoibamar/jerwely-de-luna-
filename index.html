@@ -1255,59 +1255,36 @@
                                <h3 class="form-divider-title">Respaldos del negocio</h3>
                            </div>
                            <div class="admin-only" id="local-recovery-section">
-                               <p class="volume-help-text-small"><strong>Guardado del negocio:</strong> Ventas, inventario,
-                                   clientes VIP y cortes se guardan automáticamente en la base local de este navegador.
-                                   No necesita elegir una carpeta para trabajar. La carpeta sirve para conservar una copia
-                                   adicional fuera del navegador.</p>
-                               <p class="volume-help-text-small">
-                                   <strong>Copia local:</strong> Guarda una copia de recuperación al terminar una venta,
-                                   devolución o corte, sin duplicarla en el espacio pequeño usado por las ventas.
-                                   Esta copia sigue dependiendo de esta computadora y este navegador.
-                               </p>
-                               <p class="volume-help-text-small">
-                                   <strong>Carpeta en su computadora:</strong> Elija una carpeta para guardar archivos JSON
-                                   completos después de los movimientos y cada hora mientras el programa esté abierto.
-                                   Los archivos se organizan por día y conservan los anteriores. Si Chrome pausa el permiso,
-                                   presione Reactivar. Guarde también una copia en otro dispositivo o una unidad externa.
-                               </p>
-                               <p class="volume-help-text-small"><strong>Guardar una copia</strong></p>
+                               <p class="volume-help-text-small">El negocio se guarda automáticamente en este navegador. Elija una carpeta para conservar también respaldos completos y copias por meses. No se borra información del navegador.</p>
                                <div class="backup-actions">
                                    <button type="button" id="auto-backup-choose-btn" class="btn btn-outline">Elegir carpeta de respaldos</button>
-                                   <button type="button" id="interval-backup-now-btn" class="btn btn-outline">Respaldar ahora</button>
-                                   <button type="button" id="monthly-backup-btn" class="btn btn-primary">Descargar respaldo completo (JSON)</button>
+                                   <button type="button" id="interval-backup-now-btn" class="btn btn-primary">Guardar respaldo ahora</button>
+                                   <button type="button" id="monthly-backup-btn" class="btn btn-outline">Descargar respaldo completo (JSON)</button>
+                                   <button type="button" id="monthly-archive-read-btn" class="btn btn-outline">Consultar historial por meses</button>
+                                   <button type="button" id="auto-backup-import-btn" class="btn btn-outline">Importar respaldo JSON</button>
+                                   <input type="file" id="import-backup-setting-file" accept="application/json,.json" style="display: none;">
                                </div>
-                               <p id="local-recovery-status" class="volume-help-text-small"></p>
                                <p id="auto-backup-status" class="volume-help-text-small"></p>
                                <p id="auto-backup-feedback" class="volume-help-text-small" role="status" aria-live="polite"></p>
                                <p id="monthly-backup-status" class="volume-help-text-small"></p>
-                               <p class="volume-help-text-small"><strong>Historial por meses — sin borrar registros</strong></p>
-                               <p class="volume-help-text-small">Al elegir carpeta y en cada corte se crea una copia mensual verificada en “Historial_mensual”, con un respaldo completo adicional que incluye inventario y clientes VIP. Esta primera etapa conserva todo en el navegador y todavía no libera espacio. Los reportes habituales no cambian ni suman estas copias nuevamente.</p>
-                               <div class="backup-actions">
-                                   <button type="button" id="monthly-archive-create-btn" class="btn btn-outline">Crear copia por meses</button>
-                                   <button type="button" id="monthly-archive-read-btn" class="btn btn-outline">Verificar y consultar meses</button>
-                               </div>
                                <p id="monthly-archive-status" class="volume-help-text-small" role="status" aria-live="polite"></p>
                                <div id="monthly-archive-summary" class="volume-help-text-small"></div>
                                <div class="backup-actions">
                                    <button type="button" id="auto-backup-reauth-btn" class="btn btn-outline hidden">Reactivar permiso</button>
-                                   <button type="button" id="auto-backup-disable-btn" class="btn btn-outline hidden">Pausar respaldo automático</button>
                                </div>
-                               <p class="volume-help-text-small">La descarga incluye todo el historial acumulado,
-                                   también los meses anteriores, clientes VIP, sus puntos, inventario y cortes.
-                                   Puede descargarla cuando lo necesite. El recordatorio mensual utiliza esta misma descarga.</p>
-                               <p class="volume-help-text-small"><strong>Recuperar información</strong></p>
-                               <div class="backup-actions">
-                                   <button type="button" id="auto-backup-import-btn" class="btn btn-outline">Importar archivo JSON</button>
-                                   <button type="button" id="local-recovery-restore-btn" class="btn btn-outline">Recuperar copia de este navegador</button>
-                                   <input type="file" id="import-backup-setting-file" accept="application/json,.json" style="display: none;">
-                               </div>
-                               <p class="volume-help-text-small">Use Importar archivo JSON para elegir una copia guardada en su computadora.
-                                   Recuperar copia de este navegador usa la copia interna disponible, sin elegir un archivo.</p>
-                               <p class="volume-help-text-small">Cada respaldo completo incluye todo el historial acumulado,
-                                   inventario, clientes y cortes. Importar agrega lo que falta; las diferencias conservan
-                                   los datos actuales. Antes de importar, cierre las otras pestañas del punto de venta y termine
-                                   cualquier cobro pendiente. Se preserva una copia del archivo importado antes de aplicar cambios.
-                                   Para recuperar un archivo grande, mantenga libre espacio en disco y en el navegador.</p>
+                               <details id="backup-advanced-options">
+                                   <summary class="volume-help-text-small">Opciones avanzadas</summary>
+                                   <p class="volume-help-text-small">Estas acciones se conservan para administración y recuperación.</p>
+                                   <div class="backup-actions">
+                                       <button type="button" id="monthly-archive-create-btn" class="btn btn-outline">Crear sólo copia por meses</button>
+                                       <button type="button" id="auto-backup-disable-btn" class="btn btn-outline hidden">Pausar respaldo automático</button>
+                                       <button type="button" id="local-recovery-restore-btn" class="btn btn-outline">Recuperar copia de este navegador</button>
+                                   </div>
+                                   <p id="local-recovery-status" class="volume-help-text-small"></p>
+                                   <p class="volume-help-text-small">Guardar respaldo ahora verifica la copia interna, intenta guardar el JSON completo en la carpeta y crear la copia mensual. El corte también intenta ambos archivos. Si falta permiso, presione Reactivar. Las descargas JSON van al destino de descargas de su navegador.</p>
+                                   <p class="volume-help-text-small">Cada respaldo completo incluye historial, inventario, clientes VIP y sus puntos. Las copias mensuales están en “Historial_mensual”; la consulta muestra la fecha de esa copia. Esta etapa conserva todo en el navegador y todavía no libera espacio. Guarde también una copia en otro dispositivo.</p>
+                                   <p class="volume-help-text-small">Importar respaldo JSON lee un archivo de su computadora; Recuperar copia de este navegador utiliza la copia interna disponible. La importación agrega lo que falta y conserva los registros actuales cuando hay diferencias. Antes de importar, termine cobros pendientes y cierre las otras pestañas del punto de venta. Se conserva una copia del archivo importado.</p>
+                               </details>
                                <div id="backup-setting-error" class="login-error"></div>
                                <div id="backup-setting-success" class="success-message"></div>
                            </div>
@@ -1355,25 +1332,25 @@
            Las etiquetas de texto NO aparecen sobre las barras; los montos ($ y piezas)
            se muestran únicamente en el tooltip al pasar el ratón. -->
      <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js"></script>
-     <script src="js/storage.js?v=20261102-month1"></script>
-     <script src="js/business.js?v=20261102-month1"></script>
+     <script src="js/storage.js?v=20261102-compact2"></script>
+     <script src="js/business.js?v=20261102-compact2"></script>
      <!-- Capturador global de errores (Error Boundary) -->
-     <script src="js/errorBoundary.js?v=20261102-month1"></script>
-     <script src="js/auth.js?v=20261102-month1"></script>
+     <script src="js/errorBoundary.js?v=20261102-compact2"></script>
+     <script src="js/auth.js?v=20261102-compact2"></script>
      <!-- Módulo POS: VolumePricing, HeldSales, BarcodeScanner, PaymentProcessor -->
-     <script src="js/pos.js?v=20261102-month1"></script>
-     <script src="js/cart.js?v=20261102-month1"></script>
-     <script src="js/checkout.js?v=20261102-month1"></script>
-     <script src="js/inventory.js?v=20261102-month1"></script>
-     <script src="js/vip.js?v=20261102-month1"></script>
-     <script src="js/cut.js?v=20261102-month1"></script>
-     <script src="js/reports.js?v=20261102-month1"></script>
-     <script src="js/print.js?v=20261102-month1"></script>
-     <script src="js/backup.js?v=20261102-month1"></script>
-     <script src="js/monthly-archive.js?v=20261102-month1"></script>
-     <script src="js/returns.js?v=20261102-month1"></script>
-      <script src="js/guarantee.js?v=20261102-month1"></script>
-      <script src="js/telegram-notify.js?v=20261102-month1"></script>
-      <script src="js/app.js?v=20261102-month1"></script>
+     <script src="js/pos.js?v=20261102-compact2"></script>
+     <script src="js/cart.js?v=20261102-compact2"></script>
+     <script src="js/checkout.js?v=20261102-compact2"></script>
+     <script src="js/inventory.js?v=20261102-compact2"></script>
+     <script src="js/vip.js?v=20261102-compact2"></script>
+     <script src="js/cut.js?v=20261102-compact2"></script>
+     <script src="js/reports.js?v=20261102-compact2"></script>
+     <script src="js/print.js?v=20261102-compact2"></script>
+     <script src="js/backup.js?v=20261102-compact2"></script>
+     <script src="js/monthly-archive.js?v=20261102-compact2"></script>
+     <script src="js/returns.js?v=20261102-compact2"></script>
+      <script src="js/guarantee.js?v=20261102-compact2"></script>
+      <script src="js/telegram-notify.js?v=20261102-compact2"></script>
+      <script src="js/app.js?v=20261102-compact2"></script>
 </body>
 </html>

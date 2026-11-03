@@ -115,5 +115,24 @@ const { chromium } = require('playwright');
         assert.equal(later.selected, true); assert.ok(later.feedback.includes('sólo quedó disponible en esta sesión'));
         assert.deepEqual(later.customers, ['KEEP-VIP', 'NEW-VIP']); assert.equal(later.salesUnchanged, true);
         console.log('PASS: newly registered VIP included in next archive; choosing folder still writes verified files when persistent permission storage fails and explains session-only access');
+        await page.evaluate(() => {
+            Auth.currentUser = { id: 1, role: 'admin', name: 'Prueba' };
+            app.showApp(); app.switchSection('settings');
+            window.__scheduledBackupOriginal = Backup.runScheduledBackup;
+            Backup.runScheduledBackup = async () => ({ success: true, local: true, external: true });
+            window.__archiveCountBefore = [...window.__monthlyFiles.keys()].filter(key => key.endsWith('/Indice.json')).length;
+        });
+        assert.equal(await page.locator('#backup-advanced-options').getAttribute('open'), null);
+        assert.equal(await page.locator('#monthly-archive-create-btn').isVisible(), false);
+        assert.equal(await page.locator('#local-recovery-restore-btn').isVisible(), false);
+        await page.locator('#interval-backup-now-btn').click();
+        await page.waitForFunction(() => !document.getElementById('interval-backup-now-btn').disabled);
+        assert.equal(await page.evaluate(() => [...window.__monthlyFiles.keys()].filter(key => key.endsWith('/Indice.json')).length > window.__archiveCountBefore), true);
+        await page.locator('#backup-advanced-options summary').click();
+        assert.equal(await page.locator('#monthly-archive-create-btn').isVisible(), true);
+        assert.equal(await page.locator('#local-recovery-restore-btn').isVisible(), true);
+        assert.equal(await page.locator('#auto-backup-disable-btn').isVisible(), true);
+        await page.evaluate(() => { Backup.runScheduledBackup = window.__scheduledBackupOriginal; });
+        console.log('PASS: compact controls hide advanced actions without removing them; main backup button also creates a verified monthly generation');
     } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
