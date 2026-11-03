@@ -1405,11 +1405,23 @@ class AutoBackup {
         this.folderFeedback('Elija una carpeta en la ventana del navegador y permita el acceso.');
         try {
             const handle = await window.showDirectoryPicker({ id: 'jdl-backup-folder', mode: 'readwrite', startIn: 'documents' });
-            await this._dbOp('readwrite', s => s.put(handle, this.HANDLE_ID));
+            if (await this._permission(handle, true) !== 'granted') {
+                throw new Error('No se concedió permiso para escribir en la carpeta seleccionada.');
+            }
+            // Conservar acceso en esta sesión incluso si el navegador no puede
+            // persistir el permiso. No anunciar persistencia que no se confirmó.
             this._handle = handle;
-            const saved = await this.save('configuración de carpeta');
-            this.folderFeedback(saved ? 'Carpeta activada y primera copia verificada.' : 'Se eligió la carpeta, pero no se confirmó el primer respaldo. Revise el permiso y el espacio disponible; conserve su JSON descargado.');
+            let remembered = true;
+            try { await this._dbOp('readwrite', s => s.put(handle, this.HANDLE_ID)); }
+            catch { remembered = false; }
+            const job = this._queue.catch(() => false).then(() => this.saveNow('configuración de carpeta'));
+            this._queue = job;
+            const saved = await job;
+            this.folderFeedback(saved
+                ? `Primera copia completa verificada en “${handle.name}”, dentro de una subcarpeta con la fecha del día.${remembered ? '' : ' El permiso sólo quedó disponible en esta sesión; vuelva a elegir la carpeta al abrir el programa.'}`
+                : 'Se eligió la carpeta, pero no se confirmó el primer respaldo. Revise el permiso y el espacio disponible; conserve su JSON descargado.');
             if (saved) Toast.success('Carpeta activada. Cada respaldo nuevo conservará los archivos anteriores.');
+            if (saved && typeof MonthlyArchive !== 'undefined') await MonthlyArchive.create();
             return saved;
         } catch (err) {
             if (err?.name === 'AbortError') {
@@ -1509,7 +1521,15 @@ class AutoBackup {
                     return { success: false, reason: 'permission' };
                 }
                 const success = await this.saveNow('corte', snapshot);
-                return { success, reason: success ? 'saved' : 'failed', target: handle.name, kind: handle.kind };
+                let monthly = null;
+                if (success && handle.kind === 'directory' && typeof MonthlyArchive !== 'undefined') {
+                    try { await MonthlyArchive.write(handle, snapshot); monthly = true; }
+                    catch (error) {
+                        monthly = false;
+                        MonthlyArchive.feedback('El JSON completo del corte está verificado, pero no se confirmó la copia mensual: ' + error.message + '. No se retiró información del navegador.');
+                    }
+                }
+                return { success, monthly, reason: success ? 'saved' : 'failed', target: handle.name, kind: handle.kind };
             } catch (err) { return { success: false, reason: 'failed', error: err?.message }; }
         });
         this._queue = job.then(result => result.success);

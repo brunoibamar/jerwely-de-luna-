@@ -838,6 +838,15 @@ class App {
         document.getElementById('auto-backup-choose-btn')?.addEventListener('click', () => { if (guard()) AutoBackup.chooseDirectory(); });
         document.getElementById('auto-backup-reauth-btn')?.addEventListener('click', () => { if (guard()) AutoBackup.reauthorize(); });
         document.getElementById('auto-backup-disable-btn')?.addEventListener('click', () => { if (guard()) AutoBackup.disable(); });
+        const monthlyAction = async (id, action) => {
+            if (!guard()) return;
+            const button = document.getElementById(id);
+            button.disabled = true;
+            try { await action(); }
+            finally { button.disabled = false; }
+        };
+        document.getElementById('monthly-archive-create-btn')?.addEventListener('click', () => monthlyAction('monthly-archive-create-btn', () => MonthlyArchive.create()));
+        document.getElementById('monthly-archive-read-btn')?.addEventListener('click', () => monthlyAction('monthly-archive-read-btn', () => MonthlyArchive.showSummary()));
         const importFile = document.getElementById('import-backup-setting-file');
         document.getElementById('auto-backup-import-btn')?.addEventListener('click', () => { if (guard()) importFile?.click(); });
         importFile?.addEventListener('change', async e => {
@@ -1276,6 +1285,8 @@ class App {
         let backupMessage;
         if (folderResult.success) {
             backupMessage = `Corte guardado. JSON completo verificado en ${folderResult.kind === 'directory' ? 'la carpeta' : 'el archivo'} “${folderResult.target}”.`;
+            if (folderResult.monthly === true) backupMessage += ' Copia por meses verificada; historial del navegador conservado.';
+            if (folderResult.monthly === false) backupMessage += ' No se confirmó la copia por meses; conserve el JSON completo. El historial del navegador sigue intacto.';
             Toast.success(backupMessage, 8000);
         } else {
             const fallback = Backup.downloadCutBackup(report);
@@ -1308,31 +1319,46 @@ class App {
         // El envío de correo es EXCLUSIVAMENTE manual: el usuario debe
         // presionar el botón "Enviar Registro al Correo" para que se
         // envíe el reporte y respaldo. Nunca se envía automáticamente.
-        Toast.info('Corte de caja completado. Presione "Enviar Registro al Correo" para enviar el reporte y respaldo por email.', 6000);
+        Toast.info('Corte de caja completado. Puede usar "Guardar respaldo y enviar correo" y comprobar ambos resultados.', 6000);
     }
 
     // Enviar reporte de corte por correo (admin o invitado)
     async sendCutReportEmail() {
-        if (!this.currentReport) return;
+        if (!this.currentReport || this._sendingCutEmail) return;
+        this._sendingCutEmail = true;
+        const report = structuredClone(this.currentReport);
+        const status = document.getElementById('cut-backup-status');
+        let backupMessage = '';
         const sendEmailBtn = document.getElementById('send-email-btn');
         if (sendEmailBtn) {
             sendEmailBtn.disabled = true;
-            sendEmailBtn.textContent = 'Enviando...';
+            sendEmailBtn.textContent = 'Respaldando y enviando...';
         }
         try {
+            const backup = await AutoBackup.saveCut(report);
+            backupMessage = backup.success ? 'Respaldo completo verificado en la carpeta o archivo configurado.'
+                : 'No se confirmó el guardado en carpeta.';
+            if (!backup.success) {
+                const download = Backup.downloadCutBackup(report);
+                backupMessage += download.success ? ' Se solicitó la descarga JSON; compruebe que terminó.' : ' Tampoco se pudo solicitar la descarga JSON.';
+            }
+            if (status) status.textContent = backupMessage + ' Preparando el correo…';
             let result;
             if (Auth.isGuest()) {
-                result = await Backup.sendGuestSessionEmail(this.currentReport);
+                result = await Backup.sendGuestSessionEmail(report);
             } else {
-                result = await Backup.sendReportEmail(this.currentReport);
+                result = await Backup.sendReportEmail(report);
             }
             Toast.info(result.message || 'Reporte enviado al correo del administrador.');
+            if (status) status.textContent = backupMessage + ' Correo: ' + (result.message || (result.success ? 'enviado.' : 'no confirmado.'));
         } catch (err) {
+            if (status) status.textContent = backupMessage + ' Correo no confirmado: ' + (err?.message || err);
             Toast.error('Error al enviar el correo: ' + (err?.message || err));
         } finally {
+            this._sendingCutEmail = false;
             if (sendEmailBtn) {
                 sendEmailBtn.disabled = false;
-                sendEmailBtn.textContent = 'Enviar Registro al Correo';
+                sendEmailBtn.textContent = 'Guardar respaldo y enviar correo';
             }
         }
     }

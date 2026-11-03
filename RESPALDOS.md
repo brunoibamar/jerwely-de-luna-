@@ -98,3 +98,50 @@ Pruebas en perfiles de Chromium aislados, con Node y Playwright disponibles:
 
 Las pruebas no acceden a los datos del cliente. La carpeta elegida por el cliente se configura únicamente
 desde su propia computadora; los manejadores de archivos usados en las pruebas son simulados.
+# Historial mensual: primera etapa sin retirar datos
+
+La actualización `20261102-month1` no elimina ventas, clientes VIP, inventario,
+datos originales de migración ni otros registros del navegador. Tampoco habilita
+un botón de limpieza. Todavía no libera espacio mediante archivo histórico.
+
+En Configuración, el administrador puede elegir una carpeta. El programa pide
+permiso de escritura y verifica una primera copia completa. Si el navegador no
+puede recordar el permiso, avisa que la selección sólo dura esa sesión. Una
+descarga JSON ordinaria sigue llegando al destino de descargas del navegador:
+no se redirige por haber elegido una carpeta para el respaldo automático.
+
+Al elegir carpeta y después de cada corte con un JSON completo verificado, se
+intenta crear una generación adicional en `Historial_mensual/FECHA_UUID/`:
+
+- `Respaldo_completo.json`: todos los datos, incluidos los VIP y sus puntos.
+- `AAAA-MM.json`: ventas e historial del período, sin cambiar registros.
+- `sin-fecha.json`, cuando procede: conserva entradas sin fecha utilizable.
+- `Indice.json`: cantidades, identidad y huellas SHA-256; se escribe al final.
+
+Cada generación conserva las anteriores. El sistema nunca reemplaza un mes
+anterior con una versión más corta. El puntero a la última copia sólo cambia
+cuando todos los archivos se han vuelto a leer y verificar. Un corte sigue
+guardado aunque falle esta copia mensual; se informa del resultado aparte.
+
+“Crear copia por meses” permite ejecutar el proceso manualmente. “Verificar y
+consultar meses” lee la última generación de la carpeta configurada, verifica
+índice, archivos y coincidencia con el respaldo completo, y permite consultar
+12 meses de un año. Muestra ventas netas y piezas descontando devoluciones de
+las ventas correspondientes, excluye cancelaciones y presenta los productos
+más vendidos por piezas antes de devoluciones. Es una consulta de la fecha de
+la copia, no de movimientos posteriores. Registros sin fecha quedan señalados.
+Si falta o cambia un archivo, no se ofrece un reporte parcial como completo.
+
+Los reportes habituales siguen leyendo el historial completo del navegador:
+no se mezclan con estas copias y no se duplican ventas. La consulta mensual usa
+archivos sólo al solicitarla. La lectura de la última generación requiere el
+puntero conservado en este navegador; si se pierde, el JSON completo permite
+la recuperación por el importador existente. No borre datos para probarlo.
+
+“Guardar respaldo y enviar correo” primero verifica otro respaldo completo del
+corte (o solicita la descarga si la carpeta falla) y luego intenta el correo.
+Los resultados aparecen separados, incluyendo correo pendiente. Reintentar no
+crea otro corte. El envío sigue requiriendo pulsar el botón; no se envía solo.
+
+Prueba adicional: `tests/monthly-archive.cjs`, con datos ficticios y manejadores
+de carpeta simulados; no valida los permisos de la computadora del cliente.
