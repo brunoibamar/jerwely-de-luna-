@@ -1,7 +1,44 @@
-// Archivos adicionales: esta versión NUNCA elimina registros del navegador.
+// El retiro de meses requiere una copia verificada y una acción del administrador.
 // Cada generación es independiente; el índice se publica sólo tras verificarla.
 class MonthlyArchive {
     static get pointerKey() { return `monthly-archive:${Business.key('pos_sales_historical')}`; }
+    static get stateKey() { return Business.key('pos_archive_state'); }
+
+    static state() {
+        const state = SafeJSON.parse(AppStorage.getItem(this.stateKey), null, 'archivo mensual');
+        if (state === null) return { months: [] };
+        if (!state || !Array.isArray(state.months) || state.months.some(m => !/^\d{4}-\d{2}$/.test(m))) throw new Error('El estado del archivo requiere revisión.');
+        return state;
+    }
+
+    static mergeRecords(archived, current) {
+        const records = new Map();
+        for (const list of [archived, current]) {
+            const seen = new Set();
+            for (const record of list) {
+                if (!record || record.id == null) throw new Error('Hay registros sin identificador; no se archivó información.');
+                const key = JSON.stringify([record.id, record.date]);
+                if (seen.has(key)) throw new Error('Hay registros repetidos que requieren revisión.');
+                seen.add(key); records.set(key, record);
+            }
+        }
+        return [...records.values()];
+    }
+
+    static async completeSnapshot(snapshot) {
+        const state = this.state();
+        if (!state.months.length) return snapshot;
+        const previous = await this.read();
+        if (state.months.some(month => !previous.periods.some(p => p.month === month))) throw new Error('Falta un mes archivado. Reconecte la carpeta original antes de respaldar.');
+        const result = { ...snapshot, rawStorage: { ...snapshot.rawStorage } };
+        for (const source of ['sales', 'historicalSales']) {
+            const older = previous.periods.filter(p => state.months.includes(p.month)).flatMap(p => p[source]);
+            result[source] = this.mergeRecords(older, snapshot[source]);
+            const key = source === 'sales' ? SaleService.storageKey : SaleService.historicalKey;
+            result.rawStorage[key] = JSON.stringify(result[source]);
+        }
+        return result;
+    }
 
     static feedback(message) {
         const el = document.getElementById('monthly-archive-status');
@@ -35,6 +72,7 @@ class MonthlyArchive {
         if (handle?.kind !== 'directory') throw new Error('Elija una carpeta de respaldos; un archivo individual no permite organizar meses.');
         if (await AutoBackup._permission(handle) !== 'granted') throw new Error('Reactive el permiso de la carpeta.');
         if (!Array.isArray(snapshot.historicalSales) || !Array.isArray(snapshot.sales)) throw new Error('El historial no tiene un formato válido. No se modificó ningún registro.');
+        snapshot = await this.completeSnapshot(snapshot);
         const root = await handle.getDirectoryHandle('Historial_mensual', { create: true });
         const generation = `${Backup.formatDateStamp()}_${crypto.randomUUID()}`;
         const folder = await root.getDirectoryHandle(generation, { create: true });
@@ -42,7 +80,7 @@ class MonthlyArchive {
         for (const source of ['sales', 'historicalSales']) {
             snapshot[source].forEach(record => {
                 const month = this.monthOf(record);
-                if (!groups.has(month)) groups.set(month, { type: 'jdl-month', version: 1, month, sales: [], historicalSales: [] });
+                if (!groups.has(month)) groups.set(month, { type: 'jdl-month', version: 1, month, sales: [], historicalSales: [], returns: snapshot.returns, inventory: snapshot.inventory });
                 groups.get(month)[source].push(record);
             });
         }
@@ -57,6 +95,8 @@ class MonthlyArchive {
             salesCount: snapshot.sales.length, historicalCount: snapshot.historicalSales.length,
             browserRecordsRemoved: false };
         const index = await this.writeVerified(folder, 'Indice.json', manifest);
+        // Un puntero portable permite leer la carpeta después de perder el permiso local.
+        await this.writeVerified(root, 'Ultima_copia.json', { generation, index });
         // El puntero sólo se cambia al terminar; una copia anterior nunca se sobrescribe.
         await AutoBackup._dbOp('readwrite', store => store.put({ generation, index }, this.pointerKey));
         this.feedback(`Historial mensual verificado en “${handle.name}/Historial_mensual/${generation}”. ${months.length} archivo(s) de períodos. Todos los registros siguen en el navegador.`);
@@ -82,7 +122,7 @@ class MonthlyArchive {
     static async read() {
         const handle = await AutoBackup._loadHandle();
         if (handle?.kind !== 'directory' || await AutoBackup._permission(handle) !== 'granted') throw new Error('Elija la carpeta o reactive su permiso.');
-        const pointer = await AutoBackup._dbOp('readonly', store => store.get(this.pointerKey));
+        const pointer = await this.loadPointer(handle);
         if (!pointer || !/^[\w-]+$/.test(pointer.generation)) throw new Error('Primero cree una copia mensual verificada en esta carpeta.');
         const root = await handle.getDirectoryHandle('Historial_mensual');
         const folder = await root.getDirectoryHandle(pointer.generation);
@@ -113,6 +153,84 @@ class MonthlyArchive {
             if (!Array.isArray(complete[source]) || canonical(complete[source]) !== canonical(reconstructed[source])) throw new Error('El conjunto mensual no coincide con el respaldo completo.');
         }
         return { index, complete, periods };
+    }
+
+    static async loadPointer(handle) {
+        const root = await handle.getDirectoryHandle('Historial_mensual');
+        try {
+            const file = await root.getFileHandle('Ultima_copia.json');
+            return JSON.parse(await (await file.getFile()).text());
+        } catch (error) {
+            if (error.name !== 'NotFoundError' && !/Archivo no encontrado/.test(error.message)) throw error;
+            return AutoBackup._dbOp('readonly', store => store.get(this.pointerKey));
+        }
+    }
+
+    // Lee índice y sólo los archivos solicitados. No importa datos al navegador.
+    static async readPeriod(year, month = null) {
+        if (!Number.isInteger(year) || year < 1900 || year > 9999 || (month !== null && (!Number.isInteger(month) || month < 1 || month > 12))) throw new Error('Seleccione un período válido.');
+        const handle = await AutoBackup._loadHandle();
+        if (handle?.kind !== 'directory' || await AutoBackup._permission(handle) !== 'granted') throw new Error('Elija la carpeta de respaldos o reactive su permiso.');
+        const pointer = await this.loadPointer(handle);
+        if (!pointer || !/^[\w-]+$/.test(pointer.generation)) throw new Error('Primero guarde un respaldo mensual.');
+        const root = await handle.getDirectoryHandle('Historial_mensual');
+        const folder = await root.getDirectoryHandle(pointer.generation);
+        const checked = async entry => {
+            if (!entry || !/^[\w.-]+\.json$/.test(entry.name)) throw new Error('El índice contiene un archivo inválido.');
+            const text = await (await (await folder.getFileHandle(entry.name)).getFile()).text();
+            if (await this.digest(text) !== entry.sha256) throw new Error(`No se pudo verificar ${entry.name}. El reporte no está disponible.`);
+            return JSON.parse(text);
+        };
+        const index = await checked(pointer.index);
+        if (index.type !== 'jdl-month-index' || index.version !== 1 || index.generation !== pointer.generation || index.businessId !== Business.getCurrentBusinessId() || index.deviceId !== Device.getId() || !Array.isArray(index.months)) throw new Error('La carpeta no corresponde a este negocio y dispositivo.');
+        const prefix = `${year}-${month === null ? '' : String(month).padStart(2, '0')}`;
+        const entries = index.months.filter(entry => month === null ? entry.month.startsWith(prefix) : entry.month === prefix);
+        if (this.state().months.some(m => (month === null ? m.startsWith(prefix) : m === prefix) && !entries.some(e => e.month === m))) throw new Error('Falta un mes archivado. No se mostrará un reporte incompleto.');
+        const periods = [];
+        for (const entry of entries) {
+            const data = await checked(entry);
+            if (data.type !== 'jdl-month' || data.month !== entry.month || !DataValidator.validateSales(data.historicalSales) || !DataValidator.validateSales(data.sales) || data.sales.length !== entry.sales || data.historicalSales.length !== entry.historicalSales || [...data.sales, ...data.historicalSales].some(s => this.monthOf(s) !== entry.month)) throw new Error('Un archivo mensual requiere revisión.');
+            if (!Array.isArray(data.returns)) {
+                const legacy = await this.read();
+                return { index, sales: legacy.periods.filter(p => entries.some(e => e.month === p.month)).flatMap(p => p.historicalSales), returns: legacy.complete.returns };
+            }
+            if (!DataValidator.validateSimpleRecords(data.returns)) throw new Error('Las devoluciones requieren revisión.');
+            periods.push(data);
+        }
+        return { index, sales: periods.flatMap(p => p.historicalSales), returns: this.mergeRecords([], periods.flatMap(p => p.returns).filter((r, i, all) => all.findIndex(other => other.id === r.id && other.date === r.date) === i)) };
+    }
+
+    static async archiveClosedMonths() {
+        if (!Auth.canAccessConfig()) throw new Error('Se requieren permisos de administrador.');
+        if (Cut.isShiftOpen()) throw new Error('Cierre la caja antes de archivar meses terminados.');
+        if (!confirm('Se verificará una copia completa y se retirarán del navegador sólo las ventas de meses terminados. El mes activo se conserva. ¿Continuar?')) return false;
+        const job = AutoBackup._queue.catch(() => false).then(async () => {
+            let snapshot;
+            await AppStorage.transaction(() => { snapshot = Backup.buildBackupData(); });
+            const handle = await AutoBackup._loadHandle();
+            await this.write(handle, snapshot);
+            const verified = await this.read();
+            const current = this.monthOf({ date: new Date().toISOString() });
+            const months = verified.periods.map(p => p.month).filter(m => /^\d{4}-\d{2}$/.test(m) && m < current);
+            const eligible = sale => months.includes(this.monthOf(sale));
+            // Comparación exacta dentro de la transacción: otra pestaña no puede
+            // cambiar ventas o abrir caja entre la comprobación y el retiro.
+            await AppStorage.transaction(() => {
+                if (Cut.isShiftOpen()) throw new Error('Se abrió una caja. No se retiraron registros.');
+                for (const [source, key] of [['sales', SaleService.storageKey], ['historicalSales', SaleService.historicalKey]]) {
+                    const records = SafeJSON.parse(AppStorage.getItem(key), [], key);
+                    if (!DataValidator.validateSales(records)) throw new Error('Hay ventas que requieren revisión.');
+                    const copy = new Set(verified.complete[source].map(s => JSON.stringify(s)));
+                    if (records.filter(eligible).some(s => !copy.has(JSON.stringify(s)))) throw new Error('Las ventas cambiaron durante la verificación. Reintente.');
+                    SafeStorage.setItem(key, SafeJSON.stringify(records.filter(s => !eligible(s))));
+                }
+                SafeStorage.setItem(this.stateKey, SafeJSON.stringify({ months: [...new Set([...this.state().months, ...months])], savedAt: verified.index.savedAt }));
+            });
+            this.feedback(`Meses archivados: ${months.join(', ') || 'ninguno pendiente'}. Se conservan el mes activo y los originales de recuperación. Los reportes anteriores requieren esta carpeta.`);
+            return true;
+        });
+        AutoBackup._queue = job.catch(() => false);
+        return job;
     }
 
     static summarize(records, returns) {

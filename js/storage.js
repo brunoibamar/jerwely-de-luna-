@@ -14,7 +14,7 @@ class AppStorage {
         'pos_shift_history', 'pos_returns', 'pos_cash_adjustments',
         'pos_guarantee_exchanges', 'pos_vip_customers', 'pos_vip_config',
         'pos_datos_bancarios', 'pos_report_history', 'pos_last_receipt_sale',
-        'pos_pending_reports', 'pos_email_send_log'
+        'pos_pending_reports', 'pos_email_send_log', 'pos_archive_state'
     ]);
 
     static managed(key) { return this.bases.has(String(key).split('__')[0]); }

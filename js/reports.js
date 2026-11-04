@@ -44,6 +44,7 @@ class ReportService {
 
     // Todas las ventas del historial maestro (incluye canceladas)
     static getHistoricalSales() {
+        if (this.archiveView) return this.archiveView.sales;
         if (typeof SaleService !== 'undefined' && SaleService.getHistoricalSales) {
             return SaleService.getHistoricalSales();
         }
@@ -220,9 +221,11 @@ class ReportService {
             });
         });
 
-        const returnsTotal = (typeof Returns !== 'undefined')
+        const selectedReturns = this.archiveView?.returns;
+        const saleIds = new Set(list.map(s => s.id));
+        const returnsTotal = selectedReturns ? selectedReturns.filter(r => saleIds.has(r.saleId)).reduce((sum, r) => sum + (r.refundAmount || 0), 0) : (typeof Returns !== 'undefined')
             ? Returns.getTotalBySales(list) : 0;
-        const piecesReturned = (typeof Returns !== 'undefined')
+        const piecesReturned = selectedReturns ? selectedReturns.filter(r => saleIds.has(r.saleId)).reduce((sum, r) => sum + (r.items || []).reduce((n, item) => n + (item.quantity || 0), 0), 0) : (typeof Returns !== 'undefined')
             ? Returns.getReturnedItemsBySales(list) : 0;
         const netRevenue = totalRevenue - returnsTotal;
         const netPieces = piecesSold - piecesReturned;

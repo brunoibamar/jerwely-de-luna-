@@ -847,6 +847,10 @@ class App {
         };
         document.getElementById('monthly-archive-create-btn')?.addEventListener('click', () => monthlyAction('monthly-archive-create-btn', () => MonthlyArchive.create()));
         document.getElementById('monthly-archive-read-btn')?.addEventListener('click', () => monthlyAction('monthly-archive-read-btn', () => MonthlyArchive.showSummary()));
+        document.getElementById('monthly-archive-close-btn')?.addEventListener('click', () => monthlyAction('monthly-archive-close-btn', async () => {
+            try { await MonthlyArchive.archiveClosedMonths(); this.updateDailyReport(); }
+            catch (error) { MonthlyArchive.feedback('No se archivaron los meses: ' + error.message); }
+        }));
         const importFile = document.getElementById('import-backup-setting-file');
         document.getElementById('auto-backup-import-btn')?.addEventListener('click', () => { if (guard()) importFile?.click(); });
         importFile?.addEventListener('change', async e => {
@@ -1292,14 +1296,14 @@ class App {
             if (folderResult.monthly === false) backupMessage += ' No se confirmó la copia por meses; conserve el JSON completo. El historial del navegador sigue intacto.';
             Toast.success(backupMessage, 8000);
         } else {
-            const fallback = Backup.downloadCutBackup(report);
+            const fallback = await Backup.downloadCutBackup(report);
             const explanation = folderResult.reason === 'unconfigured'
                 ? 'No hay una carpeta automática configurada.'
                 : folderResult.reason === 'permission'
                     ? 'El navegador requiere reactivar el permiso de la carpeta.'
                     : 'No se pudo verificar el archivo de la carpeta.';
             backupMessage = 'El corte sí quedó guardado en este navegador. ' + explanation + (fallback.success
-                ? ' Se solicitó una descarga JSON de seguridad; compruebe que terminó y conserve el archivo.'
+                ? ' ' + fallback.message
                 : ' Tampoco se pudo solicitar la descarga JSON. Conserve esta pantalla e informe al administrador.');
             Toast.warning(backupMessage, 14000);
         }
@@ -1342,8 +1346,8 @@ class App {
             backupMessage = backup.success ? 'Respaldo completo verificado en la carpeta o archivo configurado.'
                 : 'No se confirmó el guardado en carpeta.';
             if (!backup.success) {
-                const download = Backup.downloadCutBackup(report);
-                backupMessage += download.success ? ' Se solicitó la descarga JSON; compruebe que terminó.' : ' Tampoco se pudo solicitar la descarga JSON.';
+                const download = await Backup.downloadCutBackup(report);
+                backupMessage += download.success ? ' ' + download.message : ' Tampoco se pudo solicitar la descarga JSON.';
             }
             if (status) status.textContent = backupMessage + ' Preparando el correo…';
             let result;
@@ -1504,11 +1508,11 @@ class App {
 
         const downloadBtn = document.getElementById('download-local-btn');
         if (downloadBtn) {
-            downloadBtn.addEventListener('click', () => {
+            downloadBtn.addEventListener('click', async () => {
                 if (this.currentReport) {
                     // La misma copia completa que el corte ya descargaba
                     // automáticamente para ambos roles, disponible para reintentar.
-                    const result = Backup.downloadCutBackup(this.currentReport);
+                    const result = await Backup.downloadCutBackup(this.currentReport);
                     if (result.success) Toast.info(result.message, 8000);
                     else Toast.error(result.error, 10000);
                 }
@@ -2876,8 +2880,11 @@ class App {
                 this.cart.clear();
                 this.processVipAccumulation(result.sale);
 
-                // Capa 1 (doble capa): snapshot silencioso en localStorage para recuperación local
-                Backup.createLocalRecovery('venta');
+                // Copia auxiliar en IndexedDB para recuperación local.
+                Backup.createLocalRecovery('venta', { external: false });
+                // La venta ya está confirmada. El respaldo externo se informa aparte.
+                const backedUp = await AutoBackup.save('venta');
+                if (!backedUp) Toast.warning('Venta guardada en el punto de venta; respaldo en carpeta pendiente. Revise Configuración → Respaldos.', 10000);
 
                 // Limpiar selección de cliente VIP (la venta ya fue procesada);
                 // el aviso de premio usa pendingReward, independiente de esta variable
@@ -3063,9 +3070,6 @@ class App {
     _renderPeriodReports() {
         if (!Auth.isAdmin()) return;
 
-        const now = new Date();
-        const year = now.getFullYear();
-
         // Semana: semana actual
         const weekSummary = ReportService.getWeeklySummary();
         this._updatePeriodSummary(
@@ -3075,34 +3079,13 @@ class App {
             weekSummary
         );
 
-        // Mes: mes actual
-        const monthSummary = ReportService.getMonthlySummary();
-        this._updatePeriodSummary(
-            { sales: 'monthly-sales', transactions: 'monthly-transactions',
-              profit: 'monthly-profit', margin: 'monthly-margin',
-              pieces: 'monthly-pieces' },
-            monthSummary
-        );
-        this._updateBestMonthCard('monthly-best-month', 'monthly-best-month-value', year);
-
-        // Año: año actual
-        const yearSummary = ReportService.getYearlySummary(year);
-        this._updatePeriodSummary(
-            { sales: 'annual-sales', transactions: 'annual-transactions',
-              profit: 'annual-profit', margin: 'annual-margin',
-              pieces: 'annual-pieces' },
-            yearSummary
-        );
-        this._updateBestMonthCard('annual-best-month', 'annual-best-month-value', year);
+        this.updateSelectedMonthly();
+        this.updateHistoricalAnnual();
 
         // Gráficas de períodos (financieras + volumen)
         try {
             this.renderWeeklyFinancialChart();
             this.renderWeeklyVolumeChart();
-            this.renderMonthlyFinancialChart();
-            this.renderMonthlyVolumeChart();
-            this.renderAnnualFinancialChart();
-            this.renderAnnualVolumeChart();
         } catch (err) {
             if (typeof console !== 'undefined' && console.error) {
                 console.error('[DataValidator] Error al renderizar gráficas de período:', err);
@@ -3541,7 +3524,7 @@ class App {
         const container = document.querySelector('#monthly-financial-chart-container');
         if (!container) return;
 
-        const dates = DateUtil.getMonthDates(new Date());
+        const dates = DateUtil.getMonthDates(this.selectedReportMonth());
         const labels = dates.map(d => d.split('-')[2]);
         const salesData = [];
         dates.forEach(dateStr => {
@@ -3561,7 +3544,7 @@ class App {
         const container = document.querySelector('#monthly-volume-chart-container');
         if (!container) return;
 
-        const dates = DateUtil.getMonthDates(new Date());
+        const dates = DateUtil.getMonthDates(this.selectedReportMonth());
         const labels = dates.map(d => d.split('-')[2]);
         const data = [];
         dates.forEach(dateStr => {
@@ -3624,15 +3607,17 @@ class App {
         const selector = document.getElementById('year-selector');
         if (!selector) return;
 
-        const years = [];
+        const years = MonthlyArchive.state().months.map(m => Number(m.slice(0, 4)));
         const sales = ReportService.getHistoricalSales();
         sales.forEach(s => {
             const y = new Date(s.date).getFullYear();
             if (!years.includes(y)) years.push(y);
         });
 
-        years.sort((a, b) => b - a);
+        const uniqueYears = [...new Set(years)];
+        years.splice(0, years.length, ...uniqueYears.sort((a, b) => b - a));
 
+        const previousYear = Number(selector.value);
         const currentYear = new Date().getFullYear();
         if (!years.includes(currentYear)) years.unshift(currentYear);
 
@@ -3643,10 +3628,11 @@ class App {
             opt.textContent = y;
             selector.appendChild(opt);
         });
+        if (years.includes(previousYear)) selector.value = previousYear;
     }
 
     // Actualizar la tarjeta de resumen y gráficas del Año histórico
-    updateHistoricalAnnual() {
+    _renderHistoricalAnnual() {
         if (!Auth.isAdmin()) return;
         const selector = document.getElementById('year-selector');
         if (!selector) return;
@@ -3663,6 +3649,8 @@ class App {
             summary
         );
         this._updateBestMonthCard('annual-best-month', 'annual-best-month-value', year);
+        const products = ReportService.getTopProducts(5);
+        this._renderVolumeChart(document.getElementById('annual-top-products-container'), 'annual-top-products-chart', 'myChartProductosAnio', products.map(p => p.description), products.map(p => p.quantity));
 
         try {
             this.renderAnnualFinancialChart(year);
@@ -3672,6 +3660,79 @@ class App {
                 console.error('[DataValidator] Error al renderizar gráficas anuales:', err);
             }
         }
+    }
+
+    selectedReportMonth() {
+        const value = document.getElementById('report-month-select')?.value;
+        if (/^\d{4}-\d{2}$/.test(value || '')) return new Date(Number(value.slice(0, 4)), Number(value.slice(5)) - 1, 1);
+        return new Date();
+    }
+
+    async loadReportPeriod(year, month, render, prefix) {
+        if (!Auth.isAdmin()) return;
+        this._reportRequests ||= {};
+        const request = (this._reportRequests[prefix] || 0) + 1;
+        this._reportRequests[prefix] = request;
+        const status = document.getElementById(prefix === 'monthly' ? 'report-month-status' : 'report-year-status');
+        if (status) status.textContent = 'Consultando período…';
+        const clear = () => {
+            for (const id of ['sales', 'transactions', 'pieces', 'profit', 'margin', 'best-month', 'best-month-value']) {
+                const el = document.getElementById(`${prefix}-${id}`); if (el) el.textContent = '—';
+            }
+            for (const suffix of ['financial', 'volume', 'top-products']) {
+                const canvas = document.getElementById(`${prefix}-${suffix}-chart`);
+                if (canvas && typeof Chart !== 'undefined') Chart.getChart(canvas)?.destroy();
+            }
+            if (prefix === 'monthly') document.getElementById('report-month-products').textContent = '';
+        };
+        clear();
+        try {
+            const now = new Date();
+            const active = month !== null && year === now.getFullYear() && month === now.getMonth() + 1;
+            const state = MonthlyArchive.state();
+            const key = `${year}-${month === null ? '' : String(month).padStart(2, '0')}`;
+            const needsArchive = state.months.some(m => month === null ? m.startsWith(key) : m === key);
+            const handle = await AutoBackup._loadHandle();
+            let archived = null;
+            if (!active && (needsArchive || handle?.kind === 'directory')) archived = await MonthlyArchive.readPeriod(year, month);
+            const local = SaleService.getHistoricalSales();
+            const inPeriod = sale => {
+                const m = MonthlyArchive.monthOf(sale);
+                return month === null ? m.startsWith(key) : m === key;
+            };
+            const sales = MonthlyArchive.mergeRecords(archived?.sales || [], local.filter(inPeriod));
+            const returns = MonthlyArchive.mergeRecords(archived?.returns || [], Returns.getAll());
+            if (this._reportRequests[prefix] !== request) return;
+            // Vista temporal sólo durante este render síncrono. Nunca se persiste.
+            const previous = ReportService.archiveView;
+            ReportService.archiveView = { sales, returns };
+            try { render(); } finally { ReportService.archiveView = previous; }
+            if (status) status.textContent = archived
+                ? `Archivos verificados al ${new Date(archived.index.savedAt).toLocaleString('es-MX')}, combinados con registros actuales sin duplicarlos.`
+                : 'Consulta de los registros disponibles en este navegador.';
+        } catch (error) {
+            if (this._reportRequests[prefix] !== request) return;
+            clear();
+            if (status) status.textContent = 'Reporte no disponible: ' + error.message;
+        }
+    }
+
+    updateSelectedMonthly() {
+        const date = this.selectedReportMonth();
+        return this.loadReportPeriod(date.getFullYear(), date.getMonth() + 1, () => {
+            const sales = ReportService.getMonthlySales(date.getMonth() + 1, date.getFullYear());
+            this._updatePeriodSummary({ sales: 'monthly-sales', transactions: 'monthly-transactions', profit: 'monthly-profit', margin: 'monthly-margin', pieces: 'monthly-pieces' }, ReportService.summarizeSales(sales));
+            this._updateBestMonthCard('monthly-best-month', 'monthly-best-month-value', date.getFullYear());
+            this.renderMonthlyFinancialChart(); this.renderMonthlyVolumeChart();
+            const products = ReportService.getTopProducts(5);
+            this._renderVolumeChart(document.getElementById('monthly-top-products-container'), 'monthly-top-products-chart', 'myChartProductosMes', products.map(p => p.description), products.map(p => p.quantity));
+            document.getElementById('report-month-products').textContent = 'Productos más vendidos por piezas antes de devoluciones: ' + (products.map(p => `${p.description}: ${p.quantity}`).join('; ') || 'Sin ventas.');
+        }, 'monthly');
+    }
+
+    updateHistoricalAnnual() {
+        const year = Number(document.getElementById('year-selector')?.value || new Date().getFullYear());
+        return this.loadReportPeriod(year, null, () => this._renderHistoricalAnnual(), 'annual');
     }
 
     // --- Cambiar pestaña activa en el módulo de reportes ---
@@ -3839,10 +3900,7 @@ class App {
         if (refreshMonthlyBtn) {
             refreshMonthlyBtn.addEventListener('click', () => {
                 if (Auth.isAdmin()) {
-                    this.renderMonthlyFinancialChart();
-                    this.renderMonthlyVolumeChart();
-                    this._updateBestMonthCard('monthly-best-month', 'monthly-best-month-value',
-                        new Date().getFullYear());
+                    this.updateSelectedMonthly();
                 }
             });
         }
@@ -3865,6 +3923,12 @@ class App {
             });
         }
 
+        const monthSelector = document.getElementById('report-month-select');
+        if (monthSelector) {
+            monthSelector.value = DateUtil.today().slice(0, 7);
+            monthSelector.addEventListener('change', () => this.updateSelectedMonthly());
+        }
+        document.getElementById('report-month-load')?.addEventListener('click', () => this.updateSelectedMonthly());
         // --- Selector de año para Año histórico ---
         const yearSelector = document.getElementById('year-selector');
         if (yearSelector) {

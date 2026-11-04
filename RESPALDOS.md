@@ -1,5 +1,43 @@
 # Respaldos de Joyería de Luna
 
+## Versión de pruebas `20261103-monthly-sale1`
+
+Esta sección sustituye las limitaciones de consulta mensual descritas más abajo
+para las versiones anteriores. Se prueba en `punto-de-venta-refactor`; no cambia `main`.
+
+- Cada venta confirmada espera el intento de respaldo externo. Una falla no
+  deshace la venta: se informa que quedó pendiente y se puede reintentar.
+- Los respaldos automáticos en carpeta crean una generación mensual verificada,
+  además del JSON completo. Las generaciones anteriores se conservan. Esto
+  consume espacio en disco: no es almacenamiento ilimitado ni sincronización en nube.
+- Reportes → Mes permite elegir mes y año, consultar totales, gráficas por día
+  y productos más vendidos. Reportes → Año reúne los meses del año seleccionado.
+  La lectura del reporte consulta sólo los archivos mensuales necesarios,
+  verifica sus huellas y combina registros locales sin duplicar ventas.
+- `Ultima_copia.json` permite localizar la generación vigente desde la carpeta.
+  Conserva toda la carpeta y sus subcarpetas; no muevas archivos individuales.
+- Configuración → **Verificar y archivar meses terminados** requiere administrador,
+  caja cerrada y confirmación. Es una acción manual: verifica una copia completa,
+  compara nuevamente los registros dentro de una transacción y retira sólo ventas
+  e historial anteriores al mes actual. Fechas inválidas, mes activo, inventario,
+  clientes, devoluciones, cortes y originales de migración se conservan.
+- Los originales y las copias de recuperación siguen ocupando espacio; este paso
+  reduce el historial operativo y no promete vaciar todo el almacenamiento.
+  Las vistas diarias, semanales y las operaciones sobre ventas consultan los
+  registros locales; para meses archivados usa las consultas mensuales y anuales.
+- El JSON completo descargado reúne también los meses archivados. Si falta la
+  carpeta, no se anuncia un respaldo completo. La descarga de seguridad del corte
+  puede conservar los datos locales y advierte si faltan meses archivados.
+- Después de archivar, mantén disponible la carpeta original. Para cambiarla,
+  conserva también su contenido. Una carpeta vacía no reemplaza el historial.
+- `node scripts/preview.cjs` sirve una vista en `http://127.0.0.1:48731/`, con
+  almacenamiento separado del sitio público y conexiones externas bloqueadas.
+  No sirve respaldos ni pruebas. El JSON se importa desde la interfaz local.
+
+Prueba adicional: `tests/monthly-operation.cjs`. La variable opcional
+`POS_REVIEW_JSON` permite comprobar un respaldo real en un perfil aislado;
+el archivo del cliente no se incorpora al repositorio.
+
 La versión `20261102-compact2` agrupa “Crear sólo copia por meses”, “Pausar
 respaldo automático” y “Recuperar copia de este navegador” en “Opciones
 avanzadas”. Todas las acciones siguen disponibles. “Guardar respaldo ahora”

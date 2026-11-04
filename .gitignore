@@ -30,6 +30,8 @@ Desktop.ini
 
 # Node (if ever used)
 node_modules/
+revision-respaldo-*/
+.preview-*/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

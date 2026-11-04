@@ -51,8 +51,10 @@ class Backup {
         };
     }
 
-    static createBackup() {
-        const data = this.buildBackupData();
+    static async createBackup() {
+        let data;
+        try { data = await MonthlyArchive.completeSnapshot(this.buildBackupData()); }
+        catch (error) { Toast.error('No se pudo reunir el respaldo completo: ' + error.message); return { success: false }; }
         const backupStr = JSON.stringify(data, null, 2);
         const blob = new Blob([backupStr], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
@@ -69,7 +71,7 @@ class Backup {
     }
 
     static async downloadMonthlyBackup() {
-        const result = this.createBackup();
+        const result = await this.createBackup();
         // Descargar no permite confirmar que el usuario conservó el archivo.
         if (result.success && confirm('¿El archivo JSON terminó de descargarse y ya lo guardó en una carpeta segura?')) {
             await AutoBackup._dbOp('readwrite', s => s.put(new Date().toISOString(), 'monthly-confirmed'));
@@ -1276,9 +1278,15 @@ class Backup {
         return { ...this.buildBackupData(), type: 'cut_backup', report: structuredClone(report) };
     }
 
-    static downloadCutBackup(report) {
+    static async downloadCutBackup(report) {
         try {
-            const data = this.buildCutBackup(report);
+            let data = this.buildCutBackup(report);
+            let incomplete = false;
+            try { data = await MonthlyArchive.completeSnapshot(data); }
+            catch (error) {
+                incomplete = true;
+                data.archiveWarning = 'Esta copia conserva la operación local. Los meses archivados requieren la carpeta original: ' + error.message;
+            }
             const backupStr = JSON.stringify(data, null, 2);
             const blob = new Blob([backupStr], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
@@ -1291,7 +1299,7 @@ class Backup {
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
 
-            return { success: true, message: 'Se solicitó la descarga del respaldo de corte. Compruebe que el archivo terminó de descargarse.' };
+            return { success: true, message: incomplete ? 'Se solicitó una descarga JSON del corte y los datos locales. No incluye los meses archivados: reconecte la carpeta y descargue el respaldo completo.' : 'Se solicitó la descarga JSON del respaldo de corte. Compruebe que el archivo terminó de descargarse.' };
         } catch (err) {
             return { success: false, error: 'Error al descargar el respaldo: ' + (err?.message || err) };
         }
@@ -1554,7 +1562,8 @@ class AutoBackup {
                 return false;
             }
 
-            const data = snapshot || Backup.buildBackupData();
+            let data = snapshot || Backup.buildBackupData();
+            data = await MonthlyArchive.completeSnapshot(data);
             data.autoBackup = { savedAt: new Date().toISOString(), reason, device: Device.getId() };
             // Archivos únicos: nunca se elimina ni sustituye una copia anterior.
             let target = handle;
@@ -1571,6 +1580,7 @@ class AutoBackup {
             if (await (await target.getFile()).text() !== serialized) {
                 throw new Error('La copia no coincidió al verificarla. Conserve las copias anteriores y reintente.');
             }
+            if (handle.kind === 'directory' && reason !== 'corte') await MonthlyArchive.write(handle, data);
             await this._dbOp('readwrite', s => s.put(data.autoBackup.savedAt, 'last-verified-save'));
             try { SafeStorage.setItem(this.lastSaveKey, data.autoBackup.savedAt); } catch { /* sin espacio */ }
             this._errorShown = false;
@@ -1767,7 +1777,7 @@ class AutoBackup {
         if (chooseBtn) chooseBtn.textContent = 'Cambiar carpeta de respaldos';
         disableBtn?.classList.remove('hidden');
         if (perm === 'granted') {
-            statusEl.textContent = `Respaldo automático ACTIVO en ${handle.kind === 'directory' ? 'la carpeta' : 'el archivo'} "${handle.name}".${lastText}`;
+            statusEl.textContent = `Respaldo automático ${this._errorShown ? 'PENDIENTE: el último intento falló; vuelva a guardar' : 'ACTIVO'} en ${handle.kind === 'directory' ? 'la carpeta' : 'el archivo'} "${handle.name}".${lastText}`;
             reauthBtn?.classList.add('hidden');
         } else {
             statusEl.textContent = `Respaldo automático EN PAUSA ("${handle.name}"): presione "Reactivar".${lastText}`;

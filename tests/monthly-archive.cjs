@@ -76,7 +76,7 @@ const { chromium } = require('playwright');
             return { first: first.success, second: second.success, exact: JSON.stringify(read.complete.historicalSales) === JSON.stringify(sales),
                 raw: read.complete.rawStorage[SaleService.historicalKey] === before[SaleService.historicalKey], copiedVip,
                 months: read.index.months.map(m => m.month), totals, failures, corruptionRejected, shown,
-                oldFilesKept: oldFiles.every(([key, value]) => window.__monthlyFiles.get(key) === value), unchanged,
+                oldFilesKept: oldFiles.filter(([key]) => !key.endsWith('/Ultima_copia.json')).every(([key, value]) => window.__monthlyFiles.get(key) === value), unchanged,
                 reportsUnchanged: JSON.stringify(ReportService.getHistoricalSales()) === JSON.stringify(sales),
                 noDuplicateCut: Cut.getSessionHistory().length === beforeCuts, emailStatus,
                 summary: document.getElementById('monthly-archive-summary').textContent };

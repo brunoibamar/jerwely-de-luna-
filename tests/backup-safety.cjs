@@ -60,17 +60,19 @@ const { chromium } = require('playwright');
 
             // Manejadores simulados: verificar nombres únicos y contenido leído.
             const files = new Map();
-            const directory = {
+            const folder = (prefix = '') => ({
                 kind: 'directory', name: 'Backups', queryPermission: async () => 'granted',
-                getDirectoryHandle: async day => ({ getFileHandle: async name => {
-                    const key = day + '/' + name;
+                getDirectoryHandle: async day => folder(prefix + day + '/'), getFileHandle: async name => {
+                    const key = prefix + name;
                     return { createWritable: async () => { let pending; return { write: async text => { pending = text; }, close: async () => files.set(key, pending) }; }, getFile: async () => ({ text: async () => files.get(key) }) };
-                } })
-            };
+                }
+            });
+            const directory = folder();
             AutoBackup._handle = directory;
             const one = await AutoBackup.save('venta');
             const two = await AutoBackup.save('corte');
-            const fileVersions = one && two && files.size === 2 && [...files.values()].every(text => JSON.parse(text).rawStorage[base] === prior);
+            const completeFiles = [...files].filter(([name]) => /^\d{8}\/JDL_/.test(name));
+            const fileVersions = one && two && completeFiles.length === 2 && completeFiles.every(([,text]) => JSON.parse(text).rawStorage[base] === prior);
             const originalFile = [...files.values()][0];
             const corruptFile = { kind: 'file', name: 'old.json', queryPermission: async () => 'granted', getFile: async () => ({ text: async () => '{broken' }), createWritable: async () => { throw new Error('Must not overwrite'); } };
             AutoBackup._handle = corruptFile;
