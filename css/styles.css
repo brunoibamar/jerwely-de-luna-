@@ -4,6 +4,44 @@
     box-sizing: border-box;
 }
 
+/* Consulta mensual: controles y tablas independientes del formulario de ajustes. */
+.archive-dialog { width: min(1200px, 96vw); max-width: 96vw; max-height: 90vh; margin: auto; padding: 0; overflow: auto; border: 1px solid var(--gold-dark); border-radius: 12px; background: var(--bg-secondary); color: var(--text-primary); }
+.archive-dialog::backdrop { background: rgba(0, 0, 0, .78); }
+.archive-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; position: sticky; top: 0; z-index: 1; border-bottom: 1px solid var(--border-color); background: var(--bg-secondary); }
+.archive-dialog-header h2 { font-size: 18px; }
+.archive-dialog .archive-view { border: 0; margin: 0; }
+.archive-view { margin: 20px 0; padding: 20px; border: 1px solid var(--border-color); border-radius: 12px; background: var(--bg-secondary); color: var(--text-primary); font-size: 14px; line-height: 1.5; min-width: 0; }
+.archive-view h3 { color: var(--gold-light); margin-bottom: 8px; font-size: 21px; }
+.archive-view h4 { margin: 20px 0 12px; font-size: 18px; }
+.archive-note { color: var(--text-secondary); margin: 8px 0 16px; }
+.archive-notice { padding: 12px; margin: 12px 0; border-left: 3px solid var(--gold); background: var(--bg-tertiary); }
+.archive-controls { display: flex; flex-wrap: wrap; gap: 16px; margin: 20px 0; }
+.archive-view .archive-field { display: flex; flex-direction: column; gap: 7px; position: static; transform: none; background: none; padding: 0; color: var(--text-primary); font-size: 14px; min-width: 160px; }
+.archive-field select, .archive-field input { width: 100%; position: static; min-height: 42px; padding: 9px 12px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-input); color: var(--text-primary); font: inherit; }
+.archive-field input { max-width: 460px; }
+.archive-view select:focus-visible, .archive-view input:focus-visible, .archive-view summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.archive-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.archive-metric { padding: 16px; border: 1px solid var(--border-color); border-radius: 8px; background: var(--bg-tertiary); }
+.archive-metric span { display: block; color: var(--text-secondary); font-size: 13px; }
+.archive-metric strong { display: block; color: var(--gold-light); font-size: clamp(18px, 1.7vw, 22px); margin-top: 8px; }
+.archive-table-scroll { overflow-x: auto; max-width: 100%; margin: 14px 0; border: 1px solid var(--border-color); border-radius: 8px; }
+.archive-view .archive-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+.archive-table caption { padding: 12px; text-align: left; color: var(--text-secondary); background: var(--bg-tertiary); }
+.archive-table th, .archive-table td { padding: 12px; border-bottom: 1px solid var(--border-color); vertical-align: top; min-width: 85px; }
+.archive-table th { color: var(--gold-light); font-weight: 600; white-space: nowrap; }
+.archive-table tbody tr:last-child > td { border-bottom: 0; }
+.archive-table td { overflow-wrap: anywhere; }
+.archive-sale-detail { min-width: 170px; }
+#monthly-archive-sales > .archive-table-scroll > table > tbody > tr > td:nth-child(2) { min-width: 180px; }
+.archive-sale-detail[open] { min-width: 340px; }
+.archive-view summary { color: var(--gold-light); cursor: pointer; padding: 4px 0; }
+.archive-breakdown { border-top: 1px solid var(--border-color); padding: 14px 0; margin-top: 12px; }
+.archive-pagination { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 12px 0 20px; }
+.archive-pagination span { color: var(--text-secondary); }
+.archive-empty { padding: 20px 12px; color: var(--text-secondary); }
+@media (max-width: 900px) { .archive-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 600px) { .archive-view { padding: 12px; } .archive-controls { gap: 10px; } .archive-controls .archive-field { flex: 1; min-width: 110px; } .archive-metric { padding: 12px; } .archive-metric strong { font-size: 18px; } }
+
 :root {
     --bg-primary: #0a0a12;
     --bg-secondary: #12121a;

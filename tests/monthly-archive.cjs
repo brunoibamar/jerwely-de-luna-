@@ -90,6 +90,7 @@ const { chromium } = require('playwright');
         assert.equal(result.shown, true); assert.ok(result.summary.includes('275'));
         assert.equal(result.oldFilesKept, true); assert.equal(result.unchanged, true); assert.equal(result.reportsUnchanged, true);
         assert.equal(result.noDuplicateCut, true); assert.ok(result.emailStatus.includes('Correo pendiente'));
+        await page.getByRole('button', { name: 'Cerrar historial mensual' }).click();
         console.log('PASS: monthly files preserve exact history/raw values/VIP, isolate years, include returns/cancellations, retain invalid dates and keep operational reports unchanged');
         console.log('PASS: permission/disk/verification failures retain previous generation; corrupt files block reading; originals and browser records never removed');
         console.log('PASS: combined backup/email reports pending email honestly and never creates another cut');

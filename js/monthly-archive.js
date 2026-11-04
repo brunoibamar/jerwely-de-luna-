@@ -268,47 +268,18 @@ class MonthlyArchive {
 
     static async showSummary() {
         const output = document.getElementById('monthly-archive-summary');
-        if (output) output.textContent = '';
+        if (output) output.replaceChildren();
         try {
-            const { index, complete, periods } = await this.read();
-            // Consulta aislada: nunca suma las copias a los registros operativos.
-            if (output) {
-                const title = document.createElement('p');
-                title.textContent = `Copia del ${new Date(index.savedAt).toLocaleString('es-MX')}. Historial: ${index.historicalCount} registros, incluidas cancelaciones. Esta consulta muestra esa copia, no movimientos posteriores. Los reportes habituales siguen disponibles.`;
-                output.appendChild(title);
-                const years = [...new Set(periods.filter(period => /^\d{4}-\d{2}$/.test(period.month)).map(period => period.month.slice(0, 4)))].sort();
-                const label = document.createElement('label'); label.textContent = 'Año de la copia: ';
-                const select = document.createElement('select'); select.id = 'monthly-archive-year';
-                for (const year of years) { const option = document.createElement('option'); option.value = year; option.textContent = year; select.appendChild(option); }
-                if (years.length) select.value = years[years.length - 1];
-                label.appendChild(select); output.appendChild(label);
-                const detail = document.createElement('div'); output.appendChild(detail);
-                const render = () => {
-                    detail.textContent = '';
-                    const selected = periods.filter(period => period.month.startsWith(select.value + '-'));
-                    const totals = this.summarize(selected.flatMap(period => period.historicalSales), complete.returns);
-                    const money = value => value.toLocaleString('es-MX', { style: 'currency', currency: 'MXN' });
-                    const line = text => { const p = document.createElement('p'); p.textContent = text; detail.appendChild(p); };
-                    line(`${select.value || 'Sin períodos fechados'}: ${totals.transactions} ventas vigentes; ventas netas ${money(totals.net)}; devoluciones ${money(totals.refunded)}; piezas netas ${totals.pieces}.`);
-                    for (let month = 1; month <= 12 && select.value; month++) {
-                        const key = `${select.value}-${String(month).padStart(2, '0')}`;
-                        const period = selected.find(item => item.month === key);
-                        const sum = this.summarize(period?.historicalSales || [], complete.returns);
-                        line(`${key}: ${sum.transactions} ventas; neto ${money(sum.net)}; piezas netas ${sum.pieces}.`);
-                    }
-                    line('Productos más vendidos por piezas antes de devoluciones: ' + (totals.top.map(product => `${product.description}: ${product.pieces}`).join('; ') || 'Sin ventas.'));
-                    const undated = periods.find(period => period.month === 'sin-fecha');
-                    if (undated) line(`Hay ${undated.historicalSales.length} registros sin fecha válida conservados en sin-fecha.json. No se incluyen en un año; requieren revisión.`);
-                };
-                select.addEventListener('change', () => {
-                    try { render(); }
-                    catch (error) { detail.textContent = 'No se pudieron calcular los totales: ' + error.message; }
-                });
-                try { render(); } catch (error) { detail.textContent = 'Archivos verificados, pero no se pudieron calcular los totales: ' + error.message; }
-            }
-            this.feedback('Todos los archivos mensuales y el respaldo completo fueron leídos y verificados. No se importó ni borró información.');
+            const data = await this.read();
+            if (output) MonthlyArchiveView.render(output, data);
+            const dialog = document.getElementById('monthly-archive-dialog');
+            if (dialog && !dialog.open) dialog.showModal();
+            this.feedback('Archivos mensuales y respaldo completo verificados. La consulta no importa ni borra información.');
             return true;
-        } catch (error) { this.feedback('No se pudo verificar la copia mensual: ' + error.message); return false; }
+        } catch (error) {
+            this.feedback('No se pudo verificar la copia mensual: ' + error.message);
+            return false;
+        }
     }
 }
 window.MonthlyArchive = MonthlyArchive;

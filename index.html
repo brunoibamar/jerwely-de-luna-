@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Jewerly De Luna - Punto de Venta</title>
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css?v=20261104-history1">
 </head>
     <body>
     <div id="toast-container" class="toast-container"></div>
@@ -1280,7 +1280,6 @@
                                <p id="auto-backup-feedback" class="volume-help-text-small" role="status" aria-live="polite"></p>
                                <p id="monthly-backup-status" class="volume-help-text-small"></p>
                                <p id="monthly-archive-status" class="volume-help-text-small" role="status" aria-live="polite"></p>
-                               <div id="monthly-archive-summary" class="volume-help-text-small"></div>
                                <div class="backup-actions">
                                    <button type="button" id="auto-backup-reauth-btn" class="btn btn-outline hidden">Reactivar permiso</button>
                                </div>
@@ -1336,6 +1335,13 @@
       <iframe id="pos-print-frame" aria-hidden="true"
               style="position:fixed;top:-9999px;left:-9999px;width:300px;height:600px;border:0;"></iframe>
 
+      <dialog id="monthly-archive-dialog" class="archive-dialog" aria-labelledby="monthly-archive-title">
+          <div class="archive-dialog-header">
+              <h2 id="monthly-archive-title">Ventas del respaldo</h2>
+              <form method="dialog"><button class="btn btn-outline btn-sm" aria-label="Cerrar historial mensual">Cerrar</button></form>
+          </div>
+          <div id="monthly-archive-summary"></div>
+      </dialog>
       <!-- EmailJS SDK v4 para envío directo de correos -->
      <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
      <!-- Chart.js para gráficas interactivas -->
@@ -1344,25 +1350,26 @@
            Las etiquetas de texto NO aparecen sobre las barras; los montos ($ y piezas)
            se muestran únicamente en el tooltip al pasar el ratón. -->
      <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.0.0/dist/chartjs-plugin-datalabels.min.js"></script>
-     <script src="js/storage.js?v=20261104-folder1"></script>
-     <script src="js/business.js?v=20261104-folder1"></script>
+     <script src="js/storage.js?v=20261104-history1"></script>
+     <script src="js/business.js?v=20261104-history1"></script>
      <!-- Capturador global de errores (Error Boundary) -->
-     <script src="js/errorBoundary.js?v=20261104-folder1"></script>
-     <script src="js/auth.js?v=20261104-folder1"></script>
+     <script src="js/errorBoundary.js?v=20261104-history1"></script>
+     <script src="js/auth.js?v=20261104-history1"></script>
      <!-- Módulo POS: VolumePricing, HeldSales, BarcodeScanner, PaymentProcessor -->
-     <script src="js/pos.js?v=20261104-folder1"></script>
-     <script src="js/cart.js?v=20261104-folder1"></script>
-     <script src="js/checkout.js?v=20261104-folder1"></script>
-     <script src="js/inventory.js?v=20261104-folder1"></script>
-     <script src="js/vip.js?v=20261104-folder1"></script>
-     <script src="js/cut.js?v=20261104-folder1"></script>
-     <script src="js/reports.js?v=20261104-folder1"></script>
-     <script src="js/print.js?v=20261104-folder1"></script>
-     <script src="js/backup.js?v=20261104-folder1"></script>
-     <script src="js/monthly-archive.js?v=20261104-folder1"></script>
-     <script src="js/returns.js?v=20261104-folder1"></script>
-      <script src="js/guarantee.js?v=20261104-folder1"></script>
-      <script src="js/telegram-notify.js?v=20261104-folder1"></script>
-      <script src="js/app.js?v=20261104-folder1"></script>
+     <script src="js/pos.js?v=20261104-history1"></script>
+     <script src="js/cart.js?v=20261104-history1"></script>
+     <script src="js/checkout.js?v=20261104-history1"></script>
+     <script src="js/inventory.js?v=20261104-history1"></script>
+     <script src="js/vip.js?v=20261104-history1"></script>
+     <script src="js/cut.js?v=20261104-history1"></script>
+     <script src="js/reports.js?v=20261104-history1"></script>
+     <script src="js/print.js?v=20261104-history1"></script>
+     <script src="js/backup.js?v=20261104-history1"></script>
+     <script src="js/monthly-archive.js?v=20261104-history1"></script>
+     <script src="js/monthly-archive-view.js?v=20261104-history1"></script>
+     <script src="js/returns.js?v=20261104-history1"></script>
+      <script src="js/guarantee.js?v=20261104-history1"></script>
+      <script src="js/telegram-notify.js?v=20261104-history1"></script>
+      <script src="js/app.js?v=20261104-history1"></script>
 </body>
 </html>

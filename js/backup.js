@@ -1590,6 +1590,7 @@ class AutoBackup {
             await this._dbOp('readwrite', s => s.put(data.autoBackup.savedAt, 'last-verified-save'));
             try { SafeStorage.setItem(this.lastSaveKey, data.autoBackup.savedAt); } catch { /* sin espacio */ }
             this._errorShown = false;
+            this.folderFeedback(`Respaldo verificado en “${handle.name}” el ${new Date(data.autoBackup.savedAt).toLocaleString('es-MX')}.`);
             this.renderStatus();
             return true;
         } catch (err) {

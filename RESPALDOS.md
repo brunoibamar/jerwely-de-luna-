@@ -1,5 +1,25 @@
 # Respaldos de Joyería de Luna
 
+## Consulta detallada `20261104-history1`
+
+“Consultar historial por meses” abre una ventana amplia, con selectores de año
+y mes. Presenta ventas vigentes/canceladas, importes antes de devoluciones,
+devoluciones, ventas netas, piezas netas y promedio neto por venta.
+Incluye agrupación por forma de pago y un historial completo con búsqueda por
+folio/producto/cajero y páginas de 25 registros. “Ver productos y pago” muestra
+partidas, cantidades, precio unitario cuando está registrado, importes, detalles
+de cobro y devoluciones asociadas. Los desgloses por día y producto son desplegables.
+Las ventas mixtas constituyen un grupo propio; el detalle conserva su reparto.
+Las devoluciones se descuentan del mes de la venta original. Las cancelaciones
+se muestran sin sumarlas. La consulta usa la fecha del respaldo verificado;
+no importa ni modifica registros. Los meses sin ventas se señalan explícitamente.
+Después de un nuevo respaldo externo exitoso se reemplaza cualquier aviso viejo
+de selección rechazada por la confirmación actual.
+
+`tests/monthly-archive-view.cjs` verifica selección, búsqueda, paginación,
+detalle, cancelaciones, devoluciones posteriores, contenido tratado como texto,
+ausencia de cambios operativos y, opcionalmente, vista móvil con el JSON real.
+
 ## Versión de pruebas `20261103-monthly-sale1`
 
 Corrección `20261104-folder1`: el selector puede devolver `AbortError` tanto al
