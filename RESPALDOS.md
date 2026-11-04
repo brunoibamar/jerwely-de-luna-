@@ -2,6 +2,15 @@
 
 ## Versión de pruebas `20261103-monthly-sale1`
 
+Corrección `20261104-folder1`: el selector puede devolver `AbortError` tanto al
+cancelarse como al rechazar una carpeta protegida. El aviso distingue esa
+posibilidad y pide elegir una subcarpeta, no todo Escritorio/Documentos/Descargas.
+Guardar respaldo ahora abre el selector directamente desde el clic cuando no
+hay carpeta configurada; un rechazo no se presenta como respaldo externo exitoso.
+`tests/folder-activation.cjs` comprueba este flujo y prueba escritura, verificación
+y persistencia con manejadores nativos en un perfil aislado. El permiso y el
+selector de la carpeta real del cliente deben comprobarse en su navegador.
+
 Esta sección sustituye las limitaciones de consulta mensual descritas más abajo
 para las versiones anteriores. Se prueba en `punto-de-venta-refactor`; no cambia `main`.
 

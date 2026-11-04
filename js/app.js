@@ -872,6 +872,14 @@ class App {
             }
             let result;
             try {
+                // Abrir desde el clic: no esperar una copia interna antes del
+                // selector, para conservar la activación que exige el navegador.
+                if (!AutoBackup._handle && AutoBackup.canChooseDirectory()) {
+                    if (!await AutoBackup.chooseDirectory()) {
+                        Toast.warning('No se guardó el respaldo en carpeta. Revise el aviso de selección o descargue el JSON completo.', 12000);
+                        return;
+                    }
+                }
                 if (typeof Backup !== 'undefined' && typeof Backup.runScheduledBackup === 'function') {
                     result = await Backup.runScheduledBackup();
                     if (!result?.success) throw new Error(result?.error || 'No se pudo verificar el respaldo local');
@@ -881,17 +889,14 @@ class App {
             } catch (err) {
                 console.warn('[App] Error en respaldo programado manual:', err?.message);
                 Toast.error('No se confirmó el respaldo: ' + err.message);
-                if (intervalBackupNowBtn) { intervalBackupNowBtn.disabled = false; intervalBackupNowBtn.textContent = original; }
                 return;
+            } finally {
+                if (intervalBackupNowBtn) { intervalBackupNowBtn.disabled = false; intervalBackupNowBtn.textContent = original; }
             }
             this.renderLocalRecoveryStatus();
-            if (intervalBackupNowBtn) {
-                intervalBackupNowBtn.disabled = false;
-                intervalBackupNowBtn.textContent = original;
-            }
             if (result.local && result.external === true && result.monthly) Toast.success('Copia del navegador, JSON completo y copia por meses guardados y verificados.');
             else if (result.local && result.external === true) Toast.warning('Copia del navegador y JSON completo verificados. No se confirmó la copia por meses; revise el aviso del historial mensual.', 10000);
-            else if (result.local && result.external === null) Toast.info(AutoBackup.canChooseDirectory()
+            else if (result.local && result.external === null) Toast.warning(AutoBackup.canChooseDirectory()
                 ? 'Copia del navegador verificada. Elija una carpeta o descargue el JSON para tener una copia fuera del navegador.'
                 : 'Copia del navegador verificada. Este navegador no habilita la carpeta automática: descargue el respaldo completo JSON para tener una copia en su computadora.', 10000);
             else if (result.local) Toast.warning('Copia del navegador verificada. No se confirmó el archivo de la carpeta; revise el permiso y el espacio en disco.', 10000);

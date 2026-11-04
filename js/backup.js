@@ -1354,6 +1354,10 @@ class AutoBackup {
         return 'Este navegador no habilita la elección de carpeta para respaldos automáticos. En Brave esta función puede estar desactivada. Use “Descargar respaldo completo (JSON)” y guarde el archivo en su computadora. Los datos siguen en este navegador: cambiar a otro navegador no los transfiere.';
     }
 
+    static folderSelectionHelp() {
+        return 'Abra una carpeta específica, por ejemplo Escritorio → historial luna → reportes joyería, y pulse “Seleccionar carpeta”. No elija Escritorio, Documentos o Descargas completos: el navegador puede bloquearlos. Acepte el permiso para guardar si aparece.';
+    }
+
     // --- IndexedDB (persistencia del manejador del archivo) ---
     static _openDb() {
         return new Promise((resolve, reject) => {
@@ -1410,7 +1414,7 @@ class AutoBackup {
         this._choosingDirectory = true;
         const button = document.getElementById('auto-backup-choose-btn');
         if (button) button.disabled = true;
-        this.folderFeedback('Elija una carpeta en la ventana del navegador y permita el acceso.');
+        this.folderFeedback(this.folderSelectionHelp());
         try {
             const handle = await window.showDirectoryPicker({ id: 'jdl-backup-folder', mode: 'readwrite', startIn: 'documents' });
             if (await this._permission(handle, true) !== 'granted') {
@@ -1429,11 +1433,13 @@ class AutoBackup {
                 ? `Primera copia completa verificada en “${handle.name}”, dentro de una subcarpeta con la fecha del día.${remembered ? '' : ' El permiso sólo quedó disponible en esta sesión; vuelva a elegir la carpeta al abrir el programa.'}`
                 : 'Se eligió la carpeta, pero no se confirmó el primer respaldo. Revise el permiso y el espacio disponible; conserve su JSON descargado.');
             if (saved) Toast.success('Carpeta activada. Cada respaldo nuevo conservará los archivos anteriores.');
-            if (saved && typeof MonthlyArchive !== 'undefined') await MonthlyArchive.create();
             return saved;
         } catch (err) {
+            console.warn('[AutoBackup] La carpeta no quedó activada:', err?.name || 'Error', err?.message || 'Sin detalle');
             if (err?.name === 'AbortError') {
-                this.folderFeedback('No se seleccionó una carpeta y no se cambió la configuración anterior. Si no apareció una ventana, el navegador puede estar bloqueando la función. Puede guardar una copia con “Descargar respaldo completo (JSON)”.');
+                const message = 'No se seleccionó una carpeta con acceso autorizado: la selección se canceló o el navegador rechazó la carpeta. ' + this.folderSelectionHelp() + ' Si ya eligió una subcarpeta y vuelve a fallar en el navegador integrado, descargue primero el JSON completo y pruebe en Chrome o Edge. Cambiar de navegador no transfiere sus datos.';
+                this.folderFeedback(message);
+                Toast.warning('La carpeta no quedó activada. Elija una subcarpeta de respaldos, no el Escritorio completo. No se guardó una copia externa.', 12000);
             } else {
                 const message = /SecurityError|NotAllowedError/.test(err?.name || '')
                     ? 'El navegador no permitió abrir o autorizar la carpeta. Conserve el JSON descargado; puede seguir usando la descarga manual en este navegador.'
@@ -1749,6 +1755,10 @@ class AutoBackup {
         if (chooseBtn) {
             chooseBtn.disabled = !!this._choosingDirectory;
             chooseBtn.setAttribute('aria-describedby', 'auto-backup-status auto-backup-feedback');
+        }
+        if (this._choosingDirectory) {
+            statusEl.textContent = 'Esperando la selección, el permiso y la verificación de la carpeta. Todavía no se confirmó el respaldo externo.';
+            return;
         }
 
         if (!this.isSupported()) {
