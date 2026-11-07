@@ -9,7 +9,8 @@ class Inventory {
         'Collares',
         'Donitas de cabello',
         'Impresiones 3D',
-        'Pulseras y niños',
+        'Joyería de niño',
+        'Pulsera',
         'Otros'
     ];
 
