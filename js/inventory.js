@@ -4,10 +4,12 @@ class Inventory {
     // Categorías predefinidas para el catálogo de productos.
     static productCategories = [
         'Aretes',
+        'Aretes inoxidables',
         'Anillos',
         'Collares',
         'Donitas de cabello',
         'Impresiones 3D',
+        'Pulseras y niños',
         'Otros'
     ];
 
