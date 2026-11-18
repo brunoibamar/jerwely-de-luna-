@@ -54,7 +54,7 @@ class Auth {
     static hasTemporaryAdminAccess() {
         const grant = this.#guestAdminGrant;
         const valid = this.isGuest() && grant?.user === this.currentUser &&
-            grant.sessionId === Cut.getActiveSession()?.id &&
+            this.canRequestGuestAdminAccess() && grant.sessionId === Cut.getActiveSession()?.id &&
             grant.password === this.getGuestAdminPassword();
         if (!valid) this.#guestAdminGrant = null;
         return !!valid;
@@ -62,9 +62,15 @@ class Auth {
 
     static hasAdminAccess() { return this.isAdmin() || this.hasTemporaryAdminAccess(); }
 
+    static canRequestGuestAdminAccess() {
+        const session = Cut.getActiveSession();
+        // Reanudar como invitado no cambia quién abrió la caja existente.
+        return !!this.currentUser && this.isGuest() && session?.isOpen === true && !session.closedAt;
+    }
+
     static enableGuestAdminAccess(password) {
         const session = Cut.getActiveSession();
-        if (!this.currentUser || !this.isGuest() || session?.role !== 'guest') return { success: false, error: 'Abra una caja como invitado para habilitar este acceso.' };
+        if (!this.canRequestGuestAdminAccess()) return { success: false, error: 'Se necesita una caja abierta y una sesión de invitado para habilitar este acceso.' };
         if (password !== this.getGuestAdminPassword()) return { success: false, error: 'Contraseña incorrecta.' };
         this.#guestAdminGrant = { user: this.currentUser, sessionId: session.id, password };
         return { success: true };

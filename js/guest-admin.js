@@ -47,7 +47,7 @@ class GuestAdminAccess {
         document.getElementById('guest-admin-access-btn')?.addEventListener('click', () => {
             if (!Auth.currentUser || !Auth.isGuest()) return;
             if (Auth.hasTemporaryAdminAccess()) { this.lock(); return; }
-            if (!Cut.isShiftOpen()) { Toast.warning('Abra la caja antes de solicitar este acceso.'); return; }
+            if (!Auth.canRequestGuestAdminAccess()) { Toast.warning('Se necesita una caja abierta y una sesión de invitado para habilitar este acceso.'); return; }
             form.reset(); document.getElementById('guest-admin-access-error').textContent = '';
             dialog.showModal(); document.getElementById('guest-admin-access-password').focus();
         });

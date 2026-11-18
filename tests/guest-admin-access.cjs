@@ -155,5 +155,60 @@ const { chromium } = require('playwright');
         assert.equal(await page.evaluate(() => Auth.getGuestAdminPassword()), '8765');
         assert.deepEqual(errors, []);
         console.log('PASS: only a direct administrator can change the authorization password, the new password persists, and changes from another tab revoke the old grant');
+
+        const resumedContext = await browser.newContext();
+        const resumed = await resumedContext.newPage();
+        resumed.on('pageerror', error => errors.push(error.message));
+        await resumed.route('https://api.telegram.org/**', route => route.abort());
+        await resumed.goto(pathToFileURL(path.resolve('index.html')).href);
+        await resumed.waitForFunction(() => window.app?.isInitialized);
+        await resumed.evaluate(async () => {
+            Auth.login('admin', Auth.getAdminPassword());
+            await AppStorage.transaction(() => Cut.openSession(470, Auth.getCurrentUser()));
+            Auth.logout(); Auth.loginGuest(); app.showCashOpening();
+        });
+        await resumed.reload();
+        await resumed.waitForFunction(() => window.app?.isInitialized);
+        const beforeResume = await resumed.evaluate(() => ({
+            records: Object.fromEntries(AppStorage.keys().map(key => [key, AppStorage.getItem(key)])),
+            originals: JSON.stringify(AppStorage.originals)
+        }));
+        assert.equal(await resumed.locator('#pos-app').isVisible(), true);
+        assert.equal(await resumed.evaluate(() => Cut.getActiveSession().role), 'admin');
+        await resumed.locator('#guest-admin-access-btn').click();
+        await resumed.locator('#guest-admin-access-password').fill('incorrecta');
+        await resumed.getByRole('button', { name: 'Habilitar acceso', exact: true }).click();
+        assert.match(await resumed.locator('#guest-admin-access-error').innerText(), /incorrecta/);
+        await resumed.locator('#guest-admin-access-password').fill('1234');
+        await resumed.getByRole('button', { name: 'Habilitar acceso', exact: true }).click();
+        assert.equal(await resumed.evaluate(() => Auth.hasTemporaryAdminAccess()), true);
+        assert.equal(await resumed.locator('.nav-item[data-section="inventory"]').isVisible(), true);
+        assert.equal(await resumed.evaluate(() => Auth.canChangeGuestAdminPassword()), false);
+        await resumed.locator('#guest-admin-access-btn').click();
+        assert.equal(await resumed.evaluate(() => Auth.hasAdminAccess()), false);
+        assert.deepEqual(await resumed.evaluate(() => ({
+            records: Object.fromEntries(AppStorage.keys().map(key => [key, AppStorage.getItem(key)])),
+            originals: JSON.stringify(AppStorage.originals)
+        })), beforeResume);
+        const invalidShifts = await resumed.evaluate(async () => {
+            const saved = Cut.getActiveSession();
+            const results = [];
+            for (const value of [null, { ...saved, isOpen: false }, { ...saved, closedAt: new Date().toISOString() }]) {
+                await AppStorage.transaction(() => {
+                    if (value) SafeStorage.setItem(Cut.storageKey, JSON.stringify(value));
+                    else AppStorage.removeItem(Cut.storageKey);
+                });
+                results.push(!Auth.enableGuestAdminAccess('1234').success && !Auth.hasTemporaryAdminAccess());
+            }
+            await AppStorage.transaction(() => SafeStorage.setItem(Cut.storageKey, JSON.stringify(saved)));
+            Auth.enableGuestAdminAccess('1234');
+            await AppStorage.transaction(() => SafeStorage.setItem(Cut.storageKey, JSON.stringify({ ...saved, isOpen: false })));
+            results.push(!Auth.hasTemporaryAdminAccess());
+            return results;
+        });
+        assert.ok(invalidShifts.every(Boolean));
+        await resumedContext.close();
+        assert.deepEqual(errors, []);
+        console.log('PASS: persisted guest resumes an administrator-opened shift, password grant/revoke leaves every record unchanged, credential changes remain blocked, and missing/closed shifts deny and revoke access');
     } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
