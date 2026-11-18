@@ -44,6 +44,46 @@ class Auth {
     };
 
     static currentUser = null;
+    static #guestAdminGrant = null;
+    static get guestAdminPasswordKey() { return Business.key('pos_guest_admin_password'); }
+
+    static getGuestAdminPassword() {
+        return AppStorage.getItem(this.guestAdminPasswordKey) ?? '1234';
+    }
+
+    static hasTemporaryAdminAccess() {
+        const grant = this.#guestAdminGrant;
+        const valid = this.isGuest() && grant?.user === this.currentUser &&
+            grant.sessionId === Cut.getActiveSession()?.id &&
+            grant.password === this.getGuestAdminPassword();
+        if (!valid) this.#guestAdminGrant = null;
+        return !!valid;
+    }
+
+    static hasAdminAccess() { return this.isAdmin() || this.hasTemporaryAdminAccess(); }
+
+    static enableGuestAdminAccess(password) {
+        const session = Cut.getActiveSession();
+        if (!this.currentUser || !this.isGuest() || session?.role !== 'guest') return { success: false, error: 'Abra una caja como invitado para habilitar este acceso.' };
+        if (password !== this.getGuestAdminPassword()) return { success: false, error: 'Contraseña incorrecta.' };
+        this.#guestAdminGrant = { user: this.currentUser, sessionId: session.id, password };
+        return { success: true };
+    }
+
+    static disableGuestAdminAccess() { this.#guestAdminGrant = null; }
+
+    static canChangeGuestAdminPassword() {
+        return this.isAdmin() && Cut.getActiveSession()?.role === 'admin';
+    }
+
+    static changeGuestAdminPassword(currentPassword, newPassword, confirmation) {
+        if (!this.canChangeGuestAdminPassword()) return { success: false, error: 'Inicie sesión y abra la caja directamente como administrador para cambiar esta contraseña.' };
+        if (currentPassword !== this.getGuestAdminPassword()) return { success: false, error: 'La contraseña actual es incorrecta.' };
+        if (typeof newPassword !== 'string' || newPassword.length < 4) return { success: false, error: 'La nueva contraseña debe tener al menos 4 caracteres.' };
+        if (newPassword !== confirmation) return { success: false, error: 'Las contraseñas no coinciden.' };
+        SafeStorage.setItem(this.guestAdminPasswordKey, newPassword);
+        return { success: true, message: 'Contraseña de acceso autorizado actualizada.' };
+    }
 
     static get drawerStorageKey() { return Business.key('pos_drawer_initial'); }
     static get adminEmailKey() { return Business.key('pos_admin_email'); }
@@ -88,6 +128,7 @@ class Auth {
     }
 
     static init() {
+        this.disableGuestAdminAccess();
         const stored = AppStorage.getItem(this.current_userKey);
         if (stored) {
             const parsed = SafeJSON.parse(stored, null, 'usuario_actual');
@@ -111,6 +152,7 @@ class Auth {
         const validPassword = this.getAdminPassword();
 
         if (username === validUsername && password === validPassword) {
+            this.disableGuestAdminAccess();
             this.currentUser = {
                 id: this.adminProfile.id,
                 username: validUsername,
@@ -127,6 +169,7 @@ class Auth {
 
     // --- Login de Invitado (sin clave, acceso directo) ---
     static loginGuest() {
+        this.disableGuestAdminAccess();
         this.currentUser = {
             id: 999,
             username: 'invitado',
@@ -153,6 +196,7 @@ class Auth {
     // Cambiar la contraseña del Administrador
     // Se guarda en localStorage y persiste al refrescar.
     static changeAdminPassword(currentPassword, newPassword, confirmPassword) {
+        if (!this.isAdmin()) return { success: false, error: 'Inicie sesión directamente como administrador.' };
         if (newPassword !== confirmPassword) {
             return { success: false, error: 'Las contraseñas no coinciden' };
         }
@@ -169,6 +213,7 @@ class Auth {
     // Cambiar la clave rápida del Invitado/Cajero
     // Se guarda en localStorage y persiste al refrescar.
     static changeGuestKey(currentKey, newKey, confirmKey) {
+        if (!this.isAdmin()) return { success: false, error: 'Inicie sesión directamente como administrador.' };
         if (newKey !== confirmKey) {
             return { success: false, error: 'Las claves no coinciden' };
         }
@@ -222,6 +267,7 @@ class Auth {
     }
 
     static logout() {
+        this.disableGuestAdminAccess();
         this.currentUser = null;
         AppStorage.removeItem(this.current_userKey);
     }
@@ -247,11 +293,11 @@ class Auth {
     }
 
     static canAccessInventory() {
-        return this.isAdmin();
+        return this.hasAdminAccess();
     }
 
     static canAccessConfig() {
-        return this.isAdmin();
+        return this.hasAdminAccess();
     }
 
      static verifyAdminPassword(password) {
@@ -263,7 +309,7 @@ class Auth {
     }
 
     static canViewReportCharts() {
-        return this.isAdmin();
+        return this.hasAdminAccess();
     }
 
     static canManageShift() {
@@ -275,23 +321,23 @@ class Auth {
     }
 
     static canPrintReports() {
-        return this.isAdmin();
+        return this.hasAdminAccess();
     }
 
     static canViewCosts() {
-        return this.isAdmin();
+        return this.hasAdminAccess();
     }
 
     static canViewProfit() {
-        return this.isAdmin();
+        return this.hasAdminAccess();
     }
 
     static canModifyInventory() {
-        return this.isAdmin();
+        return this.hasAdminAccess();
     }
 
     static canModifyPrices() {
-        return this.isAdmin();
+        return this.hasAdminAccess();
     }
 
     static canPerformReturns() {

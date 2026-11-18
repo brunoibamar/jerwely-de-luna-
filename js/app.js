@@ -992,6 +992,8 @@ class App {
     }
 
     showLogin() {
+        Auth.disableGuestAdminAccess();
+        document.getElementById('guest-admin-access-dialog')?.close();
         document.getElementById('login-screen')?.classList.remove('hidden');
         document.getElementById('pos-app')?.classList.add('hidden');
         const roleSelection = document.getElementById('role-selection');
@@ -1033,7 +1035,7 @@ class App {
     }
 
      updateRoleVisibility() {
-        const isAdmin = Auth.isAdmin();
+        const isAdmin = Auth.hasAdminAccess();
         const isGuest = Auth.isGuest();
         const adminOnlyEls = document.querySelectorAll('.admin-only');
         const guestOnlyEls = document.querySelectorAll('.guest-only');
@@ -1052,6 +1054,10 @@ class App {
         document.querySelectorAll('.guest-allowed').forEach(el => {
             el.classList.remove('hidden');
         });
+        // La caja mantiene su identidad original, aun con autorización temporal.
+        document.getElementById('cash-drawer-btn')?.classList.toggle('hidden', !Auth.isAdmin());
+        document.getElementById('cancel-sale-btn')?.classList.toggle('hidden', !Auth.canCancelTickets());
+        GuestAdminAccess.refresh();
     }
 
     bindLoginEvents() {
@@ -1278,6 +1284,7 @@ class App {
             return;
         }
         if (!session) { Toast.info('No hay un turno abierto para cerrar.'); return; }
+        GuestAdminAccess.lock(false);
         const report = (session && session.report) ? session.report : Backup.generateDailyReport();
         this.currentReport = report;
         Toast.info('Corte guardado. Preparando el respaldo JSON; espere la confirmación.', 10000);
@@ -1618,7 +1625,7 @@ class App {
                 const section = item.dataset.section;
 
                 // Guest accessing Reports: require admin password
-                if (section === 'reports' && Auth.isGuest()) {
+                if (section === 'reports' && Auth.isGuest() && !Auth.hasAdminAccess()) {
                     this.showReportsPasswordModal();
                     return;
                 }
@@ -1642,6 +1649,11 @@ class App {
     }
 
     switchSection(sectionId) {
+        if ((sectionId === 'inventory' && !Auth.canAccessInventory()) ||
+            (sectionId === 'settings' && !Auth.canAccessConfig())) {
+            Toast.warning('Habilite el acceso administrador para entrar a esta sección.');
+            return;
+        }
         document.querySelectorAll('.section').forEach(section => {
             section.classList.remove('active');
         });
@@ -3003,7 +3015,7 @@ class App {
         if (countEl) countEl.textContent = transactionCount;
         if (piecesEl) piecesEl.textContent = piecesSold;
 
-        if (Auth.isAdmin()) {
+        if (Auth.hasAdminAccess()) {
             if (profitEl) profitEl.textContent = `$${profit.toFixed(2)}`;
             if (marginEl) marginEl.textContent = `${margin}%`;
 
@@ -3019,7 +3031,7 @@ class App {
 
         this.renderDailyConsolidated(hoy);
 
-        if (Auth.isAdmin()) {
+        if (Auth.hasAdminAccess()) {
             try {
             this.renderDailyFinancialChart();
             this.renderDailyVolumeChart();
@@ -3073,7 +3085,7 @@ class App {
 
     // --- Renderizar todas las tarjetas y gráficas de los reportes por período ---
     _renderPeriodReports() {
-        if (!Auth.isAdmin()) return;
+        if (!Auth.hasAdminAccess()) return;
 
         // Semana: semana actual
         const weekSummary = ReportService.getWeeklySummary();
@@ -3638,7 +3650,7 @@ class App {
 
     // Actualizar la tarjeta de resumen y gráficas del Año histórico
     _renderHistoricalAnnual() {
-        if (!Auth.isAdmin()) return;
+        if (!Auth.hasAdminAccess()) return;
         const selector = document.getElementById('year-selector');
         if (!selector) return;
         const year = parseInt(selector.value);
@@ -3674,7 +3686,7 @@ class App {
     }
 
     async loadReportPeriod(year, month, render, prefix) {
-        if (!Auth.isAdmin()) return;
+        if (!Auth.hasAdminAccess()) return;
         this._reportRequests ||= {};
         const request = (this._reportRequests[prefix] || 0) + 1;
         this._reportRequests[prefix] = request;
@@ -3831,7 +3843,7 @@ class App {
         const exportBtn = document.getElementById('export-daily-report-btn');
         if (exportBtn) {
             exportBtn.addEventListener('click', () => {
-                if (!Auth.isAdmin()) {
+                if (!Auth.hasAdminAccess()) {
                     Toast.warning('Permiso denegado: esta acción requiere privilegios de administrador');
                     return;
                 }
@@ -3842,7 +3854,7 @@ class App {
         const printBtn = document.getElementById('print-daily-report-btn');
         if (printBtn) {
             printBtn.addEventListener('click', () => {
-                if (!Auth.isAdmin()) {
+                if (!Auth.hasAdminAccess()) {
                     Toast.warning('Permiso denegado: esta acción requiere privilegios de administrador');
                     return;
                 }
@@ -3875,7 +3887,7 @@ class App {
             btn.addEventListener('click', () => {
                 const tab = btn.dataset.reportTab;
                 this.switchReportTab(tab);
-                if (Auth.isAdmin()) {
+                if (Auth.hasAdminAccess()) {
                     if (tab === 'anio') {
                         this.populateYearSelector();
                         this.updateHistoricalAnnual();
@@ -3894,7 +3906,7 @@ class App {
         const refreshWeeklyBtn = document.getElementById('refresh-weekly-chart');
         if (refreshWeeklyBtn) {
             refreshWeeklyBtn.addEventListener('click', () => {
-                if (Auth.isAdmin()) {
+                if (Auth.hasAdminAccess()) {
                     this.renderWeeklyFinancialChart();
                     this.renderWeeklyVolumeChart();
                 }
@@ -3904,7 +3916,7 @@ class App {
         const refreshMonthlyBtn = document.getElementById('refresh-monthly-chart');
         if (refreshMonthlyBtn) {
             refreshMonthlyBtn.addEventListener('click', () => {
-                if (Auth.isAdmin()) {
+                if (Auth.hasAdminAccess()) {
                     this.updateSelectedMonthly();
                 }
             });
@@ -3913,7 +3925,7 @@ class App {
         const refreshAnnualBtn = document.getElementById('refresh-annual-chart');
         if (refreshAnnualBtn) {
             refreshAnnualBtn.addEventListener('click', () => {
-                if (Auth.isAdmin()) {
+                if (Auth.hasAdminAccess()) {
                     this.updateHistoricalAnnual();
                 }
             });
@@ -3922,7 +3934,7 @@ class App {
         const refreshHistoricalBtn = document.getElementById('refresh-historical-chart');
         if (refreshHistoricalBtn) {
             refreshHistoricalBtn.addEventListener('click', () => {
-                if (Auth.isAdmin()) {
+                if (Auth.hasAdminAccess()) {
                     this.updateHistoricalAnnual();
                 }
             });
@@ -3938,7 +3950,7 @@ class App {
         const yearSelector = document.getElementById('year-selector');
         if (yearSelector) {
             yearSelector.addEventListener('change', () => {
-                if (Auth.isAdmin()) {
+                if (Auth.hasAdminAccess()) {
                     this.updateHistoricalAnnual();
                 }
             });
@@ -3958,7 +3970,7 @@ class App {
         this.renderDailyVolumeChart();
         this.renderDailySalesChart();
 
-        if (Auth.isAdmin()) {
+        if (Auth.hasAdminAccess()) {
             this._renderPeriodReports();
         }
 
@@ -4061,7 +4073,7 @@ class App {
         const report = ReportService.getConsolidatedDaily(date);
         container.innerHTML = ReportService.formatConsolidatedHTML(report);
 
-        if (Auth.isAdmin()) {
+        if (Auth.hasAdminAccess()) {
             report.sessions.forEach(s => {
                 this.loadSessionDetail(s.sessionId, s);
             });
@@ -4080,7 +4092,7 @@ class App {
     // Renderiza las tarjetas numéricas por categoría + gráfica de barras,
     // y el Top 5 de productos más vendidos + su gráfica de barras.
     renderCategoryBreakdownReport() {
-        if (!Auth.isAdmin()) return;
+        if (!Auth.hasAdminAccess()) return;
 
         const section = document.getElementById('category-breakdown-section');
         if (!section) return;
@@ -4405,6 +4417,7 @@ class App {
     }
 
     showAddProductModal() {
+        if (!Auth.canModifyInventory()) return;
         const overlay = document.createElement('div');
         overlay.className = 'payment-overlay';
         overlay.innerHTML = `
@@ -4493,6 +4506,7 @@ class App {
     }
 
     showEditProductModal(barcode) {
+        if (!Auth.canModifyInventory()) return;
         const product = Inventory.findByBarcode(barcode);
         if (!product) {
             Toast.error('Producto no encontrado');
@@ -4728,7 +4742,7 @@ class App {
            const testEmailBtn = document.getElementById('test-email-btn');
            if (testEmailBtn) {
                testEmailBtn.addEventListener('click', async () => {
-                   if (!Auth.isAdmin()) {
+                   if (!Auth.hasAdminAccess()) {
                        Toast.warning('Permiso denegado: esta acción requiere privilegios de administrador');
                        return;
                    }
@@ -6585,7 +6599,7 @@ class App {
             customers = VIPCustomer.search(query);
         }
 
-        const isAdmin = Auth.isAdmin();
+        const isAdmin = Auth.hasAdminAccess();
         tbody.innerHTML = '';
 
         if (customers.length === 0) {

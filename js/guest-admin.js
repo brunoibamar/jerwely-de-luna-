@@ -1,0 +1,75 @@
+// Autorización temporal en esta pestaña. No cambia el usuario ni la caja.
+class GuestAdminAccess {
+    static refresh() {
+        const active = Auth.hasTemporaryAdminAccess();
+        const button = document.getElementById('guest-admin-access-btn');
+        if (button) {
+            button.classList.toggle('hidden', !Auth.currentUser || !Auth.isGuest());
+            button.textContent = active ? 'Desactivar acceso administrador' : 'Acceso administrador';
+            button.setAttribute('aria-pressed', String(active));
+        }
+        document.getElementById('guest-admin-access-status')?.classList.toggle('hidden', !active);
+        const settings = document.getElementById('guest-admin-password-section');
+        if (settings) settings.disabled = !Auth.canChangeGuestAdminPassword();
+        document.getElementById('guest-admin-password-restriction')?.classList.toggle('hidden', Auth.canChangeGuestAdminPassword());
+        // Las credenciales de inicio de sesión también siguen reservadas al dueño.
+        for (const id of ['admin-current-pass', 'admin-new-pass', 'admin-confirm-pass', 'change-admin-pass-btn',
+            'guest-current-key', 'guest-new-key', 'guest-confirm-key', 'change-guest-key-btn']) {
+            const control = document.getElementById(id); if (control) control.disabled = !Auth.isAdmin();
+        }
+    }
+
+    static lock(notify = true) {
+        Auth.disableGuestAdminAccess();
+        document.getElementById('guest-admin-access-dialog')?.close();
+        document.getElementById('guest-admin-access-form')?.reset();
+        document.querySelectorAll('.payment-overlay').forEach(el => el.remove());
+        document.getElementById('monthly-archive-dialog')?.close();
+        window.app?.updateRoleVisibility();
+        window.app?.cart.render();
+        if (Auth.isGuest() && ['inventory', 'reports', 'settings'].includes(window.app?.activeSection)) window.app.switchSection('sales');
+        this.refresh();
+        if (notify) Toast.info('Acceso administrador desactivado. La caja y el carrito se conservan.');
+    }
+
+    static init() {
+        const dialog = document.getElementById('guest-admin-access-dialog');
+        const form = document.getElementById('guest-admin-access-form');
+        document.getElementById('guest-admin-access-btn')?.addEventListener('click', () => {
+            if (!Auth.currentUser || !Auth.isGuest()) return;
+            if (Auth.hasTemporaryAdminAccess()) { this.lock(); return; }
+            if (!Cut.isShiftOpen()) { Toast.warning('Abra la caja antes de solicitar este acceso.'); return; }
+            form.reset(); document.getElementById('guest-admin-access-error').textContent = '';
+            dialog.showModal(); document.getElementById('guest-admin-access-password').focus();
+        });
+        document.getElementById('guest-admin-access-cancel')?.addEventListener('click', () => dialog.close());
+        dialog?.addEventListener('close', () => form.reset());
+        form?.addEventListener('submit', event => {
+            event.preventDefault();
+            const result = Auth.enableGuestAdminAccess(document.getElementById('guest-admin-access-password').value);
+            form.reset();
+            if (!result.success) { document.getElementById('guest-admin-access-error').textContent = result.error; return; }
+            dialog.close(); window.app.updateRoleVisibility(); window.app.cart.render(); this.refresh();
+            Toast.success('Acceso administrador habilitado para este turno. El usuario de la caja sigue siendo invitado.');
+        });
+        document.getElementById('change-guest-admin-password-btn')?.addEventListener('click', () => {
+            const message = document.getElementById('guest-admin-password-message');
+            try {
+                const result = Auth.changeGuestAdminPassword(
+                    document.getElementById('guest-admin-current-password').value,
+                    document.getElementById('guest-admin-new-password').value,
+                    document.getElementById('guest-admin-confirm-password').value);
+                message.textContent = result.message || result.error;
+                if (result.success) for (const id of ['guest-admin-current-password', 'guest-admin-new-password', 'guest-admin-confirm-password']) document.getElementById(id).value = '';
+            } catch (error) { message.textContent = 'No se confirmó el cambio de contraseña: ' + error.message; }
+        });
+        window.addEventListener('storage', event => {
+            if ([Cut.storageKey, Auth.current_userKey, Auth.guestAdminPasswordKey].includes(event.key)) this.lock(false);
+        });
+        window.addEventListener('pagehide', () => this.lock(false));
+        window.addEventListener('pageshow', () => { if (window.app?.isInitialized) { window.app.updateRoleVisibility(); window.app.cart.render(); } });
+        this.refresh();
+    }
+}
+window.GuestAdminAccess = GuestAdminAccess;
+document.addEventListener('DOMContentLoaded', () => GuestAdminAccess.init());

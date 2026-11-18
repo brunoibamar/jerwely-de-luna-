@@ -54,11 +54,13 @@ class Cart {
     // Actualizar el precio de venta de un producto (solo admin).
     // Recalcula el importe, el subtotal y el total en tiempo real.
     updatePrice(barcode, newPrice) {
+        if (!Auth.canModifyPrices()) return false;
         const item = this.items.find(i => i.barcode === barcode);
         const price = parseFloat(newPrice);
-        if (item && !isNaN(price) && price >= 0) {
+        if (item && Number.isFinite(price) && price >= 0) {
             item.price = price;
-            item.amount = price * item.quantity;
+            item.manualPrice = price;
+            item.amount = price * (item.quantity - (item.buenFinFreeQty || 0));
             this.render();
             this.updateTotals();
         }
@@ -91,7 +93,9 @@ class Cart {
             if (typeof item.originalPrice !== 'number') {
                 item.originalPrice = item.price;
             }
-            if (item.aplicaPromocion === true && unitPrice !== null) {
+            if (typeof item.manualPrice === 'number' && Number.isFinite(item.manualPrice) && item.manualPrice >= 0) {
+                item.price = item.manualPrice;
+            } else if (item.aplicaPromocion === true && unitPrice !== null) {
                 item.price = unitPrice < item.originalPrice ? unitPrice : item.originalPrice;
             }
             item.amount = item.price * item.quantity;
@@ -213,7 +217,7 @@ class Cart {
                     ${isFreeItem ? `<span class="buen-fin-badge" title="Promoción Buen Fin (Gratis): ${freeQty} pieza(s) gratis">• Buen Fin (${freeQty} gratis)</span>` : ''}
                 </td>
                 <td class="price-cell">
-                    ${Auth.isAdmin()
+                    ${Auth.canModifyPrices()
                         ? `<input type="number" min="0" step="0.01" value="${item.price.toFixed(2)}"
                             onfocus="this.select()"
                             onchange="window.app.cart.updatePrice('${item.barcode}', this.value)"

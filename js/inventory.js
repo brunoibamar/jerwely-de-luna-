@@ -83,6 +83,7 @@ class Inventory {
     }
 
     static add(product) {
+        if (!Auth.canModifyInventory()) return { success: false, error: 'Acceso no autorizado al inventario.' };
         const products = this.getAll();
         if (products.some(p => p.barcode === product.barcode)) {
             return { success: false, error: 'Ya existe un producto con ese código' };
@@ -99,6 +100,7 @@ class Inventory {
     }
 
     static update(barcode, updatedProduct) {
+        if (!Auth.canModifyInventory()) return { success: false, error: 'Acceso no autorizado al inventario.' };
         const products = this.getAll();
         const index = products.findIndex(p => p.barcode === barcode);
         if (index === -1) return { success: false, error: 'Producto no encontrado' };
@@ -108,6 +110,7 @@ class Inventory {
     }
 
     static remove(barcode) {
+        if (!Auth.canModifyInventory()) return { success: false, error: 'Acceso no autorizado al inventario.' };
         const products = this.getAll().filter(p => p.barcode !== barcode);
         this.saveProducts(products);
         return { success: true };
