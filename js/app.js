@@ -994,6 +994,7 @@ class App {
     showLogin() {
         Auth.disableGuestAdminAccess();
         document.getElementById('guest-admin-access-dialog')?.close();
+        document.getElementById('cash-open-overlay')?.classList.add('hidden');
         document.getElementById('login-screen')?.classList.remove('hidden');
         document.getElementById('pos-app')?.classList.add('hidden');
         const roleSelection = document.getElementById('role-selection');

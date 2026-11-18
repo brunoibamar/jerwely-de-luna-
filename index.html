@@ -5,40 +5,39 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Jewerly De Luna - Punto de Venta</title>
     <link rel="stylesheet" href="css/styles.css?v=20261118-access-ui1">
+    <link rel="stylesheet" href="css/login-premium.css?v=20261118-login1">
 </head>
     <body>
     <div id="toast-container" class="toast-container"></div>
 
     <div id="login-screen" class="login-screen hidden">
-        <!-- Header: logotipo circular con halo de destellos dorados -->
+        <div class="entry-ambience" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
         <div class="login-header">
-            <img src="assets/logo.png" alt="Jewerly De Luna" class="login-logo">
-            <span class="logo-sparkle"></span>
-            <span class="logo-sparkle logo-sparkle-2"></span>
-            <span class="logo-sparkle logo-sparkle-3"></span>
+            <img src="assets/jewelry-logo-transparent.png" alt="Jewelry de Luna" class="login-logo" width="1254" height="1254">
+            <span class="logo-sparkle" aria-hidden="true"></span>
+            <span class="logo-sparkle logo-sparkle-2" aria-hidden="true"></span>
+            <span class="logo-sparkle logo-sparkle-3" aria-hidden="true"></span>
         </div>
-
-        <h1 class="login-title">Jewerly De Luna</h1>
 
         <!-- Módulo de Selección de Rol -->
         <div id="role-selection" class="role-selection">
+            <h1 class="entry-heading">Selecciona tu acceso</h1>
             <div class="role-cards">
                 <button type="button" class="role-card role-card-admin" data-role="admin">
-                    <svg class="role-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                        <path d="M3 18 L21 18 L17 10 L13 12 L9 8 L5 10 Z"></path>
+                    <svg class="role-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true">
+                        <path d="m3 7 4 4 5-7 5 7 4-4-2 12H5L3 7Z M6 22h12"></path>
+                        <circle cx="3" cy="5" r="1.3"/><circle cx="12" cy="2" r="1.3"/><circle cx="21" cy="5" r="1.3"/>
                     </svg>
-                    <span class="role-label">Administrador</span>
+                    <span class="entry-role-text"><span class="role-label">Administrador</span><span class="entry-role-description">Administrar el negocio</span></span>
+                    <span class="entry-arrow" aria-hidden="true">→</span>
                 </button>
                 <button type="button" class="role-card role-card-guest" data-role="guest">
-                    <svg class="role-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                        <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"></path>
+                    <svg class="role-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
+                        <circle cx="12" cy="7" r="4"/><path d="M4 22v-2a8 8 0 0 1 16 0v2H4Z"/>
                     </svg>
-                    <span class="role-label">Invitado</span>
+                    <span class="entry-role-text"><span class="role-label">Invitado</span><span class="entry-role-description">Registrar ventas</span></span>
+                    <span class="entry-arrow" aria-hidden="true">→</span>
                 </button>
-            </div>
-            <div class="login-restore">
-                <button type="button" id="login-restore-btn" class="btn btn-outline btn-sm">¿Se perdió la información? Restaurar respaldo</button>
-                <p id="login-local-recovery-hint" class="volume-help-text-small hidden"></p>
             </div>
         </div>
 
@@ -46,31 +45,36 @@
         <div id="login-forms-wrapper" class="login-forms-wrapper hidden">
             <div class="login-card">
                 <form id="admin-login-form" class="login-form" data-login-form="admin">
+                    <div class="entry-form-heading"><svg class="entry-form-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" aria-hidden="true"><path d="m3 7 4 4 5-7 5 7 4-4-2 12H5L3 7Z M6 22h12"/><circle cx="3" cy="5" r="1.3"/><circle cx="12" cy="2" r="1.3"/><circle cx="21" cy="5" r="1.3"/></svg><h2>Administrador</h2><p>Ingresa con tu cuenta</p></div>
                     <div class="input-group">
-                        <input type="text" name="username" placeholder=" " autocomplete="off" required>
-                        <label>Usuario</label>
+                        <input type="text" id="entry-admin-username" name="username" placeholder=" " autocomplete="off" required>
+                        <label for="entry-admin-username">Usuario</label>
                     </div>
                     <div class="input-group">
-                        <input type="password" name="password" placeholder=" " autocomplete="off" required>
-                        <label>Contraseña</label>
+                        <input type="password" id="entry-admin-password" name="password" placeholder=" " autocomplete="off" required>
+                        <label for="entry-admin-password">Contraseña</label>
                     </div>
-                    <button type="submit" class="btn btn-primary login-btn">Ingresar</button>
-                    <button type="button" id="forgot-password-btn" class="btn btn-link">¿Olvidó su contraseña?</button>
+                    <button type="submit" class="btn btn-primary login-btn">Ingresar <span aria-hidden="true">→</span></button>
                     <div id="login-error" class="login-error"></div>
                 </form>
 
                 <form id="guest-login-form" class="login-form hidden" data-login-form="guest">
+                    <div class="entry-form-heading"><svg class="entry-form-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" aria-hidden="true"><circle cx="12" cy="7" r="4"/><path d="M4 22v-2a8 8 0 0 1 16 0v2H4Z"/></svg><h2>Invitado</h2></div>
                     <div class="input-group">
-                        <input type="password" name="guest-key" inputmode="numeric" placeholder=" " autocomplete="off">
-                        <label>Clave de Cajero (opcional)</label>
+                        <input type="password" id="entry-guest-key" name="guest-key" inputmode="numeric" placeholder=" " autocomplete="off">
+                        <label for="entry-guest-key">Clave de cajero (opcional)</label>
                     </div>
                     <button type="submit" class="btn btn-primary login-btn">Ingresar con Clave</button>
                     <button type="button" id="guest-direct-btn" class="btn btn-outline login-btn">Ingresar como Invitado</button>
                     <div id="guest-login-error" class="login-error"></div>
                 </form>
 
-                <button type="button" id="back-to-roles" class="btn btn-link back-to-roles">← Volver a la selección de rol</button>
+                <button type="button" id="back-to-roles" class="btn btn-link back-to-roles"><span aria-hidden="true">←</span> Volver a seleccionar rol</button>
             </div>
+        </div>
+        <div class="login-restore">
+            <button type="button" id="login-restore-btn" class="btn btn-outline btn-sm"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 11a9 9 0 1 1 3 8M3 4v7h7M12 7v5l3 2"/></svg>Restaurar respaldo</button>
+            <p id="login-local-recovery-hint" class="volume-help-text-small hidden"></p>
         </div>
 
         <div id="recovery-modal" class="modal-overlay hidden">
@@ -114,11 +118,14 @@
     </div>
 
     <div id="cash-open-overlay" class="modal-overlay hidden">
+        <div class="entry-ambience" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
+        <img class="cash-entry-logo" src="assets/jewelry-logo-transparent.png" alt="Jewelry de Luna" width="1254" height="1254">
         <div class="modal cash-modal">
-            <h3 class="modal-title">Apertura de Caja</h3>
+            <svg class="entry-form-icon" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M5 13h22v13H5z M5 13l4-5h14l4 5M16 1v3M7 3l2 3M25 3l-2 3"/><circle cx="16" cy="19" r="2"/></svg>
+            <h3 class="modal-title">Apertura de caja</h3>
             <div class="cash-open-body">
                 <p class="cash-open-message">
-                    <span id="cash-open-user">Bienvenido, </span>
+                    <span id="cash-open-user">Bienvenido</span>
                     Ingresa el monto inicial en caja para comenzar tu turno.
                 </p>
                 <div class="input-group">
@@ -127,7 +134,7 @@
                 </div>
                 <div class="modal-actions">
                     <button type="button" id="cancel-cash-open" class="btn btn-outline">Cancelar</button>
-                    <button type="button" id="confirm-cash-open" class="btn btn-primary">Ingresar</button>
+                    <button type="button" id="confirm-cash-open" class="btn btn-primary">Ingresar <span aria-hidden="true">→</span></button>
                 </div>
             </div>
         </div>
@@ -1415,6 +1422,6 @@
       <script src="js/guarantee.js?v=20261104-history1"></script>
       <script src="js/telegram-notify.js?v=20261104-history1"></script>
       <script src="js/guest-admin.js?v=20261118-access-ui1"></script>
-      <script src="js/app.js?v=20261118-access1"></script>
+      <script src="js/app.js?v=20261118-login1"></script>
 </body>
 </html>
