@@ -68,7 +68,14 @@
 .guest-admin-dialog::backdrop { background: rgba(0, 0, 0, .78); }
 .guest-admin-dialog h2 { font-size: 22px; color: var(--gold-light); margin-bottom: 12px; }
 .guest-admin-dialog p { line-height: 1.5; margin-bottom: 18px; }
-.guest-admin-status { padding: 8px 12px; border: 1px solid var(--gold); border-radius: 6px; color: var(--gold-light); font-size: 13px; }
+.admin-access-control { display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex: 0 0 auto; height: 36px; padding: 0 12px; border: 1px solid rgba(212, 175, 55, .28); border-radius: 10px; background: rgba(212, 175, 55, .035); color: #c9c3ac; font: 600 12px/1 var(--font-family); white-space: nowrap; cursor: pointer; transition: background .16s ease, border-color .16s ease, color .16s ease; }
+.admin-access-control:hover { background: rgba(212, 175, 55, .1); border-color: var(--gold); color: var(--gold-light); }
+.admin-access-control:focus-visible { outline: 2px solid var(--gold-light); outline-offset: 3px; }
+.admin-access-control[aria-pressed="true"] { background: linear-gradient(115deg, rgba(212, 175, 55, .17), rgba(212, 175, 55, .065)); border-color: rgba(212, 175, 55, .58); color: var(--gold-light); box-shadow: inset 0 1px 0 rgba(230, 193, 74, .08); }
+.admin-access-control[aria-pressed="true"]:hover { background: rgba(212, 175, 55, .22); border-color: var(--gold-light); }
+.admin-access-icon { width: 16px; height: 16px; flex: 0 0 16px; }
+.admin-access-action { padding-left: 9px; margin-left: 1px; border-left: 1px solid rgba(212, 175, 55, .35); color: #f0d98a; font-size: 11px; font-weight: 500; }
+.admin-access-announcement { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 .guest-admin-password-section { margin-top: 24px; padding: 16px; border: 1px solid var(--border-color); border-radius: 8px; }
 .guest-admin-password-section legend { padding: 0 8px; color: var(--gold-light); }
 .guest-admin-password-section:disabled { opacity: .6; }

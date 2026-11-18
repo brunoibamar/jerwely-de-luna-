@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Jewerly De Luna - Punto de Venta</title>
-    <link rel="stylesheet" href="css/styles.css?v=20261118-access1">
+    <link rel="stylesheet" href="css/styles.css?v=20261118-access-ui1">
 </head>
     <body>
     <div id="toast-container" class="toast-container"></div>
@@ -224,6 +224,16 @@
              </div>
              <div class="header-right">
                 <span class="user-badge" id="current-user">Cajero: <span id="user-name"></span></span>
+                <button type="button" id="guest-admin-access-btn" class="admin-access-control hidden" aria-pressed="false" aria-label="Activar acceso administrador" title="Habilitar acceso administrador">
+                    <svg class="admin-access-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path id="guest-admin-lock-shackle" d="M8 11V7a4 4 0 0 1 8 0v4"/>
+                        <rect x="5" y="11" width="14" height="10" rx="3"/>
+                        <path d="M12 15v2"/>
+                    </svg>
+                    <span id="guest-admin-access-label">Acceso admin</span>
+                    <span id="guest-admin-access-action" class="admin-access-action" hidden>Bloquear</span>
+                </button>
+                <span id="guest-admin-access-status" class="admin-access-announcement hidden" role="status" aria-live="polite"></span>
                 <button id="cash-drawer-btn" class="btn btn-outline admin-only">Corte de Caja</button>
                 <button id="cash-close-btn" class="btn btn-outline guest-only">Cierre de Caja</button>
                 <button id="backup-btn" class="btn btn-outline admin-only">Respaldo</button>
@@ -232,8 +242,6 @@
                 <button id="guarantee-btn" class="btn btn-outline guest-allowed">Cambio por Garantía</button>
                 <button id="withdrawal-btn" class="btn btn-outline guest-allowed">Retiro para Depósito / Retiro de Efectivo</button>
                 <button id="logout-btn" class="btn btn-outline">Salir</button>
-                <button type="button" id="guest-admin-access-btn" class="btn btn-outline hidden" aria-pressed="false">Acceso administrador</button>
-                <span id="guest-admin-access-status" class="guest-admin-status hidden" role="status">Acceso administrador ACTIVADO · Turno de invitado</span>
             </div>
         </header>
 
@@ -1406,7 +1414,7 @@
      <script src="js/returns.js?v=20261104-history1"></script>
       <script src="js/guarantee.js?v=20261104-history1"></script>
       <script src="js/telegram-notify.js?v=20261104-history1"></script>
-      <script src="js/guest-admin.js?v=20261118-access1"></script>
+      <script src="js/guest-admin.js?v=20261118-access-ui1"></script>
       <script src="js/app.js?v=20261118-access1"></script>
 </body>
 </html>

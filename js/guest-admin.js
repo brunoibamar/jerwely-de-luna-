@@ -5,10 +5,19 @@ class GuestAdminAccess {
         const button = document.getElementById('guest-admin-access-btn');
         if (button) {
             button.classList.toggle('hidden', !Auth.currentUser || !Auth.isGuest());
-            button.textContent = active ? 'Desactivar acceso administrador' : 'Acceso administrador';
             button.setAttribute('aria-pressed', String(active));
+            button.setAttribute('aria-label', active ? 'Acceso administrador activo. Bloquear acceso' : 'Activar acceso administrador');
+            button.title = active ? 'Desactivar acceso administrador y conservar la caja abierta' : 'Habilitar acceso administrador';
+            document.getElementById('guest-admin-access-label').textContent = active ? 'Admin activo' : 'Acceso admin';
+            document.getElementById('guest-admin-access-action').hidden = !active;
+            document.getElementById('guest-admin-lock-shackle').setAttribute('d', active ? 'M8 11V7a4 4 0 0 1 7.5-2' : 'M8 11V7a4 4 0 0 1 8 0v4');
         }
-        document.getElementById('guest-admin-access-status')?.classList.toggle('hidden', !active);
+        const status = document.getElementById('guest-admin-access-status');
+        if (status) {
+            status.classList.toggle('hidden', !active);
+            const text = active ? 'Acceso administrador activado. El turno sigue siendo de invitado.' : '';
+            if (status.textContent !== text) status.textContent = text;
+        }
         const settings = document.getElementById('guest-admin-password-section');
         if (settings) settings.disabled = !Auth.canChangeGuestAdminPassword();
         document.getElementById('guest-admin-password-restriction')?.classList.toggle('hidden', Auth.canChangeGuestAdminPassword());
